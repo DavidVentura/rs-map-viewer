@@ -18,13 +18,14 @@ export type PlayerMovementResolver = (
 export class Player {
     static readonly WALK_SPEED = 192;
     static readonly RUN_SPEED = 384;
-    static readonly MAP_SIZE = 64 * 128;
+    static readonly ATTACK_COOLDOWN_SECONDS = 0.2;
 
     rotation = 0;
     movementFrame = 0;
 
     private animationFrameTime = 0;
     private animationSeqId: number;
+    private nextAttackTime = 0;
 
     constructor(
         public x: number,
@@ -73,6 +74,14 @@ export class Player {
             return this.runAnim;
         }
         return this.idleAnim;
+    }
+
+    canAttack(timeSeconds: number): boolean {
+        if (timeSeconds < this.nextAttackTime) {
+            return false;
+        }
+        this.nextAttackTime = timeSeconds + Player.ATTACK_COOLDOWN_SECONDS;
+        return true;
     }
 
     private setAnimation(seqId: number): void {

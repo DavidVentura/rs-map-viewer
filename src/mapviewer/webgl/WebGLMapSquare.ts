@@ -21,10 +21,12 @@ import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
 import { Player } from "./player/Player";
+import { Projectile } from "./player/Projectile";
 
 const FRAME_RENDER_DELAY = 3;
 
 const NPC_DATA_TEXTURE_BUFFER_SIZE = 5;
+const MAX_PROJECTILES = 32;
 
 function createModelInfoTexture(app: PicoApp, data: Uint16Array): Texture {
     return app.createTexture2D(data, 16, Math.max(Math.ceil(data.length / 16 / 4), 1), {
@@ -264,8 +266,14 @@ export class WebGLMapSquare {
             }
         }
 
-        const drawRangesNpc = new Array(npcs.length + Number(player !== undefined)).fill(
-            newDrawRange(0, 0, 1),
+        const drawRangesNpc = Array.from(
+            {
+                length:
+                    npcs.length +
+                    Number(player !== undefined) +
+                    (mapData.projectileFrame ? MAX_PROJECTILES : 0),
+            },
+            () => newDrawRange(0, 0, 1),
         );
 
         const drawCallNpc = createDrawCall(npcProgram, undefined, drawRangesNpc);
@@ -317,6 +325,7 @@ export class WebGLMapSquare {
             locsAnimated,
             npcs,
             player,
+            mapData.projectileFrame,
         );
     }
 
@@ -373,9 +382,26 @@ export class WebGLMapSquare {
         readonly npcs: Npc[],
 
         readonly player: Player | undefined,
+
+        readonly projectileFrame: DrawRange | undefined,
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
+    }
+
+    projectiles: Projectile[] = [];
+
+    addProjectile(projectile: Projectile): void {
+        if (!this.projectileFrame || this.projectiles.length >= MAX_PROJECTILES) {
+            return;
+        }
+        this.projectiles.push(projectile);
+    }
+
+    updateProjectiles(deltaTimeSeconds: number): void {
+        this.projectiles = this.projectiles.filter((projectile) =>
+            projectile.update(deltaTimeSeconds),
+        );
     }
 
     canRender(frameCount: number): boolean {

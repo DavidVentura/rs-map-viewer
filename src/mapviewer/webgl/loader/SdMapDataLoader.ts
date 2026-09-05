@@ -748,6 +748,10 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             state.skeletalSeqLoader,
         );
         const player = createPlayerData(playerModelLoader, npcTypeLoader, sceneBuf, mapX, mapY);
+        const arrowModel = player ? objModelLoader.getModel(882, 1) : undefined;
+        const projectileFrame = arrowModel
+            ? sceneBuf.addModelAnimFrame(arrowModel, false)
+            : undefined;
 
         // Draw ranges
 
@@ -922,6 +926,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 locsAnimated,
                 npcs,
                 player,
+                projectileFrame,
 
                 loadedTextures,
             },

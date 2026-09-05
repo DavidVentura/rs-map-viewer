@@ -1,5 +1,5 @@
 import Denque from "denque";
-import { vec2, vec4 } from "gl-matrix";
+import { mat4, vec2, vec4 } from "gl-matrix";
 import { folder } from "leva";
 import { Schema } from "leva/dist/declarations/src/types";
 import {
@@ -32,6 +32,7 @@ import { WebGLMapSquare } from "./WebGLMapSquare";
 import { SdMapData } from "./loader/SdMapData";
 import { SdMapDataLoader } from "./loader/SdMapDataLoader";
 import { SdMapLoaderInput } from "./loader/SdMapLoaderInput";
+import { Projectile } from "./player/Projectile";
 import {
     FRAME_FXAA_PROGRAM,
     FRAME_PROGRAM,
@@ -44,6 +45,11 @@ const TEXTURE_SIZE = 128;
 
 const INTERACT_BUFFER_COUNT = 2;
 const INTERACTION_RADIUS = 5;
+const PLAYER_SIMULATION_STEP_SECONDS = 1 / 120;
+
+const inverseViewProjectionMatrix = mat4.create();
+const nearPoint = vec4.create();
+const farPoint = vec4.create();
 
 interface ColorRgb {
     r: number;
@@ -172,6 +178,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     npcRenderData: Uint16Array = new Uint16Array(16 * 4);
 
     npcDataTextureBuffer: (Texture | undefined)[] = new Array(5);
+
+    playerSimulationTime = 0;
 
     constructor(public mapViewer: MapViewer) {
         super(mapViewer);
@@ -843,6 +851,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.pinCameraToPlayer();
 
         camera.update(this.app.width, this.app.height);
+        this.attackPlayer(timeSec);
 
         const renderDistance = this.mapViewer.renderDistance;
 
@@ -1029,23 +1038,81 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
+        this.playerSimulationTime += Math.min(deltaTimeSeconds, 0.1);
         const inputManager = this.mapViewer.inputManager;
         const moveX =
             Number(inputManager.isKeyDown("KeyD")) - Number(inputManager.isKeyDown("KeyA"));
         const moveY =
             Number(inputManager.isKeyDown("KeyW")) - Number(inputManager.isKeyDown("KeyS"));
-        playerEntry.player.update(
-            {
-                x: moveX,
-                y: moveY,
-                running: inputManager.isShiftDown(),
-            },
-            deltaTimeSeconds,
-            this.mapViewer.seqTypeLoader,
-            this.mapViewer.seqFrameLoader,
-            (x, y, deltaX, deltaY) =>
-                playerEntry.map.movePlayer(playerEntry.player.level, x, y, deltaX, deltaY),
+        while (this.playerSimulationTime >= PLAYER_SIMULATION_STEP_SECONDS) {
+            playerEntry.player.update(
+                {
+                    x: moveX,
+                    y: moveY,
+                    running: inputManager.isShiftDown(),
+                },
+                PLAYER_SIMULATION_STEP_SECONDS,
+                this.mapViewer.seqTypeLoader,
+                this.mapViewer.seqFrameLoader,
+                (x, y, deltaX, deltaY) =>
+                    playerEntry.map.movePlayer(playerEntry.player.level, x, y, deltaX, deltaY),
+            );
+            playerEntry.map.updateProjectiles(PLAYER_SIMULATION_STEP_SECONDS);
+            this.playerSimulationTime -= PLAYER_SIMULATION_STEP_SECONDS;
+        }
+    }
+
+    private attackPlayer(timeSeconds: number): void {
+        const playerEntry = this.getPlayer();
+        const inputManager = this.mapViewer.inputManager;
+        if (!playerEntry || inputManager.attackX === -1 || inputManager.attackY === -1) {
+            return;
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+        const clipX = (inputManager.attackX / rect.width) * 2 - 1;
+        const clipY = 1 - (inputManager.attackY / rect.height) * 2;
+        if (!mat4.invert(inverseViewProjectionMatrix, this.mapViewer.camera.viewProjMatrix)) {
+            return;
+        }
+
+        this.unproject(nearPoint, clipX, clipY, -1);
+        this.unproject(farPoint, clipX, clipY, 1);
+        const { map, player } = playerEntry;
+        const playerX = map.mapX * Scene.MAP_SQUARE_SIZE + player.x / 128;
+        const playerY = -map.getHeightAt(player.x, player.y, player.level) / 128;
+        const playerZ = map.mapY * Scene.MAP_SQUARE_SIZE + player.y / 128;
+        const rayY = farPoint[1] - nearPoint[1];
+        if (rayY === 0) {
+            return;
+        }
+        const rayDistance = (playerY - nearPoint[1]) / rayY;
+        const targetX = nearPoint[0] + (farPoint[0] - nearPoint[0]) * rayDistance;
+        const targetZ = nearPoint[2] + (farPoint[2] - nearPoint[2]) * rayDistance;
+        const deltaX = targetX - playerX;
+        const deltaY = targetZ - playerZ;
+        const length = Math.hypot(deltaX, deltaY);
+        if (length === 0 || !player.canAttack(timeSeconds)) {
+            return;
+        }
+
+        const velocityX = (deltaX / length) * Projectile.SPEED;
+        const velocityY = (deltaY / length) * Projectile.SPEED;
+        const rotation = ((Math.atan2(velocityX, velocityY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
+        map.addProjectile(
+            new Projectile(player.x, player.y, player.level, rotation, velocityX, velocityY),
         );
+    }
+
+    private unproject(point: vec4, x: number, y: number, z: number): void {
+        point[0] = x;
+        point[1] = y;
+        point[2] = z;
+        point[3] = 1;
+        vec4.transformMat4(point, point, inverseViewProjectionMatrix);
+        point[0] /= point[3];
+        point[1] /= point[3];
+        point[2] /= point[3];
     }
 
     private pinCameraToPlayer(): void {
@@ -1102,7 +1169,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     addNpcRenderData(map: WebGLMapSquare) {
         const npcs = map.npcs;
-        const actorCount = npcs.length + Number(map.player !== undefined);
+        const actorCount = npcs.length + Number(map.player !== undefined) + map.projectiles.length;
 
         if (actorCount === 0) {
             return;
@@ -1146,6 +1213,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.npcRenderData[offset + 1] = map.player.y;
             this.npcRenderData[offset + 2] = (map.player.rotation << 2) | map.player.level;
             this.npcRenderData[offset + 3] = map.player.id;
+            this.npcRenderCount++;
+        }
+
+        for (const projectile of map.projectiles) {
+            const offset = this.npcRenderCount * 4;
+            this.npcRenderData[offset] = projectile.x;
+            this.npcRenderData[offset + 1] = projectile.y;
+            this.npcRenderData[offset + 2] = (projectile.rotation << 2) | projectile.level;
+            this.npcRenderData[offset + 3] = 0;
             this.npcRenderCount++;
         }
     }
@@ -1222,7 +1298,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
 
-            if (npcs.length === 0 && !map.player) {
+            if (npcs.length === 0 && !map.player && map.projectiles.length === 0) {
                 continue;
             }
 
@@ -1255,6 +1331,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
+            }
+
+            const projectileStart = npcs.length + Number(map.player !== undefined);
+            for (let i = 0; i < map.projectiles.length; i++) {
+                const index = projectileStart + i;
+                const frame = map.projectileFrame!;
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
+            }
+            for (let i = projectileStart + map.projectiles.length; i < drawRanges.length; i++) {
+                (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
+                (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
+                drawRanges[i] = NULL_DRAW_RANGE;
             }
 
             this.draw(drawCall, drawRanges);

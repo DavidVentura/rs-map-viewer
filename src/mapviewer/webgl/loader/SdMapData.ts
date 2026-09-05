@@ -55,6 +55,7 @@ export type SdMapData = {
     locsAnimated: LocAnimatedData[];
     npcs: NpcData[];
     player?: PlayerData;
+    projectileFrame?: DrawRange;
 
     loadedTextures: Map<number, Int32Array>;
 };
