@@ -489,7 +489,7 @@ function createCameraControls(mapViewer: MapViewer): Schema {
             "Ortho Zoom": {
                 value: mapViewer.camera.orthoZoom,
                 min: 1,
-                max: 60,
+                max: 140,
                 step: 1,
                 onChange: (v: number) => {
                     mapViewer.camera.orthoZoom = v;

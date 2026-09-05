@@ -20,6 +20,7 @@ import { DrawRange, newDrawRange } from "./DrawRange";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
+import { Player } from "./player/Player";
 
 const FRAME_RENDER_DELAY = 3;
 
@@ -229,6 +230,21 @@ export class WebGLMapSquare {
             );
         }
 
+        const player = mapData.player
+            ? new Player(
+                  mapData.player.x,
+                  mapData.player.y,
+                  mapData.player.level,
+                  mapData.player.id,
+                  mapData.player.idleAnim,
+                  mapData.player.walkAnim,
+                  mapData.player.runAnim,
+                  mapData.player.idleSeqId,
+                  mapData.player.walkSeqId,
+                  mapData.player.runSeqId,
+              )
+            : undefined;
+
         for (const npc of npcs) {
             const collisionMap = collisionMaps[npc.level];
 
@@ -248,7 +264,9 @@ export class WebGLMapSquare {
             }
         }
 
-        const drawRangesNpc = npcs.map((_npc) => newDrawRange(0, 0, 1));
+        const drawRangesNpc = new Array(npcs.length + Number(player !== undefined)).fill(
+            newDrawRange(0, 0, 1),
+        );
 
         const drawCallNpc = createDrawCall(npcProgram, undefined, drawRangesNpc);
 
@@ -268,6 +286,7 @@ export class WebGLMapSquare {
             vertexArray,
 
             heightMapTexture,
+            mapData.heightMapTextureData,
 
             modelInfoTexture,
             modelInfoTextureAlpha,
@@ -297,6 +316,7 @@ export class WebGLMapSquare {
 
             locsAnimated,
             npcs,
+            player,
         );
     }
 
@@ -316,6 +336,7 @@ export class WebGLMapSquare {
         readonly vertexArray: VertexArray,
 
         readonly heightMapTexture: Texture,
+        readonly heightMapTextureData: Int16Array,
 
         // Model info
         readonly modelInfoTexture: Texture,
@@ -350,6 +371,8 @@ export class WebGLMapSquare {
 
         // Npcs
         readonly npcs: Npc[],
+
+        readonly player: Player | undefined,
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
@@ -365,6 +388,26 @@ export class WebGLMapSquare {
 
     getMapDistance(mapX: number, mapY: number): number {
         return Math.max(Math.abs(mapX - this.mapX), Math.abs(mapY - this.mapY));
+    }
+
+    getHeightAt(x: number, y: number, level: number): number {
+        const tileX = x >> 7;
+        const tileY = y >> 7;
+        const offsetX = x & 0x7f;
+        const offsetY = y & 0x7f;
+        const size = Scene.MAP_SQUARE_SIZE + this.borderSize * 2;
+        const getHeight = (x: number, y: number) =>
+            this.heightMapTextureData[
+                level * size * size + (x + this.borderSize) * size + y + this.borderSize
+            ] * 8;
+        const height0 =
+            (getHeight(tileX, tileY) * (128 - offsetX) + getHeight(tileX + 1, tileY) * offsetX) >>
+            7;
+        const height1 =
+            (getHeight(tileX, tileY + 1) * (128 - offsetX) +
+                getHeight(tileX + 1, tileY + 1) * offsetX) >>
+            7;
+        return (height0 * (128 - offsetY) + height1 * offsetY) >> 7;
     }
 
     getDrawCall(isAlpha: boolean, isInteract: boolean, isLod: boolean): DrawCallRange {

@@ -29,7 +29,7 @@ export class Camera {
     projectionType: ProjectionType = ProjectionType.PERSPECTIVE;
 
     fov: number = 90;
-    orthoZoom: number = 15;
+    orthoZoom: number = 140;
 
     projectionMatrix: mat4 = mat4.create();
     cameraMatrix: mat4 = mat4.create();
@@ -79,6 +79,10 @@ export class Camera {
     }
 
     updatePitch(pitch: number, deltaPitch: number): void {
+        if (this.projectionType === ProjectionType.ORTHO) {
+            return;
+        }
+
         const maxPitch = this.projectionType === ProjectionType.PERSPECTIVE ? 512 : 0;
         this.pitch = clamp(pitch + deltaPitch, -512, maxPitch);
         this.updated = true;
@@ -94,6 +98,10 @@ export class Camera {
     }
 
     updateYaw(yaw: number, deltaYaw: number): void {
+        if (this.projectionType === ProjectionType.ORTHO) {
+            return;
+        }
+
         this.setYaw(yaw + deltaYaw);
     }
 

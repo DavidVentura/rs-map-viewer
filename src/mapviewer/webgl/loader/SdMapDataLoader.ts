@@ -3,6 +3,7 @@ import { ContourGroundInfo, LocModelLoader } from "../../../rs/config/loctype/Lo
 import { LocType } from "../../../rs/config/loctype/LocType";
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { NpcType } from "../../../rs/config/npctype/NpcType";
+import { NpcTypeLoader } from "../../../rs/config/npctype/NpcTypeLoader";
 import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
 import { Model } from "../../../rs/model/Model";
@@ -11,6 +12,8 @@ import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { NpcSpawn, getMapNpcSpawns } from "../../data/npc/NpcSpawn";
 import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
+import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
+import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { loadMinimapBlob } from "../../worker/MinimapData";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/RenderDataWorker";
@@ -34,6 +37,7 @@ import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs, isLowDetail } from "../loc/SceneLocs";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
+import { PlayerData } from "../player/PlayerData";
 import { SdMapData } from "./SdMapData";
 import { SdMapLoaderInput } from "./SdMapLoaderInput";
 
@@ -499,6 +503,80 @@ function addNpcAnimationFrames(
     };
 }
 
+function addPlayerAnimationFrames(
+    playerModelLoader: PlayerModelLoader,
+    sceneBuf: SceneBuffer,
+    appearance: PlayerAppearance,
+    seqId: number,
+): AnimationFrames | undefined {
+    const seqType = playerModelLoader.seqTypeLoader.load(seqId);
+    if (!seqType.frameIds || seqType.frameIds.length === 0) {
+        return undefined;
+    }
+
+    const frames = new Array<DrawRange>(seqType.frameIds.length);
+    const framesAlpha = new Array<DrawRange>(seqType.frameIds.length);
+    let alphaFrameCount = 0;
+    for (let i = 0; i < seqType.frameIds.length; i++) {
+        const model = playerModelLoader.getModel(appearance, seqId, i);
+        if (!model) {
+            return undefined;
+        }
+        frames[i] = sceneBuf.addModelAnimFrame(model, false);
+        framesAlpha[i] = sceneBuf.addModelAnimFrame(model, true);
+        if (framesAlpha[i][1] > 0) {
+            alphaFrameCount++;
+        }
+    }
+
+    return {
+        frames,
+        framesAlpha: alphaFrameCount > 0 ? framesAlpha : undefined,
+    };
+}
+
+function createPlayerData(
+    playerModelLoader: PlayerModelLoader,
+    npcTypeLoader: NpcTypeLoader,
+    sceneBuf: SceneBuffer,
+    mapX: number,
+    mapY: number,
+): PlayerData | undefined {
+    const playerTileX = 3208;
+    const playerTileY = 3233;
+    if (mapX !== playerTileX >> 6 || mapY !== playerTileY >> 6) {
+        return undefined;
+    }
+
+    const baseNpc = npcTypeLoader.load(3105);
+    const appearance = new PlayerAppearance(
+        baseNpc.modelIds,
+        [841],
+        PlayerGender.MALE,
+        baseNpc.ambient,
+        baseNpc.contrast,
+    );
+    const idleAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 808);
+    const walkAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 819);
+    const runAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 824);
+    if (!idleAnim || !walkAnim || !runAnim) {
+        return undefined;
+    }
+
+    return {
+        x: (playerTileX & 0x3f) * 128 + 64,
+        y: (playerTileY & 0x3f) * 128 + 64,
+        level: 0,
+        id: baseNpc.id,
+        idleAnim,
+        walkAnim,
+        runAnim,
+        idleSeqId: 808,
+        walkSeqId: 819,
+        runSeqId: 824,
+    };
+}
+
 function createNpcSpawnGroups(
     npcModelLoader: NpcModelLoader,
     basTypeLoader: BasTypeLoader,
@@ -661,6 +739,15 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             npcSpawns,
         );
         const npcs = createNpcDatas(npcSpawnGroups);
+        const playerModelLoader = new PlayerModelLoader(
+            state.objTypeLoader,
+            state.cacheLoaderFactory.getModelLoader(),
+            textureLoader,
+            state.seqTypeLoader,
+            state.seqFrameLoader,
+            state.skeletalSeqLoader,
+        );
+        const player = createPlayerData(playerModelLoader, npcTypeLoader, sceneBuf, mapX, mapY);
 
         // Draw ranges
 
@@ -834,6 +921,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
                 locsAnimated,
                 npcs,
+                player,
 
                 loadedTextures,
             },

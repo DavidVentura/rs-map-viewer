@@ -18,6 +18,7 @@ import {
 
 import { OsrsMenuEntry } from "../../components/rs/menu/OsrsMenu";
 import { createTextureArray } from "../../picogl/PicoTexture";
+import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { MenuTargetType } from "../../rs/MenuEntry";
 import { Scene } from "../../rs/scene/Scene";
 import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceUtil";
@@ -777,6 +778,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.app.resize(width, height);
     }
 
+    override handleKeyInput(deltaTime: number): void {
+        if (!this.getPlayer()) {
+            super.handleKeyInput(deltaTime);
+        }
+    }
+
     override render(time: number, deltaTime: number, resized: boolean): void {
         const showDebugTimer = this.mapViewer.inputManager.isKeyDown("KeyY");
 
@@ -832,6 +839,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const camera = this.mapViewer.camera;
 
         this.handleInput(deltaTime);
+        this.updatePlayer(deltaTime / 1000);
+        this.pinCameraToPlayer();
 
         camera.update(this.app.width, this.app.height);
 
@@ -1005,6 +1014,58 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
+    private getPlayer() {
+        for (const map of this.mapManager.mapSquares.values()) {
+            if (map.player) {
+                return { map, player: map.player };
+            }
+        }
+        return undefined;
+    }
+
+    private updatePlayer(deltaTimeSeconds: number): void {
+        const playerEntry = this.getPlayer();
+        if (!playerEntry) {
+            return;
+        }
+
+        const inputManager = this.mapViewer.inputManager;
+        const moveX =
+            Number(inputManager.isKeyDown("KeyD")) - Number(inputManager.isKeyDown("KeyA"));
+        const moveY =
+            Number(inputManager.isKeyDown("KeyW")) - Number(inputManager.isKeyDown("KeyS"));
+        playerEntry.player.update(
+            {
+                x: moveX,
+                y: moveY,
+                running: inputManager.isShiftDown(),
+            },
+            deltaTimeSeconds,
+            this.mapViewer.seqTypeLoader,
+            this.mapViewer.seqFrameLoader,
+        );
+    }
+
+    private pinCameraToPlayer(): void {
+        const playerEntry = this.getPlayer();
+        if (!playerEntry) {
+            return;
+        }
+
+        const { map, player } = playerEntry;
+        const camera = this.mapViewer.camera;
+        const playerX = map.mapX * Scene.MAP_SQUARE_SIZE + player.x / 128;
+        const playerZ = map.mapY * Scene.MAP_SQUARE_SIZE + player.y / 128;
+        const playerY = -map.getHeightAt(player.x, player.y, player.level) / 128;
+        const pitch = camera.pitch * RS_TO_RADIANS;
+        const yaw = (camera.yaw - 1024) * RS_TO_RADIANS;
+        const distance = (playerY - camera.pos[1]) / Math.sin(pitch);
+        camera.pos[0] = playerX - distance * Math.sin(yaw) * Math.cos(pitch);
+        camera.pos[2] = playerZ - distance * Math.cos(yaw) * Math.cos(pitch);
+        camera.updated = true;
+        camera.updatedPosition = true;
+    }
+
     tickPass(time: number, ticksElapsed: number, clientTicksElapsed: number): void {
         const cycle = time / 0.02;
 
@@ -1039,8 +1100,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     addNpcRenderData(map: WebGLMapSquare) {
         const npcs = map.npcs;
+        const actorCount = npcs.length + Number(map.player !== undefined);
 
-        if (npcs.length === 0) {
+        if (actorCount === 0) {
             return;
         }
 
@@ -1049,7 +1111,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         map.npcDataTextureOffsets[frameCount % map.npcDataTextureOffsets.length] =
             this.npcRenderCount;
 
-        const newCount = this.npcRenderCount + npcs.length;
+        const newCount = this.npcRenderCount + actorCount;
 
         if (this.npcRenderData.length / 4 < newCount) {
             const newData = new Uint16Array(Math.ceil((newCount * 2) / 16) * 16 * 4);
@@ -1073,6 +1135,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.npcRenderData[offset++] = (npc.rotation << 2) | renderPlane;
             this.npcRenderData[offset++] = npc.npcType.id;
 
+            this.npcRenderCount++;
+        }
+
+        if (map.player) {
+            const offset = this.npcRenderCount * 4;
+            this.npcRenderData[offset] = map.player.x;
+            this.npcRenderData[offset + 1] = map.player.y;
+            this.npcRenderData[offset + 2] = (map.player.rotation << 2) | map.player.level;
+            this.npcRenderData[offset + 3] = map.player.id;
             this.npcRenderCount++;
         }
     }
@@ -1149,7 +1220,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
 
-            if (npcs.length === 0) {
+            if (npcs.length === 0 && !map.player) {
                 continue;
             }
 
@@ -1174,6 +1245,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 (drawCall as any).numElements[i] = frame[1];
 
                 drawRanges[i] = frame;
+            }
+
+            if (map.player) {
+                const index = npcs.length;
+                const frame = map.player.getAnimationFrames().frames[map.player.movementFrame];
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
             }
 
             this.draw(drawCall, drawRanges);
@@ -1225,7 +1304,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
 
-            if (npcs.length === 0) {
+            if (npcs.length === 0 && !map.player) {
                 continue;
             }
 
@@ -1253,6 +1332,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 (drawCall as any).numElements[i] = frame[1];
 
                 drawRanges[i] = frame;
+            }
+
+            if (map.player) {
+                const index = npcs.length;
+                const frames = map.player.getAnimationFrames().framesAlpha;
+                const frame = frames ? frames[map.player.movementFrame] : NULL_DRAW_RANGE;
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
             }
 
             this.draw(drawCall, drawRanges);
