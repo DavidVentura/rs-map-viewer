@@ -410,6 +410,113 @@ export class WebGLMapSquare {
         return (height0 * (128 - offsetY) + height1 * offsetY) >> 7;
     }
 
+    movePlayer(
+        level: number,
+        startX: number,
+        startY: number,
+        deltaX: number,
+        deltaY: number,
+    ): { x: number; y: number } {
+        const steps = Math.ceil(Math.max(Math.abs(deltaX), Math.abs(deltaY)) / 16);
+        if (steps === 0) {
+            return { x: startX, y: startY };
+        }
+
+        let x = startX;
+        let y = startY;
+        for (let step = 0; step < steps; step++) {
+            x = this.movePlayerAxis(level, x, y, deltaX / steps, true);
+            y = this.movePlayerAxis(level, x, y, deltaY / steps, false);
+        }
+        return { x, y };
+    }
+
+    private movePlayerAxis(
+        level: number,
+        x: number,
+        y: number,
+        delta: number,
+        isX: boolean,
+    ): number {
+        const next = isX ? x + delta : y + delta;
+        if (!this.canOccupy(level, isX ? next : x, isX ? y : next)) {
+            return isX ? x : y;
+        }
+
+        const currentTileX = x >> 7;
+        const currentTileY = y >> 7;
+        const nextTileX = (isX ? next : x) >> 7;
+        const nextTileY = (isX ? y : next) >> 7;
+        if (currentTileX === nextTileX && currentTileY === nextTileY) {
+            return next;
+        }
+
+        const collisionMap = this.collisionMaps[level];
+        const sourceFlag = collisionMap.getFlag(
+            currentTileX + this.borderSize,
+            currentTileY + this.borderSize,
+        );
+        const targetFlag = collisionMap.getFlag(
+            nextTileX + this.borderSize,
+            nextTileY + this.borderSize,
+        );
+        const blocked =
+            (isX &&
+                delta > 0 &&
+                ((sourceFlag & CollisionFlag.WALL_EAST) !== 0 ||
+                    (targetFlag & CollisionFlag.WALL_WEST) !== 0)) ||
+            (isX &&
+                delta < 0 &&
+                ((sourceFlag & CollisionFlag.WALL_WEST) !== 0 ||
+                    (targetFlag & CollisionFlag.WALL_EAST) !== 0)) ||
+            (!isX &&
+                delta > 0 &&
+                ((sourceFlag & CollisionFlag.WALL_NORTH) !== 0 ||
+                    (targetFlag & CollisionFlag.WALL_SOUTH) !== 0)) ||
+            (!isX &&
+                delta < 0 &&
+                ((sourceFlag & CollisionFlag.WALL_SOUTH) !== 0 ||
+                    (targetFlag & CollisionFlag.WALL_NORTH) !== 0));
+        return blocked ? (isX ? x : y) : next;
+    }
+
+    private canOccupy(level: number, x: number, y: number): boolean {
+        const radius = 32;
+        const minTileX = Math.floor((x - radius) / 128);
+        const maxTileX = Math.floor((x + radius) / 128);
+        const minTileY = Math.floor((y - radius) / 128);
+        const maxTileY = Math.floor((y + radius) / 128);
+        if (
+            minTileX < 0 ||
+            minTileY < 0 ||
+            maxTileX >= Scene.MAP_SQUARE_SIZE ||
+            maxTileY >= Scene.MAP_SQUARE_SIZE
+        ) {
+            return false;
+        }
+
+        const collisionMap = this.collisionMaps[level];
+        const blockingFlags =
+            CollisionFlag.OBJECT |
+            CollisionFlag.FLOOR_DECORATION |
+            CollisionFlag.FLOOR |
+            CollisionFlag.BLOCK_PLAYERS;
+        for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+            for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
+                if (
+                    collisionMap.hasFlag(
+                        tileX + this.borderSize,
+                        tileY + this.borderSize,
+                        blockingFlags,
+                    )
+                ) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     getDrawCall(isAlpha: boolean, isInteract: boolean, isLod: boolean): DrawCallRange {
         if (isInteract) {
             if (isLod) {

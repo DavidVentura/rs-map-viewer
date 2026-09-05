@@ -8,6 +8,13 @@ export type PlayerInput = {
     running: boolean;
 };
 
+export type PlayerMovementResolver = (
+    x: number,
+    y: number,
+    deltaX: number,
+    deltaY: number,
+) => { x: number; y: number };
+
 export class Player {
     static readonly WALK_SPEED = 192;
     static readonly RUN_SPEED = 384;
@@ -39,6 +46,7 @@ export class Player {
         deltaTimeSeconds: number,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
+        resolveMovement: PlayerMovementResolver,
     ): void {
         const length = Math.hypot(input.x, input.y);
         if (length === 0) {
@@ -49,8 +57,9 @@ export class Player {
 
         const speed = input.running ? Player.RUN_SPEED : Player.WALK_SPEED;
         const scale = (speed * deltaTimeSeconds) / length;
-        this.x = Math.min(Math.max(this.x + input.x * scale, 64), Player.MAP_SIZE - 64);
-        this.y = Math.min(Math.max(this.y + input.y * scale, 64), Player.MAP_SIZE - 64);
+        const position = resolveMovement(this.x, this.y, input.x * scale, input.y * scale);
+        this.x = position.x;
+        this.y = position.y;
         this.rotation = ((Math.atan2(input.x, input.y) / (Math.PI * 2)) * 2048 + 1024) & 2047;
         this.setAnimation(input.running ? this.runSeqId : this.walkSeqId);
         this.advanceAnimation(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);

@@ -1043,6 +1043,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             deltaTimeSeconds,
             this.mapViewer.seqTypeLoader,
             this.mapViewer.seqFrameLoader,
+            (x, y, deltaX, deltaY) =>
+                playerEntry.map.movePlayer(playerEntry.player.level, x, y, deltaX, deltaY),
         );
     }
 
