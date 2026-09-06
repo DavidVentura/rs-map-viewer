@@ -56,6 +56,7 @@ export type SdMapData = {
     npcs: NpcData[];
     player?: PlayerData;
     projectileFrame?: DrawRange;
+    projectileFrameAlpha?: DrawRange;
 
     loadedTextures: Map<number, Int32Array>;
 };

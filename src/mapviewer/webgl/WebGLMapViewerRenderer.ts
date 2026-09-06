@@ -264,8 +264,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             FRAME_FXAA_PROGRAM,
         );
 
-        const [mainProgram, mainAlphaProgram, npcProgram, frameProgram, frameFxaaProgram] =
-            programs;
+        const [
+            mainProgram,
+            mainAlphaProgram,
+            npcProgram,
+            frameProgram,
+            frameFxaaProgram,
+        ] = programs;
         this.mainProgram = mainProgram;
         this.mainAlphaProgram = mainAlphaProgram;
         this.npcProgram = npcProgram;
@@ -1079,29 +1084,127 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.unproject(nearPoint, clipX, clipY, -1);
         this.unproject(farPoint, clipX, clipY, 1);
         const { map, player } = playerEntry;
-        const playerX = map.mapX * Scene.MAP_SQUARE_SIZE + player.x / 128;
-        const playerY = -map.getHeightAt(player.x, player.y, player.level) / 128;
-        const playerZ = map.mapY * Scene.MAP_SQUARE_SIZE + player.y / 128;
-        const rayY = farPoint[1] - nearPoint[1];
-        if (rayY === 0) {
+        const target = this.getProjectileTarget(
+            map,
+            player.x,
+            player.y,
+            player.level,
+            this.getHoveredNpcIds(),
+        );
+        if (!target || Math.hypot(target.x - player.x, target.y - player.y) === 0) {
             return;
         }
-        const rayDistance = (playerY - nearPoint[1]) / rayY;
-        const targetX = nearPoint[0] + (farPoint[0] - nearPoint[0]) * rayDistance;
-        const targetZ = nearPoint[2] + (farPoint[2] - nearPoint[2]) * rayDistance;
-        const deltaX = targetX - playerX;
-        const deltaY = targetZ - playerZ;
-        const length = Math.hypot(deltaX, deltaY);
-        if (length === 0 || !player.canAttack(timeSeconds)) {
+        if (!player.canAttack(timeSeconds)) {
             return;
         }
 
-        const velocityX = (deltaX / length) * Projectile.SPEED;
-        const velocityY = (deltaY / length) * Projectile.SPEED;
-        const rotation = ((Math.atan2(velocityX, velocityY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
+        const deltaX = target.x - player.x;
+        const deltaY = target.y - player.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const rotation = ((Math.atan2(deltaX, deltaY) / (Math.PI * 2)) * 2048) & 2047;
+        player.attack(rotation);
         map.addProjectile(
-            new Projectile(player.x, player.y, player.level, rotation, velocityX, velocityY),
+            new Projectile(
+                player.x + (deltaX / distance) * 48,
+                player.y + (deltaY / distance) * 48,
+                player.level,
+                target.x,
+                target.y,
+                target.height,
+                rotation,
+            ),
         );
+    }
+
+    private getProjectileTarget(
+        map: WebGLMapSquare,
+        playerX: number,
+        playerY: number,
+        level: number,
+        hoveredNpcIds: Set<number>,
+    ): { x: number; y: number; height: number } | undefined {
+        const directionX = farPoint[0] - nearPoint[0];
+        const directionY = farPoint[1] - nearPoint[1];
+        const directionZ = farPoint[2] - nearPoint[2];
+        let closestNpcDistance = Infinity;
+        let npcTarget: { x: number; y: number; height: number } | undefined;
+        let hoveredNpcDistance = Infinity;
+        let hoveredNpcTarget: { x: number; y: number; height: number } | undefined;
+
+        for (const npc of map.npcs) {
+            if (npc.level !== level) {
+                continue;
+            }
+            const npcX = map.mapX * Scene.MAP_SQUARE_SIZE + npc.x / 128;
+            const npcY = -map.getHeightAt(npc.x, npc.y, level) / 128;
+            const npcZ = map.mapY * Scene.MAP_SQUARE_SIZE + npc.y / 128;
+            const radius = npc.getSize() * 0.55;
+            const offsetX = nearPoint[0] - npcX;
+            const offsetZ = nearPoint[2] - npcZ;
+            const a = directionX * directionX + directionZ * directionZ;
+            if (a === 0) {
+                continue;
+            }
+            if (hoveredNpcIds.has(npc.npcType.id)) {
+                const closestDistance =
+                    ((npcX - nearPoint[0]) * directionX + (npcZ - nearPoint[2]) * directionZ) / a;
+                const closestX = nearPoint[0] + directionX * closestDistance;
+                const closestZ = nearPoint[2] + directionZ * closestDistance;
+                const horizontalDistance = Math.hypot(npcX - closestX, npcZ - closestZ);
+                if (horizontalDistance < hoveredNpcDistance) {
+                    hoveredNpcDistance = horizontalDistance;
+                    hoveredNpcTarget = { x: npc.x, y: npc.y, height: 128 };
+                }
+            }
+            const b = 2 * (offsetX * directionX + offsetZ * directionZ);
+            const c = offsetX * offsetX + offsetZ * offsetZ - radius * radius;
+            const discriminant = b * b - 4 * a * c;
+            if (discriminant < 0) {
+                continue;
+            }
+
+            const distance = (-b - Math.sqrt(discriminant)) / (2 * a);
+            const hitY = nearPoint[1] + directionY * distance;
+            if (distance < 0 || distance > 1 || hitY < npcY || hitY > npcY + 4) {
+                continue;
+            }
+            if (distance < closestNpcDistance) {
+                closestNpcDistance = distance;
+                npcTarget = { x: npc.x, y: npc.y, height: 128 };
+            }
+        }
+        if (npcTarget) {
+            return npcTarget;
+        }
+        if (hoveredNpcTarget && hoveredNpcDistance <= 2) {
+            return hoveredNpcTarget;
+        }
+
+        if (directionY === 0) {
+            return undefined;
+        }
+        const distance =
+            (-map.getHeightAt(playerX, playerY, level) / 128 - nearPoint[1]) / directionY;
+        return {
+            x: (nearPoint[0] + directionX * distance - map.mapX * Scene.MAP_SQUARE_SIZE) * 128,
+            y: (nearPoint[2] + directionZ * distance - map.mapY * Scene.MAP_SQUARE_SIZE) * 128,
+            height: 0,
+        };
+    }
+
+    private getHoveredNpcIds(): Set<number> {
+        const npcIds = new Set<number>();
+        if (!this.interactBuffer) {
+            return npcIds;
+        }
+        for (const indices of this.closestInteractIndices.values()) {
+            for (const index of indices) {
+                if (this.interactBuffer[index + 2] === InteractType.NPC) {
+                    npcIds.add(this.interactBuffer[index]);
+                }
+            }
+        }
+        return npcIds;
     }
 
     private unproject(point: vec4, x: number, y: number, z: number): void {
@@ -1224,13 +1327,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.npcRenderData[offset + 3] = 0;
             this.npcRenderCount++;
         }
+
     }
 
     updateNpcDataTexture() {
         const frameCount = this.stats.frameCount;
 
         const newNpcDataTextureIndex = frameCount % this.npcDataTextureBuffer.length;
-        const npcDataTextureIndex = (frameCount + 1) % this.npcDataTextureBuffer.length;
         this.npcDataTextureBuffer[newNpcDataTextureIndex]?.delete();
         this.npcDataTextureBuffer[newNpcDataTextureIndex] = this.app.createTexture2D(
             this.npcRenderData,
@@ -1243,7 +1346,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             },
         );
 
-        return npcDataTextureIndex;
+        return newNpcDataTextureIndex;
     }
 
     draw(drawCall: DrawCall, drawRanges: number[][]) {
@@ -1311,6 +1414,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
+            drawCall.uniform("u_verticalOffset", 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
@@ -1336,7 +1440,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             const projectileStart = npcs.length + Number(map.player !== undefined);
             for (let i = 0; i < map.projectiles.length; i++) {
                 const index = projectileStart + i;
-                const frame = map.projectileFrame!;
+                const frame = map.projectileFrame ?? NULL_DRAW_RANGE;
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
@@ -1348,6 +1452,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
 
             this.draw(drawCall, drawRanges);
+            for (let i = 0; i < map.projectiles.length; i++) {
+                if (!map.projectileFrame) {
+                    continue;
+                }
+                drawCall.uniform("u_drawId", projectileStart + i);
+                drawCall.uniform("u_verticalOffset", map.projectiles[i].height);
+                drawCall.drawRanges(map.projectileFrame);
+                drawCall.draw();
+            }
         }
     }
 
@@ -1396,7 +1509,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
 
-            if (npcs.length === 0 && !map.player) {
+            if (npcs.length === 0 && !map.player && map.projectiles.length === 0) {
                 continue;
             }
 
@@ -1409,6 +1522,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
+            drawCall.uniform("u_verticalOffset", 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
@@ -1435,7 +1549,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 drawRanges[index] = frame;
             }
 
+            const projectileStart = npcs.length + Number(map.player !== undefined);
+            for (let i = 0; i < map.projectiles.length; i++) {
+                const index = projectileStart + i;
+                const frame = map.projectileFrameAlpha ?? NULL_DRAW_RANGE;
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
+            }
+            for (let i = projectileStart + map.projectiles.length; i < drawRanges.length; i++) {
+                (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
+                (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
+                drawRanges[i] = NULL_DRAW_RANGE;
+            }
+
             this.draw(drawCall, drawRanges);
+            for (let i = 0; i < map.projectiles.length; i++) {
+                if (!map.projectileFrameAlpha) {
+                    continue;
+                }
+                drawCall.uniform("u_drawId", projectileStart + i);
+                drawCall.uniform("u_verticalOffset", map.projectiles[i].height);
+                drawCall.drawRanges(map.projectileFrameAlpha);
+                drawCall.draw();
+            }
         }
     }
 

@@ -8,7 +8,9 @@ export type PlayerData = {
     idleAnim: AnimationFrames;
     walkAnim: AnimationFrames;
     runAnim: AnimationFrames;
+    attackAnim: AnimationFrames;
     idleSeqId: number;
     walkSeqId: number;
     runSeqId: number;
+    attackSeqId: number;
 };

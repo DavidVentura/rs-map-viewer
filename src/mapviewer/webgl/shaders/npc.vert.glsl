@@ -26,6 +26,7 @@ uniform vec2 u_mapPos;
 uniform float u_timeLoaded;
 
 uniform int u_npcDataOffset;
+uniform float u_verticalOffset;
 
 uniform highp usampler2D u_npcDataTexture;
 uniform mediump isampler2DArray u_heightMap;
@@ -101,6 +102,7 @@ void main() {
     vec4 localPos = vec4(vertex.pos, 1.0) * rotationY(float(npcInfo.rotation) * RS_TO_RADIANS) + vec4(npcInfo.tilePos.x, 0, npcInfo.tilePos.y, 0.0);
 
     localPos.y -= getHeightInterp(npcInfo.tilePos, npcInfo.plane);
+    localPos.y += u_verticalOffset;
 
     localPos /= vec4(vec3(128.0), 1.0);
 

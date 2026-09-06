@@ -60,8 +60,6 @@ export class InputManager {
         window.addEventListener("gamepadconnected", this.onGamepadConnected);
         window.addEventListener("gamepaddisconnected", this.onGamepadDisconnected);
 
-        element.addEventListener("dblclick", this.onDoubleClick);
-
         element.addEventListener("keydown", this.onKeyDown);
         element.addEventListener("keyup", this.onKeyUp);
 
@@ -86,8 +84,6 @@ export class InputManager {
 
         window.removeEventListener("gamepadconnected", this.onGamepadConnected);
         window.removeEventListener("gamepaddisconnected", this.onGamepadDisconnected);
-
-        this.element.removeEventListener("dblclick", this.onDoubleClick);
 
         this.element.removeEventListener("keydown", this.onKeyDown);
         this.element.removeEventListener("keyup", this.onKeyUp);
@@ -171,12 +167,6 @@ export class InputManager {
 
     private onGamepadDisconnected = (event: GamepadEvent) => {
         this.gamepadIndex = undefined;
-    };
-
-    private onDoubleClick = (event: MouseEvent) => {
-        if (!document.pointerLockElement && this.element) {
-            this.element.requestPointerLock();
-        }
     };
 
     private onKeyDown = (event: KeyboardEvent) => {

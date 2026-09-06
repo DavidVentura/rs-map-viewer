@@ -16,9 +16,10 @@ export type PlayerMovementResolver = (
 ) => { x: number; y: number };
 
 export class Player {
-    static readonly WALK_SPEED = 192;
-    static readonly RUN_SPEED = 384;
+    static readonly WALK_SPEED = 288;
+    static readonly RUN_SPEED = 576;
     static readonly ATTACK_COOLDOWN_SECONDS = 0.2;
+    static readonly ATTACK_ANIMATION_SPEED = 4;
 
     rotation = 0;
     movementFrame = 0;
@@ -26,6 +27,7 @@ export class Player {
     private animationFrameTime = 0;
     private animationSeqId: number;
     private nextAttackTime = 0;
+    private attackActive = false;
 
     constructor(
         public x: number,
@@ -35,9 +37,11 @@ export class Player {
         readonly idleAnim: AnimationFrames,
         readonly walkAnim: AnimationFrames,
         readonly runAnim: AnimationFrames,
+        readonly attackAnim: AnimationFrames,
         readonly idleSeqId: number,
         readonly walkSeqId: number,
         readonly runSeqId: number,
+        readonly attackSeqId: number,
     ) {
         this.animationSeqId = idleSeqId;
     }
@@ -49,6 +53,20 @@ export class Player {
         seqFrameLoader: SeqFrameLoader,
         resolveMovement: PlayerMovementResolver,
     ): void {
+        if (this.attackActive) {
+            if (
+                !this.advanceAnimation(
+                    deltaTimeSeconds,
+                    seqTypeLoader,
+                    seqFrameLoader,
+                    Player.ATTACK_ANIMATION_SPEED,
+                )
+            ) {
+                return;
+            }
+            this.attackActive = false;
+        }
+
         const length = Math.hypot(input.x, input.y);
         if (length === 0) {
             this.setAnimation(this.idleSeqId);
@@ -73,6 +91,9 @@ export class Player {
         if (this.animationSeqId === this.runSeqId) {
             return this.runAnim;
         }
+        if (this.animationSeqId === this.attackSeqId) {
+            return this.attackAnim;
+        }
         return this.idleAnim;
     }
 
@@ -82,6 +103,12 @@ export class Player {
         }
         this.nextAttackTime = timeSeconds + Player.ATTACK_COOLDOWN_SECONDS;
         return true;
+    }
+
+    attack(rotation: number): void {
+        this.rotation = (rotation + 1024) & 2047;
+        this.attackActive = true;
+        this.setAnimation(this.attackSeqId);
     }
 
     private setAnimation(seqId: number): void {
@@ -97,18 +124,22 @@ export class Player {
         deltaTimeSeconds: number,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
-    ): void {
+        speed: number = 1,
+    ): boolean {
         const sequence = seqTypeLoader.load(this.animationSeqId);
         if (!sequence.frameIds || sequence.frameIds.length === 0) {
-            return;
+            return true;
         }
 
-        this.animationFrameTime += deltaTimeSeconds / 0.02;
+        let completed = false;
+        this.animationFrameTime += (deltaTimeSeconds / 0.02) * speed;
         while (
             this.animationFrameTime > sequence.getFrameLength(seqFrameLoader, this.movementFrame)
         ) {
             this.animationFrameTime -= sequence.getFrameLength(seqFrameLoader, this.movementFrame);
             this.movementFrame = (this.movementFrame + 1) % sequence.frameIds.length;
+            completed ||= this.movementFrame === 0;
         }
+        return completed;
     }
 }

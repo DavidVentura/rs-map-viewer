@@ -241,9 +241,11 @@ export class WebGLMapSquare {
                   mapData.player.idleAnim,
                   mapData.player.walkAnim,
                   mapData.player.runAnim,
+                  mapData.player.attackAnim,
                   mapData.player.idleSeqId,
                   mapData.player.walkSeqId,
                   mapData.player.runSeqId,
+                  mapData.player.attackSeqId,
               )
             : undefined;
 
@@ -271,7 +273,7 @@ export class WebGLMapSquare {
                 length:
                     npcs.length +
                     Number(player !== undefined) +
-                    (mapData.projectileFrame ? MAX_PROJECTILES : 0),
+                    (mapData.projectileFrame || mapData.projectileFrameAlpha ? MAX_PROJECTILES : 0),
             },
             () => newDrawRange(0, 0, 1),
         );
@@ -326,6 +328,7 @@ export class WebGLMapSquare {
             npcs,
             player,
             mapData.projectileFrame,
+            mapData.projectileFrameAlpha,
         );
     }
 
@@ -384,15 +387,24 @@ export class WebGLMapSquare {
         readonly player: Player | undefined,
 
         readonly projectileFrame: DrawRange | undefined,
+        readonly projectileFrameAlpha: DrawRange | undefined,
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
+        if (this.player) {
+            const spawn = this.resolvePlayerSpawn(this.player.level, this.player.x, this.player.y);
+            this.player.x = spawn.x;
+            this.player.y = spawn.y;
+        }
     }
 
     projectiles: Projectile[] = [];
 
     addProjectile(projectile: Projectile): void {
-        if (!this.projectileFrame || this.projectiles.length >= MAX_PROJECTILES) {
+        if (
+            (!this.projectileFrame && !this.projectileFrameAlpha) ||
+            this.projectiles.length >= MAX_PROJECTILES
+        ) {
             return;
         }
         this.projectiles.push(projectile);
@@ -455,6 +467,16 @@ export class WebGLMapSquare {
             y = this.movePlayerAxis(level, x, y, deltaY / steps, false);
         }
         return { x, y };
+    }
+
+    private resolvePlayerSpawn(level: number, x: number, y: number): { x: number; y: number } {
+        for (let offset = 0; offset <= 16 * 128; offset += 128) {
+            const candidateY = y + offset;
+            if (this.canOccupy(level, x, candidateY)) {
+                return { x, y: candidateY };
+            }
+        }
+        throw new Error("No valid player spawn position north of the requested location");
     }
 
     private movePlayerAxis(

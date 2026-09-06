@@ -542,9 +542,9 @@ function createPlayerData(
     mapX: number,
     mapY: number,
 ): PlayerData | undefined {
-    const playerTileX = 3208;
-    const playerTileY = 3233;
-    if (mapX !== playerTileX >> 6 || mapY !== playerTileY >> 6) {
+    const playerWorldX = 3237;
+    const playerWorldY = 3225;
+    if (mapX !== playerWorldX >> 6 || mapY !== playerWorldY >> 6) {
         return undefined;
     }
 
@@ -559,21 +559,24 @@ function createPlayerData(
     const idleAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 808);
     const walkAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 819);
     const runAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 824);
-    if (!idleAnim || !walkAnim || !runAnim) {
+    const attackAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 426);
+    if (!idleAnim || !walkAnim || !runAnim || !attackAnim) {
         return undefined;
     }
 
     return {
-        x: (playerTileX & 0x3f) * 128 + 64,
-        y: (playerTileY & 0x3f) * 128 + 64,
+        x: (playerWorldX & 0x3f) * 128,
+        y: (playerWorldY & 0x3f) * 128,
         level: 0,
         id: baseNpc.id,
         idleAnim,
         walkAnim,
         runAnim,
+        attackAnim,
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
+        attackSeqId: 426,
     };
 }
 
@@ -752,6 +755,9 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         const projectileFrame = arrowModel
             ? sceneBuf.addModelAnimFrame(arrowModel, false)
             : undefined;
+        const projectileFrameAlpha = arrowModel
+            ? sceneBuf.addModelAnimFrame(arrowModel, true)
+            : undefined;
 
         // Draw ranges
 
@@ -927,6 +933,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 npcs,
                 player,
                 projectileFrame,
+                projectileFrameAlpha,
 
                 loadedTextures,
             },
