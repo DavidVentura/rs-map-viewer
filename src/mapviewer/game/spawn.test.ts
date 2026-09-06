@@ -4,6 +4,10 @@ import { resolveSpawn } from "./spawn";
 class FakeTerrain implements Terrain {
     constructor(private readonly occupiablePoints: Set<string>) {}
 
+    isLoaded(): boolean {
+        return true;
+    }
+
     canOccupy(level: number, x: number, y: number): boolean {
         return this.occupiablePoints.has(`${x},${y}`);
     }

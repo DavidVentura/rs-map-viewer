@@ -7,6 +7,7 @@ export enum CombatEventKind {
     PLAYER_DIED = 3,
     ENEMY_DIED = 4,
     ENEMY_RESPAWNED = 5,
+    ENCOUNTER_CLEARED = 6,
 }
 
 export type DamageEvent = {
@@ -42,13 +43,18 @@ export type EnemyRespawnedEvent = {
     target: Combatant;
 };
 
+export type EncounterClearedEvent = {
+    kind: CombatEventKind.ENCOUNTER_CLEARED;
+};
+
 export type CombatEvent =
     | DamageEvent
     | HealEvent
     | FreezeEvent
     | PlayerDiedEvent
     | EnemyDiedEvent
-    | EnemyRespawnedEvent;
+    | EnemyRespawnedEvent
+    | EncounterClearedEvent;
 
 export interface Freezable extends Combatant {
     frozenUntil?: number;

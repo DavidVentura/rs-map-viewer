@@ -7,6 +7,7 @@ import {
     PlayerHudInfo,
     StyleSwitchHudInfo,
     TargetHudInfo,
+    WaveHudInfo,
 } from "./HudFrame";
 
 const HEALTH_GLOBE_COLOR = { light: "#ff4a3a", dark: "#5a0606", glow: "#ff9a8a" };
@@ -612,6 +613,30 @@ export function drawHealSplat(
     progress: number,
 ): void {
     drawSplatText(ctx, screen, `+${Math.round(amount)}`, HEAL_COLOR, progress);
+}
+
+const WAVE_COUNTER_MARGIN_TOP = 16;
+const WAVE_COUNTER_MARGIN_RIGHT = 20;
+
+export function drawWaveCounter(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    wave: WaveHudInfo,
+): void {
+    const text = wave.cleared
+        ? "Encounter cleared"
+        : `Wave ${wave.index} / ${wave.total} · ${wave.aliveEnemies} left`;
+
+    ctx.save();
+    ctx.font = "700 18px sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = wave.cleared ? "#4dff7a" : "#e8e0d0";
+    ctx.strokeText(text, width - WAVE_COUNTER_MARGIN_RIGHT, WAVE_COUNTER_MARGIN_TOP);
+    ctx.fillText(text, width - WAVE_COUNTER_MARGIN_RIGHT, WAVE_COUNTER_MARGIN_TOP);
+    ctx.restore();
 }
 
 export function drawFrozenSplat(

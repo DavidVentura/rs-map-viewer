@@ -16,6 +16,20 @@ const BLOCKING_FLAGS =
 export class WebGLTerrain implements Terrain {
     constructor(private readonly mapManager: MapManager<WebGLMapSquare>) {}
 
+    getRenderLevel(level: number, x: number, y: number): number {
+        const { mapCoord: mapX, localCoord: localX } = splitWorldCoord(x);
+        const { mapCoord: mapY, localCoord: localY } = splitWorldCoord(y);
+        const mapSquare = this.getMapSquare(mapX, mapY);
+        const onBridge = (mapSquare.getTileRenderFlag(1, localX >> 7, localY >> 7) & 0x2) === 2;
+        return level < 3 && onBridge ? level + 1 : level;
+    }
+
+    isLoaded(level: number, x: number, y: number): boolean {
+        const { mapCoord: mapX } = splitWorldCoord(x);
+        const { mapCoord: mapY } = splitWorldCoord(y);
+        return this.mapManager.getMapSquare(mapX, mapY) !== undefined;
+    }
+
     canOccupy(level: number, x: number, y: number): boolean {
         const { mapCoord: mapX, localCoord: localX } = splitWorldCoord(x);
         const { mapCoord: mapY, localCoord: localY } = splitWorldCoord(y);

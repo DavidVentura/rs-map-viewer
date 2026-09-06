@@ -75,6 +75,13 @@ export type StyleSwitchHudInfo = {
     readonly progress: number;
 };
 
+export type WaveHudInfo = {
+    readonly index: number;
+    readonly total: number;
+    readonly aliveEnemies: number;
+    readonly cleared: boolean;
+};
+
 export type HudFrame = {
     viewProjMatrix: mat4;
     screenSize: ScreenSize;
@@ -84,4 +91,5 @@ export type HudFrame = {
     activeStyle?: WeaponStyle;
     styleSwitch?: StyleSwitchHudInfo;
     splatEvents: SplatEvent[];
+    wave?: WaveHudInfo;
 };

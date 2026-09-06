@@ -87,6 +87,7 @@ function MapViewerApp() {
                 rendererType,
                 cache,
             );
+            (window as any).mapViewer = mapViewer;
 
             const hasCameraParams =
                 searchParams.get("cx") && searchParams.get("cy") && searchParams.get("cz");

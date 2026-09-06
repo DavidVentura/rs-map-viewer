@@ -18,7 +18,7 @@ function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDeci
     return {
         health: 20,
         distanceToPlayer: 0,
-        aggroRadius: 500,
+        hasPlayer: true,
         attackReach: 176,
         frozen: false,
         attackReady: true,
@@ -28,19 +28,25 @@ function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDeci
 }
 
 describe("decideEnemyState", () => {
-    it("stays idle while the player is outside the aggro radius", () => {
-        expect(decideEnemyState(EnemyState.IDLE, decisionInputs({ distanceToPlayer: 1000 }))).toBe(
-            EnemyState.IDLE,
-        );
+    it("stays idle while there is no player", () => {
+        expect(
+            decideEnemyState(
+                EnemyState.IDLE,
+                decisionInputs({ hasPlayer: false, distanceToPlayer: Infinity }),
+            ),
+        ).toBe(EnemyState.IDLE);
     });
 
-    it("starts chasing once the player enters the aggro radius", () => {
-        expect(decideEnemyState(EnemyState.IDLE, decisionInputs({ distanceToPlayer: 400 }))).toBe(
-            EnemyState.CHASE,
-        );
+    it("starts chasing immediately once a player exists, regardless of distance", () => {
+        expect(
+            decideEnemyState(
+                EnemyState.IDLE,
+                decisionInputs({ hasPlayer: true, distanceToPlayer: 10000 }),
+            ),
+        ).toBe(EnemyState.CHASE);
     });
 
-    it("keeps chasing even if the player moves back outside the aggro radius", () => {
+    it("keeps chasing even if the player moves far away", () => {
         expect(
             decideEnemyState(EnemyState.CHASE, decisionInputs({ distanceToPlayer: 10000 })),
         ).toBe(EnemyState.CHASE);
@@ -167,6 +173,7 @@ describe("directionToRotation for facing", () => {
 const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
 const seqFrameLoader = {} as any;
 const terrain: Terrain = {
+    isLoaded: () => true,
     canOccupy: () => true,
     getWallFlag: () => 0,
     getHeight: () => 0,
@@ -219,7 +226,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 10;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.IDLE);
         expect(enemy.x).toBe(0);
@@ -231,7 +238,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 1;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, 1, 2, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 1, 2, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.CHASE);
     });
@@ -241,7 +248,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 10;
         enemy.health = 0;
 
-        enemy.update(undefined, 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(undefined, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.DEAD);
     });
@@ -257,7 +264,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.x).toBe(0);
@@ -271,24 +278,40 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         const player = new FakePlayer(100, 0, 0);
 
         let time = 10;
-        enemy.update(player, 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
         const windupSeconds = ENEMY_MELEE.windupSeconds;
         time += windupSeconds - 0.001;
-        enemy.update(player, windupSeconds - 0.001, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(
+            player,
+            [],
+            windupSeconds - 0.001,
+            time,
+            seqTypeLoader,
+            seqFrameLoader,
+            terrain,
+        );
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.x).toBe(0);
 
         time += 0.002;
-        enemy.update(player, 0.002, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.002, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
 
         const recoverySeconds = ENEMY_MELEE.locks.find(
             (lock) => lock.group === CooldownGroup.ATTACK,
         )!.seconds;
         time += recoverySeconds + 0.01;
-        enemy.update(player, recoverySeconds + 0.01, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(
+            player,
+            [],
+            recoverySeconds + 0.01,
+            time,
+            seqTypeLoader,
+            seqFrameLoader,
+            terrain,
+        );
         expect(enemy.state).toBe(EnemyState.CHASE);
     });
 
@@ -297,11 +320,11 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
         enemy.frozenUntil = 20;
-        enemy.update(player, 0.016, 10.1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10.1, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.abilityRuntime.canUse(ENEMY_MELEE, 0, 10.1)).toBe(true);
     });

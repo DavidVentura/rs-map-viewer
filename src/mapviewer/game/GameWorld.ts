@@ -13,13 +13,21 @@ import {
 } from "./Ability";
 import { CombatEvent, CombatEventKind, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
+import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
-import { EnemyType } from "./EnemyType";
+import { EnemyStatsOverride, EnemyType, getEnemyType } from "./EnemyType";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
 import { SpatialGrid } from "./SpatialGrid";
 import { Terrain } from "./Terrain";
 import { VisualEffect } from "./VisualEffect";
+import {
+    WaveDirectorState,
+    WaveSpawn,
+    initialWaveDirectorState,
+    pickFarthestSpawnPoint,
+    stepWaveDirector,
+} from "./WaveDirector";
 import { ENEMY_MELEE, getStyleAttack } from "./abilities";
 import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
 import {
@@ -64,6 +72,11 @@ export class GameWorld {
     private accumulatedSeconds = 0;
     private nextEnemyId = 1;
 
+    private encounter?: Encounter;
+    private waveDirectorState: WaveDirectorState = initialWaveDirectorState(0);
+    private enemyWaveIndex = new Map<number, number>();
+    private killsByWave: number[] = [];
+
     constructor(
         private readonly terrain: Terrain,
         private readonly seqTypeLoader: SeqTypeLoader,
@@ -76,17 +89,83 @@ export class GameWorld {
         this.player = new Player(spawn.x, spawn.y, level, styleSeqIds);
     }
 
+    // Spawns the player and populates the encounter's initial enemies (its static roster for a
+    // STATIC_RESPAWN encounter, or nothing yet for a WAVES encounter, which the director fills in
+    // from step() onward). May throw (e.g. terrain not loaded yet); on failure call
+    // abortEncounter() to roll back rather than leaving partially-spawned state.
+    startEncounter(
+        encounter: Encounter,
+        x: number,
+        y: number,
+        level: number,
+        styleSeqIds: StanceSeqIdsByStance,
+    ): void {
+        this.spawnPlayer(x, y, level, styleSeqIds);
+        this.encounter = encounter;
+        this.enemies = [];
+        this.enemyWaveIndex.clear();
+        this.killsByWave = encounter.waves.map(() => 0);
+        this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
+        if (encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
+            this.spawnStaticEncounterEnemies(encounter);
+        }
+    }
+
+    abortEncounter(): void {
+        this.player = undefined;
+        this.enemies = [];
+        this.encounter = undefined;
+        this.enemyWaveIndex.clear();
+        this.killsByWave = [];
+        this.waveDirectorState = initialWaveDirectorState(0);
+    }
+
+    getWaveProgress(): { index: number; total: number; cleared: boolean } | undefined {
+        if (!this.encounter || this.encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+            return undefined;
+        }
+        return {
+            index: Math.min(this.waveDirectorState.nextWaveIndex, this.encounter.waves.length),
+            total: this.encounter.waves.length,
+            cleared: this.waveDirectorState.cleared,
+        };
+    }
+
+    private spawnStaticEncounterEnemies(encounter: Encounter): void {
+        let pointIndex = 0;
+        for (const wave of encounter.waves) {
+            for (const group of wave.groups) {
+                const enemyType = getEnemyType(group.enemyTypeId);
+                for (let i = 0; i < group.count; i++) {
+                    const point = encounter.enemySpawns[pointIndex++];
+                    this.spawnEnemy(point.x, point.y, point.level, enemyType);
+                }
+            }
+        }
+    }
+
     spawnEnemy(
         x: number,
         y: number,
         level: number,
         enemyType: EnemyType,
         attackDefinition: AbilityDefinition = ENEMY_MELEE,
+        statsOverride?: EnemyStatsOverride,
     ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
         const id = this.nextEnemyId++;
         this.enemies.push(
-            new Enemy(id, spawn.x, spawn.y, level, spawn.x, spawn.y, enemyType, attackDefinition),
+            new Enemy(
+                id,
+                spawn.x,
+                spawn.y,
+                level,
+                spawn.x,
+                spawn.y,
+                enemyType,
+                attackDefinition,
+                statsOverride,
+            ),
         );
         return id;
     }
@@ -130,6 +209,8 @@ export class GameWorld {
                 .filter((neighbour) => neighbour !== enemy);
             this.updateEnemy(enemy, neighbours, dtSeconds);
         }
+
+        this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
 
@@ -193,7 +274,11 @@ export class GameWorld {
         );
 
         if (wasAlive && enemy.state === EnemyState.DEAD) {
-            enemy.respawnAt = this.timeSeconds + GameWorld.ENEMY_RESPAWN_SECONDS;
+            if (!this.encounter || this.encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
+                enemy.respawnAt = this.timeSeconds + GameWorld.ENEMY_RESPAWN_SECONDS;
+            } else {
+                this.recordWaveEnemyDeath(enemy);
+            }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
             return;
         }
@@ -204,12 +289,74 @@ export class GameWorld {
         this.resolveEnemyAttack(enemy);
     }
 
+    private recordWaveEnemyDeath(enemy: Enemy): void {
+        const waveIndex = this.enemyWaveIndex.get(enemy.id);
+        if (waveIndex === undefined) {
+            return;
+        }
+        this.killsByWave[waveIndex] += 1;
+    }
+
     private tryRespawnEnemy(enemy: Enemy): void {
         if (enemy.respawnAt === undefined || this.timeSeconds < enemy.respawnAt) {
             return;
         }
         enemy.respawn();
         this.events.push({ kind: CombatEventKind.ENEMY_RESPAWNED, target: enemy });
+    }
+
+    private aliveCountsByWave(waveCount: number): number[] {
+        const counts = new Array(waveCount).fill(0);
+        for (const enemy of this.enemies) {
+            if (enemy.state === EnemyState.DEAD) {
+                continue;
+            }
+            const waveIndex = this.enemyWaveIndex.get(enemy.id);
+            if (waveIndex !== undefined) {
+                counts[waveIndex]++;
+            }
+        }
+        return counts;
+    }
+
+    private advanceWaveDirector(): void {
+        const encounter = this.encounter;
+        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES || !this.player) {
+            return;
+        }
+        const aliveByWave = this.aliveCountsByWave(encounter.waves.length);
+        const wasCleared = this.waveDirectorState.cleared;
+        const result = stepWaveDirector(
+            this.waveDirectorState,
+            encounter.waves,
+            this.timeSeconds,
+            aliveByWave,
+            this.killsByWave,
+        );
+        this.waveDirectorState = result.nextState;
+        for (const spawn of result.spawns) {
+            this.spawnWaveEnemy(encounter, spawn);
+        }
+        if (!wasCleared && result.nextState.cleared) {
+            this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
+        }
+    }
+
+    private spawnWaveEnemy(encounter: Encounter, spawn: WaveSpawn): void {
+        if (!this.player) {
+            return;
+        }
+        const point = pickFarthestSpawnPoint(encounter.enemySpawns, this.player.x, this.player.y);
+        const enemyType = getEnemyType(spawn.enemyTypeId);
+        const id = this.spawnEnemy(
+            point.x,
+            point.y,
+            point.level,
+            enemyType,
+            undefined,
+            spawn.statsOverride,
+        );
+        this.enemyWaveIndex.set(id, spawn.waveIndex);
     }
 
     private resolveEnemyAttack(enemy: Enemy): void {
@@ -254,10 +401,20 @@ export class GameWorld {
     }
 
     private resetEncounter(): void {
-        for (const enemy of this.enemies) {
-            enemy.respawn();
-            this.events.push({ kind: CombatEventKind.ENEMY_RESPAWNED, target: enemy });
+        const encounter = this.encounter;
+        if (!encounter || encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
+            for (const enemy of this.enemies) {
+                enemy.respawn();
+                this.events.push({ kind: CombatEventKind.ENEMY_RESPAWNED, target: enemy });
+            }
+            return;
         }
+        // WAVES encounters don't respawn individual enemies; a player death restarts the whole
+        // director from wave 1 instead.
+        this.enemies = [];
+        this.enemyWaveIndex.clear();
+        this.killsByWave = encounter.waves.map(() => 0);
+        this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
     }
 
     private updateProjectiles(dtSeconds: number): void {

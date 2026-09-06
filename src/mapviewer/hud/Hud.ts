@@ -12,6 +12,7 @@ import {
     drawStyleRow,
     drawStyleSwitchLabel,
     drawTargetPlate,
+    drawWaveCounter,
     styleDisplayName,
 } from "./hudDraw";
 
@@ -47,6 +48,9 @@ export class Hud {
         }
         if (frame.target) {
             drawTargetPlate(ctx, width, frame.target);
+        }
+        if (frame.wave) {
+            drawWaveCounter(ctx, width, frame.wave);
         }
         this.drawSplats(frame);
     }

@@ -29,8 +29,7 @@ import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
 import { WeaponStyle } from "../game/Ability";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter } from "../game/Encounter";
-import { Enemy } from "../game/Enemy";
-import { getEnemyType } from "../game/EnemyType";
+import { Enemy, EnemyState } from "../game/Enemy";
 import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
@@ -226,6 +225,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     loadObjs: boolean = true;
     loadNpcs: boolean = true;
+    runEnabled = true;
 
     // State
     lastClientTick: number = 0;
@@ -251,6 +251,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     encounter: Encounter;
     encounterSpawned: boolean = false;
+    private encounterCleared: boolean = false;
 
     readonly terrain: WebGLTerrain;
 
@@ -753,7 +754,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             mapY,
             maxLevel: this.maxLevel,
             loadObjs: this.loadObjs,
-            loadNpcs: this.loadNpcs,
+            loadNpcs: this.shouldLoadNpcs(),
             smoothTerrain: this.smoothTerrain,
             minimizeDrawCalls: !this.hasMultiDraw,
             loadedTextureIds: this.loadedTextureIds,
@@ -812,12 +813,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.updateTextureArray(mapData.loadedTextures);
     }
 
+    private shouldLoadNpcs(): boolean {
+        return this.loadNpcs && this.encounter.ambientNpcs;
+    }
+
     isValidMapData(mapData: SdMapData): boolean {
         return (
             mapData.cacheName === this.mapViewer.loadedCache.info.name &&
             mapData.maxLevel === this.maxLevel &&
             mapData.loadObjs === this.loadObjs &&
-            mapData.loadNpcs === this.loadNpcs &&
+            mapData.loadNpcs === this.shouldLoadNpcs() &&
             mapData.smoothTerrain === this.smoothTerrain
         );
     }
@@ -871,6 +876,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         world.projectiles = [];
         world.visualEffects = [];
         this.encounterSpawned = false;
+        this.encounterCleared = false;
     }
 
     isValidActorBufferData(data: ActorBufferData): boolean {
@@ -886,36 +892,18 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         const world = this.mapViewer.world;
-        const { playerSpawn, enemySpawns } = this.encounter;
-
-        let canSpawn: boolean;
-        try {
-            canSpawn = this.terrain.canOccupy(playerSpawn.level, playerSpawn.x, playerSpawn.y);
-        } catch (e) {
-            canSpawn = false;
-        }
-        if (!canSpawn) {
+        const { playerSpawn } = this.encounter;
+        if (!this.terrain.isLoaded(playerSpawn.level, playerSpawn.x, playerSpawn.y)) {
             return;
         }
 
-        try {
-            world.spawnPlayer(
-                playerSpawn.x,
-                playerSpawn.y,
-                playerSpawn.level,
-                getStanceSeqIds(this.actorBuffer.actorData.player),
-            );
-
-            for (const spawn of enemySpawns) {
-                world.spawnEnemy(spawn.x, spawn.y, spawn.level, getEnemyType(spawn.enemyTypeId));
-            }
-        } catch (e) {
-            console.error("Failed spawning encounter, will retry once terrain finishes loading", e);
-            world.player = undefined;
-            world.enemies = [];
-            return;
-        }
-
+        world.startEncounter(
+            this.encounter,
+            playerSpawn.x,
+            playerSpawn.y,
+            playerSpawn.level,
+            getStanceSeqIds(this.actorBuffer.actorData.player),
+        );
         this.encounterSpawned = true;
     }
 
@@ -1280,7 +1268,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private buildMovementInput(): PlayerInput {
         const player = this.mapViewer.world.player;
         const inputManager = this.mapViewer.inputManager;
-        const running = inputManager.isShiftDown();
+        if (inputManager.isKeyDownEvent("ShiftLeft") || inputManager.isKeyDownEvent("ShiftRight")) {
+            this.runEnabled = !this.runEnabled;
+        }
+        const running = this.runEnabled;
         const stationary: PlayerInput = { x: 0, y: 0, running };
 
         if (
@@ -1440,6 +1431,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const splatEvents: SplatEvent[] = [];
         for (const event of world.drainEvents()) {
+            if (event.kind === CombatEventKind.ENCOUNTER_CLEARED) {
+                this.encounterCleared = true;
+                continue;
+            }
             const groundHeight = this.terrain.getHeight(
                 event.target.level,
                 event.target.x,
@@ -1476,6 +1471,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
         }
 
+        const waveProgress = world.getWaveProgress();
+
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
 
@@ -1505,6 +1502,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     ? { target: switchTarget, progress: switchProgress }
                     : undefined,
             splatEvents,
+            wave: waveProgress && {
+                index: waveProgress.index,
+                total: waveProgress.total,
+                aliveEnemies: world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)
+                    .length,
+                cleared: this.encounterCleared,
+            },
         };
     }
 
@@ -1654,6 +1658,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.actorInstanceData = newData;
         }
 
+        if (actorBuffer.capacity < maxCount) {
+            actorBuffer.growCapacity(Math.ceil((maxCount * 2) / 16) * 16);
+        }
+
         const push = (actor: ActiveActor, instance: ActorInstance): void => {
             if (this.actorInstanceCount >= actorBuffer.capacity) {
                 return;
@@ -1674,7 +1682,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                         worldY: player.y,
                         groundHeight,
                         rotation: player.rotation,
-                        level: player.level,
+                        level: this.terrain.getRenderLevel(player.level, player.x, player.y),
                         interactType: InteractType.NONE,
                         interactId: 0,
                     },
@@ -1698,7 +1706,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     worldY: enemy.y,
                     groundHeight,
                     rotation: enemy.rotation,
-                    level: enemy.level,
+                    level: this.terrain.getRenderLevel(enemy.level, enemy.x, enemy.y),
                     interactType: InteractType.ENEMY,
                     interactId: enemy.id,
                 },
@@ -1719,7 +1727,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     worldY: projectile.y,
                     groundHeight,
                     rotation: (projectile.rotation + rotationOffset) & 2047,
-                    level: projectile.level,
+                    level: this.terrain.getRenderLevel(
+                        projectile.level,
+                        projectile.x,
+                        projectile.y,
+                    ),
                     interactType: InteractType.NONE,
                     interactId: 0,
                 },
@@ -1738,7 +1750,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     worldY: effect.y,
                     groundHeight,
                     rotation: 0,
-                    level: effect.level,
+                    level: this.terrain.getRenderLevel(effect.level, effect.x, effect.y),
                     interactType: InteractType.NONE,
                     interactId: 0,
                 },

@@ -14,6 +14,10 @@ class FakeTerrain implements Terrain {
         this.wallFlags.set(`${tileX},${tileY}`, flag);
     }
 
+    isLoaded(): boolean {
+        return true;
+    }
+
     canOccupy(level: number, x: number, y: number): boolean {
         return !this.blockedPoints.has(`${x},${y}`);
     }

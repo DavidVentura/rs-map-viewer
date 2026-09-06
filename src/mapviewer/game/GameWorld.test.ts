@@ -20,6 +20,10 @@ import {
 } from "./abilities";
 
 class FakeTerrain implements Terrain {
+    isLoaded(): boolean {
+        return true;
+    }
+
     canOccupy(): boolean {
         return true;
     }

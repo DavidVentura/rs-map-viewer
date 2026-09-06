@@ -4,7 +4,7 @@ import { AbilityDefinition, AbilityEffectKind } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
-import { EnemyType } from "./EnemyType";
+import { EnemyStatsOverride, EnemyType, resolveEnemyStats } from "./EnemyType";
 import { Terrain } from "./Terrain";
 import { ENEMY_MELEE } from "./abilities";
 import { resolveMovement } from "./movement";
@@ -109,11 +109,13 @@ export class Enemy implements Combatant, SteeringBody {
         readonly spawnY: number,
         readonly type: EnemyType,
         readonly attackDefinition: AbilityDefinition = ENEMY_MELEE,
+        statsOverride?: EnemyStatsOverride,
     ) {
+        const stats = resolveEnemyStats(type, statsOverride);
         this.hitRadius = type.hitRadius;
-        this.maxHealth = type.maxHealth;
-        this.health = type.maxHealth;
-        this.walkSpeed = type.walkSpeed;
+        this.maxHealth = stats.maxHealth;
+        this.health = stats.maxHealth;
+        this.walkSpeed = stats.walkSpeed;
         this.animation = new AnimationState(type.idleSeqId);
     }
 

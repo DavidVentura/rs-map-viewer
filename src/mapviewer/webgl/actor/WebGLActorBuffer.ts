@@ -70,8 +70,23 @@ export class WebGLActorBuffer {
         readonly vertexArray: VertexArray,
 
         readonly drawCall: DrawCallRange,
-        readonly capacity: number,
+        public capacity: number,
     ) {}
+
+    // Grows the instance draw-range arrays in place so more actors than the encounter's initial
+    // spawn count can be rendered (waves ramp well past that). The underlying mesh/vertex data is
+    // unaffected; only the per-instance draw range bookkeeping is resized.
+    growCapacity(minimumCapacity: number): void {
+        if (minimumCapacity <= this.capacity) {
+            return;
+        }
+        const drawRanges: DrawRange[] = Array.from({ length: minimumCapacity }, () =>
+            newDrawRange(0, 0, 1),
+        );
+        this.drawCall.drawCall.drawRanges(...drawRanges);
+        this.drawCall.drawRanges = drawRanges;
+        this.capacity = minimumCapacity;
+    }
 
     delete(): void {
         this.vertexArray.delete();
