@@ -377,7 +377,7 @@ export class WebGLMapSquare {
         const size = Scene.MAP_SQUARE_SIZE + this.borderSize * 2;
         const getHeight = (x: number, y: number) =>
             this.heightMapTextureData[
-                level * size * size + (x + this.borderSize) * size + y + this.borderSize
+                level * size * size + (y + this.borderSize) * size + x + this.borderSize
             ] * 8;
         const height0 =
             (getHeight(tileX, tileY) * (128 - offsetX) + getHeight(tileX + 1, tileY) * offsetX) >>
