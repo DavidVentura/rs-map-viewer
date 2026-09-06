@@ -17,18 +17,13 @@ import { CollisionFlag } from "../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../rs/scene/CollisionMap";
 import { Scene } from "../../rs/scene/Scene";
 import { DrawRange, newDrawRange } from "./DrawRange";
-import { EnemyRenderData } from "./enemy/EnemyRenderData";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
-import { PlayerRenderData } from "./player/PlayerRenderData";
-import { ProjectileRenderData } from "./projectile/ProjectileRenderData";
 
 const FRAME_RENDER_DELAY = 3;
 
 const NPC_DATA_TEXTURE_BUFFER_SIZE = 5;
-const MAX_PROJECTILES = 32;
-const MAX_VISUAL_EFFECTS = 32;
 
 function createModelInfoTexture(app: PicoApp, data: Uint16Array): Texture {
     return app.createTexture2D(data, 16, Math.max(Math.ceil(data.length / 16 / 4), 1), {
@@ -234,10 +229,6 @@ export class WebGLMapSquare {
             );
         }
 
-        const playerRenderData = mapData.player;
-        const enemyRenderData = mapData.enemy;
-        const enemySpawnCount = enemyRenderData !== undefined ? mapData.enemySpawns.length : 0;
-
         for (const npc of npcs) {
             const collisionMap = collisionMaps[npc.level];
 
@@ -257,16 +248,7 @@ export class WebGLMapSquare {
             }
         }
 
-        const drawRangesNpc = Array.from(
-            {
-                length:
-                    npcs.length +
-                    Number(playerRenderData !== undefined) +
-                    enemySpawnCount +
-                    (mapData.projectiles ? MAX_PROJECTILES + MAX_VISUAL_EFFECTS : 0),
-            },
-            () => newDrawRange(0, 0, 1),
-        );
+        const drawRangesNpc = Array.from({ length: npcs.length }, () => newDrawRange(0, 0, 1));
 
         const drawCallNpc = createDrawCall(npcProgram, undefined, drawRangesNpc);
 
@@ -316,10 +298,6 @@ export class WebGLMapSquare {
 
             locsAnimated,
             npcs,
-            playerRenderData,
-            enemyRenderData,
-            enemySpawnCount,
-            mapData.projectiles,
         );
     }
 
@@ -374,13 +352,6 @@ export class WebGLMapSquare {
 
         // Npcs
         readonly npcs: Npc[],
-
-        readonly playerRenderData: PlayerRenderData | undefined,
-
-        readonly enemyRenderData: EnemyRenderData | undefined,
-        readonly enemySpawnCount: number,
-
-        readonly projectiles: ProjectileRenderData | undefined,
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);

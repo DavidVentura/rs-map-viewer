@@ -26,14 +26,16 @@ import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceU
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
-import { AbilityEffectKind, WeaponStyle } from "../game/Ability";
+import { WeaponStyle } from "../game/Ability";
 import { CombatEventKind } from "../game/CombatEvent";
+import { Encounter } from "../game/Encounter";
 import { Enemy } from "../game/Enemy";
+import { getEnemyType } from "../game/EnemyType";
 import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
 import { Player, PlayerInput } from "../game/Player";
-import { Projectile, ProjectileKind } from "../game/Projectile";
+import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
-import { VisualEffect, VisualEffectKind } from "../game/VisualEffect";
+import { VisualEffect } from "../game/VisualEffect";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
@@ -47,16 +49,25 @@ import { InteractType } from "./InteractType";
 import { Interactions } from "./Interactions";
 import { WebGLMapSquare } from "./WebGLMapSquare";
 import { WebGLTerrain } from "./WebGLTerrain";
-import { MAP_SQUARE_UNITS, splitWorldCoord, toWorld } from "./WorldCoords";
-import { getEnemyAnimationFrames } from "./enemy/EnemyRenderData";
+import { ActorInstance, writeActorInstance } from "./actor/ActorInstanceData";
+import {
+    EnemyTypeAnimationSet,
+    getEnemyAnimationFrames,
+    getPlayerAnimationFrames,
+    getStanceSeqIds,
+} from "./actor/ActorRenderData";
+import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
 import { screenToGroundPoint } from "./groundPoint";
+import { ActorBufferData } from "./loader/ActorBufferData";
+import { ActorLoaderInput } from "./loader/ActorLoaderInput";
+import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
 import { SdMapData } from "./loader/SdMapData";
 import { SdMapDataLoader } from "./loader/SdMapDataLoader";
 import { SdMapLoaderInput } from "./loader/SdMapLoaderInput";
-import { getPlayerAnimationFrames, getStanceSeqIds } from "./player/PlayerRenderData";
 import {
     FRAME_FXAA_PROGRAM,
     FRAME_PROGRAM,
+    createActorProgram,
     createMainProgram,
     createNpcProgram,
 } from "./shaders/Shaders";
@@ -67,9 +78,10 @@ const TEXTURE_SIZE = 128;
 const INTERACT_BUFFER_COUNT = 2;
 const INTERACTION_RADIUS = 5;
 
-const EMPTY_PROJECTILES: Projectile[] = [];
-const EMPTY_ENEMIES: Enemy[] = [];
-const EMPTY_VISUAL_EFFECTS: VisualEffect[] = [];
+// Projectiles and visual effects share the actor buffer's instance capacity with the player and
+// every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
+const MAX_PROJECTILES = 32;
+const MAX_VISUAL_EFFECTS = 32;
 
 function encodeNpcInfo(interactType: InteractType, rotation: number, level: number): number {
     return (interactType << 13) | (rotation << 2) | level;
@@ -96,6 +108,12 @@ interface ColorRgb {
     g: number;
     b: number;
 }
+
+type ActiveActor =
+    | { kind: "player"; player: Player }
+    | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
+    | { kind: "projectile"; projectile: Projectile }
+    | { kind: "effect"; effect: VisualEffect };
 
 enum TextureFilterMode {
     DISABLED,
@@ -133,6 +151,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     type: MapViewerRendererType = WEBGL;
 
     dataLoader = new SdMapDataLoader();
+    actorLoader = new ActorRenderDataLoader();
 
     app!: PicoApp;
     gl!: WebGL2RenderingContext;
@@ -149,6 +168,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     mainProgram?: Program;
     mainAlphaProgram?: Program;
     npcProgram?: Program;
+    actorProgram?: Program;
     frameProgram?: Program;
     frameFxaaProgram?: Program;
 
@@ -182,6 +202,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     loadedTextureIds: Set<number> = new Set();
 
     mapsToLoad: Denque<SdMapData> = new Denque();
+    actorBufferToLoad?: ActorBufferData;
+    loadingActors: boolean = false;
 
     frameDrawCall?: DrawCall;
     frameFxaaDrawCall?: DrawCall;
@@ -220,11 +242,22 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     npcDataTextureBuffer: (Texture | undefined)[] = new Array(5);
 
+    // Actors: player, enemies, projectiles and visual effects, decoupled from any map square.
+    actorBuffer?: WebGLActorBuffer;
+    actorInstanceCount: number = 0;
+    actorInstanceData: Uint32Array = new Uint32Array(16 * 4);
+    actorDataTextureBuffer: (Texture | undefined)[] = new Array(5);
+    activeActors: ActiveActor[] = [];
+
+    encounter: Encounter;
+    encounterSpawned: boolean = false;
+
     readonly terrain: WebGLTerrain;
 
     constructor(public mapViewer: MapViewer) {
         super(mapViewer);
         this.terrain = new WebGLTerrain(this.mapManager);
+        this.encounter = mapViewer.encounter;
         this.interactions = new Array(INTERACT_BUFFER_COUNT);
         for (let i = 0; i < INTERACT_BUFFER_COUNT; i++) {
             this.interactions[i] = new Interactions(INTERACTION_RADIUS);
@@ -259,6 +292,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.hasMultiDraw = !!PicoGL.WEBGL_INFO.MULTI_DRAW_INSTANCED;
 
         this.mapViewer.workerPool.initLoader(this.dataLoader);
+        this.mapViewer.workerPool.initLoader(this.actorLoader);
 
         this.gl.getExtension("EXT_float_blend");
 
@@ -306,15 +340,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             createMainProgram(hasMultiDraw, false),
             createMainProgram(hasMultiDraw, true),
             createNpcProgram(hasMultiDraw, true),
+            createActorProgram(hasMultiDraw, true),
             FRAME_PROGRAM,
             FRAME_FXAA_PROGRAM,
         );
 
-        const [mainProgram, mainAlphaProgram, npcProgram, frameProgram, frameFxaaProgram] =
-            programs;
+        const [
+            mainProgram,
+            mainAlphaProgram,
+            npcProgram,
+            actorProgram,
+            frameProgram,
+            frameFxaaProgram,
+        ] = programs;
         this.mainProgram = mainProgram;
         this.mainAlphaProgram = mainAlphaProgram;
         this.npcProgram = npcProgram;
+        this.actorProgram = actorProgram;
         this.frameProgram = frameProgram;
         this.frameFxaaProgram = frameFxaaProgram;
 
@@ -387,6 +429,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     override initCache(): void {
         super.initCache();
+
+        this.encounter = this.mapViewer.encounter;
+        for (const { mapX, mapY } of this.encounter.mapSquares) {
+            this.mapManager.loadMap(mapX, mapY);
+        }
+        this.queueLoadActors();
+
         if (this.app) {
             this.initTextures();
         }
@@ -761,31 +810,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
 
         this.updateTextureArray(mapData.loadedTextures);
-
-        if (mapData.player) {
-            const { player } = mapData;
-            this.mapViewer.world.spawnPlayer(
-                toWorld(mapX, player.x),
-                toWorld(mapY, player.y),
-                player.level,
-                getStanceSeqIds(player),
-            );
-        }
-
-        if (mapData.enemy) {
-            const { enemy } = mapData;
-            this.mapViewer.world.enemies = [];
-            for (const spawn of mapData.enemySpawns) {
-                this.mapViewer.world.spawnEnemy(
-                    spawn.x,
-                    spawn.y,
-                    spawn.level,
-                    enemy.idleSeqId,
-                    enemy.walkSeqId,
-                    enemy.deathSeqId,
-                );
-            }
-        }
     }
 
     isValidMapData(mapData: SdMapData): boolean {
@@ -796,6 +820,107 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             mapData.loadNpcs === this.loadNpcs &&
             mapData.smoothTerrain === this.smoothTerrain
         );
+    }
+
+    async queueLoadActors(): Promise<void> {
+        if (this.loadingActors) {
+            return;
+        }
+        this.loadingActors = true;
+        try {
+            const data = await this.mapViewer.workerPool.queueLoad<
+                ActorLoaderInput,
+                ActorBufferData,
+                ActorRenderDataLoader
+            >(this.actorLoader, {
+                encounterId: this.encounter.id,
+                loadedTextureIds: this.loadedTextureIds,
+            });
+            if (this.isValidActorBufferData(data)) {
+                this.actorBufferToLoad = data;
+            }
+        } catch (e) {
+            console.error("Failed loading actor render data", e);
+        } finally {
+            this.loadingActors = false;
+        }
+    }
+
+    loadActors(data: ActorBufferData, time: number): void {
+        this.actorBuffer?.delete();
+
+        const capacity =
+            1 + this.encounter.enemySpawns.length + MAX_PROJECTILES + MAX_VISUAL_EFFECTS;
+
+        this.actorBuffer = WebGLActorBuffer.load(
+            this.app,
+            this.actorProgram!,
+            this.textureArray!,
+            this.textureMaterials!,
+            this.sceneUniformBuffer!,
+            data,
+            capacity,
+            time,
+        );
+
+        this.updateTextureArray(data.loadedTextures);
+
+        const world = this.mapViewer.world;
+        world.player = undefined;
+        world.enemies = [];
+        world.projectiles = [];
+        world.visualEffects = [];
+        this.encounterSpawned = false;
+    }
+
+    isValidActorBufferData(data: ActorBufferData): boolean {
+        return (
+            data.cacheName === this.mapViewer.loadedCache.info.name &&
+            data.encounterId === this.encounter.id
+        );
+    }
+
+    trySpawnEncounter(): void {
+        if (this.encounterSpawned || !this.actorBuffer) {
+            return;
+        }
+
+        const world = this.mapViewer.world;
+        const { playerSpawn, enemySpawns } = this.encounter;
+
+        let canSpawn: boolean;
+        try {
+            canSpawn = this.terrain.canOccupy(playerSpawn.level, playerSpawn.x, playerSpawn.y);
+        } catch (e) {
+            canSpawn = false;
+        }
+        if (!canSpawn) {
+            return;
+        }
+
+        try {
+            world.spawnPlayer(
+                playerSpawn.x,
+                playerSpawn.y,
+                playerSpawn.level,
+                getStanceSeqIds(this.actorBuffer.actorData.player),
+            );
+
+            for (const spawn of enemySpawns) {
+                world.spawnEnemy(spawn.x, spawn.y, spawn.level, getEnemyType(spawn.enemyTypeId));
+            }
+        } catch (e) {
+            console.error("Failed spawning encounter, will retry once terrain finishes loading", e);
+            world.player = undefined;
+            world.enemies = [];
+            return;
+        }
+
+        this.encounterSpawned = true;
+    }
+
+    private resolveEnemyNpcType(enemy: Enemy): NpcType {
+        return this.mapViewer.npcTypeLoader.load(enemy.type.npcTypeId);
     }
 
     clearMaps(): void {
@@ -900,6 +1025,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             !this.mainProgram ||
             !this.mainAlphaProgram ||
             !this.npcProgram ||
+            !this.actorProgram ||
             !this.sceneUniformBuffer ||
             !this.framebuffer ||
             !this.textureFramebuffer ||
@@ -938,6 +1064,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const mapManagerStart = performance.now();
         this.mapManager.update(camera, frameCount, renderDistance, this.mapViewer.unloadDistance);
         const mapManagerTime = performance.now() - mapManagerStart;
+
+        this.trySpawnEncounter();
 
         this.cameraPosUni[0] = camera.getPosX();
         this.cameraPosUni[1] = camera.getPosZ();
@@ -991,12 +1119,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const npcDataTextureIndex = this.updateNpcDataTexture();
         const npcDataTexture = this.npcDataTextureBuffer[npcDataTextureIndex];
 
+        this.buildActorInstanceData();
+        const actorDataTextureIndex = this.updateActorDataTexture();
+        const actorDataTexture = this.actorDataTextureBuffer[actorDataTextureIndex];
+
         this.app.disable(PicoGL.BLEND);
         const opaquePassStart = performance.now();
         this.renderOpaquePass();
         const opaquePassTime = performance.now() - opaquePassStart;
         const opaqueNpcPassStart = performance.now();
         this.renderOpaqueNpcPass(npcDataTextureIndex, npcDataTexture);
+        this.renderOpaqueActorPass(actorDataTexture);
         const opaqueNpcPassTime = performance.now() - opaqueNpcPassStart;
 
         this.app.enable(PicoGL.BLEND);
@@ -1005,6 +1138,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const transparentPassTime = performance.now() - transparentPassStart;
         const transparentNpcPassStart = performance.now();
         this.renderTransparentNpcPass(npcDataTextureIndex, npcDataTexture);
+        this.renderTransparentActorPass(actorDataTexture);
         const transparentNpcPassTime = performance.now() - transparentNpcPassStart;
 
         // Can't sample from renderbuffer so blit to a texture for sampling.
@@ -1069,6 +1203,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 mapData,
                 timeSec,
             );
+        }
+
+        if (this.actorBufferToLoad) {
+            const actorBufferData = this.actorBufferToLoad;
+            this.actorBufferToLoad = undefined;
+            if (this.isValidActorBufferData(actorBufferData)) {
+                this.loadActors(actorBufferData, timeSec);
+            }
         }
 
         if (showDebugTimer) {
@@ -1261,16 +1403,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return undefined;
     }
 
-    private resolveEnemyNpcType(enemy: Enemy): NpcType | undefined {
-        const { mapCoord: mapX } = splitWorldCoord(enemy.x);
-        const { mapCoord: mapY } = splitWorldCoord(enemy.y);
-        const map = this.mapManager.getMapSquare(mapX, mapY);
-        if (!map?.enemyRenderData) {
-            return undefined;
-        }
-        return this.mapViewer.npcTypeLoader.load(map.enemyRenderData.id);
-    }
-
     private buildAbilitySlots(player: Player): AbilitySlotHudInfo[] {
         const timeSeconds = this.mapViewer.world.timeSeconds;
         const bar = player.abilityBar;
@@ -1429,20 +1561,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     addNpcRenderData(map: WebGLMapSquare) {
         const npcs = map.npcs;
-        const world = this.mapViewer.world;
-        const player = map.playerRenderData !== undefined ? world.player : undefined;
-        const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
-        const projectiles = map.projectiles !== undefined ? world.projectiles : EMPTY_PROJECTILES;
-        const visualEffects =
-            map.projectiles !== undefined ? world.visualEffects : EMPTY_VISUAL_EFFECTS;
-        const actorCount =
-            npcs.length +
-            Number(player !== undefined) +
-            enemies.length +
-            projectiles.length +
-            visualEffects.length;
 
-        if (actorCount === 0) {
+        if (npcs.length === 0) {
             return;
         }
 
@@ -1451,7 +1571,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         map.npcDataTextureOffsets[frameCount % map.npcDataTextureOffsets.length] =
             this.npcRenderCount;
 
-        const newCount = this.npcRenderCount + actorCount;
+        const newCount = this.npcRenderCount + npcs.length;
 
         if (this.npcRenderData.length / 4 < newCount) {
             const newData = new Uint16Array(Math.ceil((newCount * 2) / 16) * 16 * 4);
@@ -1481,57 +1601,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
             this.npcRenderCount++;
         }
-
-        if (player) {
-            const offset = this.npcRenderCount * 4;
-            this.npcRenderData[offset] = player.x - map.mapX * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 1] = player.y - map.mapY * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 2] = encodeNpcInfo(
-                InteractType.NONE,
-                player.rotation,
-                player.level,
-            );
-            this.npcRenderData[offset + 3] = map.playerRenderData!.id;
-            this.npcRenderCount++;
-        }
-
-        for (const enemy of enemies) {
-            const offset = this.npcRenderCount * 4;
-            this.npcRenderData[offset] = enemy.x - map.mapX * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 1] = enemy.y - map.mapY * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 2] = encodeNpcInfo(
-                InteractType.ENEMY,
-                enemy.rotation,
-                enemy.level,
-            );
-            this.npcRenderData[offset + 3] = enemy.id;
-            this.npcRenderCount++;
-        }
-
-        for (const projectile of projectiles) {
-            const offset = this.npcRenderCount * 4;
-            const rotationOffset = map.projectiles
-                ? map.projectiles.projectileMeshes[projectile.spec.kind].rotationOffset
-                : 0;
-            this.npcRenderData[offset] = projectile.x - map.mapX * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 1] = projectile.y - map.mapY * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 2] = encodeNpcInfo(
-                InteractType.NONE,
-                (projectile.rotation + rotationOffset) & 2047,
-                projectile.level,
-            );
-            this.npcRenderData[offset + 3] = 0;
-            this.npcRenderCount++;
-        }
-
-        for (const effect of visualEffects) {
-            const offset = this.npcRenderCount * 4;
-            this.npcRenderData[offset] = effect.x - map.mapX * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 1] = effect.y - map.mapY * MAP_SQUARE_UNITS;
-            this.npcRenderData[offset + 2] = encodeNpcInfo(InteractType.NONE, 0, effect.level);
-            this.npcRenderData[offset + 3] = 0;
-            this.npcRenderCount++;
-        }
     }
 
     updateNpcDataTexture() {
@@ -1551,6 +1620,149 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
 
         return newNpcDataTextureIndex;
+    }
+
+    private tryGetHeight(level: number, x: number, y: number): number | undefined {
+        try {
+            return this.terrain.getHeight(level, x, y);
+        } catch (e) {
+            return undefined;
+        }
+    }
+
+    buildActorInstanceData(): void {
+        this.activeActors.length = 0;
+        this.actorInstanceCount = 0;
+
+        const actorBuffer = this.actorBuffer;
+        if (!actorBuffer) {
+            return;
+        }
+
+        const world = this.mapViewer.world;
+        const actorData = actorBuffer.actorData;
+
+        const maxCount =
+            Number(world.player !== undefined) +
+            world.enemies.length +
+            world.projectiles.length +
+            world.visualEffects.length;
+
+        if (this.actorInstanceData.length / 4 < maxCount) {
+            const newData = new Uint32Array(Math.ceil((maxCount * 2) / 16) * 16 * 4);
+            newData.set(this.actorInstanceData);
+            this.actorInstanceData = newData;
+        }
+
+        const push = (actor: ActiveActor, instance: ActorInstance): void => {
+            if (this.actorInstanceCount >= actorBuffer.capacity) {
+                return;
+            }
+            writeActorInstance(this.actorInstanceData, this.actorInstanceCount, instance);
+            this.actorInstanceCount++;
+            this.activeActors.push(actor);
+        };
+
+        const player = world.player;
+        if (player) {
+            const groundHeight = this.tryGetHeight(player.level, player.x, player.y);
+            if (groundHeight !== undefined) {
+                push(
+                    { kind: "player", player },
+                    {
+                        worldX: player.x,
+                        worldY: player.y,
+                        groundHeight,
+                        rotation: player.rotation,
+                        level: player.level,
+                        interactType: InteractType.NONE,
+                        interactId: 0,
+                    },
+                );
+            }
+        }
+
+        for (const enemy of world.enemies) {
+            const animSet = actorData.enemyTypes[enemy.type.id];
+            if (!animSet) {
+                continue;
+            }
+            const groundHeight = this.tryGetHeight(enemy.level, enemy.x, enemy.y);
+            if (groundHeight === undefined) {
+                continue;
+            }
+            push(
+                { kind: "enemy", enemy, animSet },
+                {
+                    worldX: enemy.x,
+                    worldY: enemy.y,
+                    groundHeight,
+                    rotation: enemy.rotation,
+                    level: enemy.level,
+                    interactType: InteractType.ENEMY,
+                    interactId: enemy.id,
+                },
+            );
+        }
+
+        for (const projectile of world.projectiles) {
+            const groundHeight = this.tryGetHeight(projectile.level, projectile.x, projectile.y);
+            if (groundHeight === undefined) {
+                continue;
+            }
+            const rotationOffset =
+                actorData.projectiles.projectileMeshes[projectile.spec.kind].rotationOffset;
+            push(
+                { kind: "projectile", projectile },
+                {
+                    worldX: projectile.x,
+                    worldY: projectile.y,
+                    groundHeight,
+                    rotation: (projectile.rotation + rotationOffset) & 2047,
+                    level: projectile.level,
+                    interactType: InteractType.NONE,
+                    interactId: 0,
+                },
+            );
+        }
+
+        for (const effect of world.visualEffects) {
+            const groundHeight = this.tryGetHeight(effect.level, effect.x, effect.y);
+            if (groundHeight === undefined) {
+                continue;
+            }
+            push(
+                { kind: "effect", effect },
+                {
+                    worldX: effect.x,
+                    worldY: effect.y,
+                    groundHeight,
+                    rotation: 0,
+                    level: effect.level,
+                    interactType: InteractType.NONE,
+                    interactId: 0,
+                },
+            );
+        }
+    }
+
+    updateActorDataTexture(): number {
+        const frameCount = this.stats.frameCount;
+
+        const newIndex = frameCount % this.actorDataTextureBuffer.length;
+        this.actorDataTextureBuffer[newIndex]?.delete();
+        this.actorDataTextureBuffer[newIndex] = this.app.createTexture2D(
+            this.actorInstanceData,
+            16,
+            Math.max(Math.ceil(this.actorInstanceCount / 16), 1),
+            {
+                internalFormat: PicoGL.RGBA32UI,
+                minFilter: PicoGL.NEAREST,
+                magFilter: PicoGL.NEAREST,
+            },
+        );
+
+        return newIndex;
     }
 
     draw(drawCall: DrawCall, drawRanges: number[][]) {
@@ -1601,25 +1813,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
-        const world = this.mapViewer.world;
-
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
-            const player = map.playerRenderData !== undefined ? world.player : undefined;
-            const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
-            const projectiles =
-                map.projectiles !== undefined ? world.projectiles : EMPTY_PROJECTILES;
-            const visualEffects =
-                map.projectiles !== undefined ? world.visualEffects : EMPTY_VISUAL_EFFECTS;
 
-            if (
-                npcs.length === 0 &&
-                !player &&
-                enemies.length === 0 &&
-                projectiles.length === 0 &&
-                visualEffects.length === 0
-            ) {
+            if (npcs.length === 0) {
                 continue;
             }
 
@@ -1633,7 +1831,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
             drawCall.uniform("u_verticalOffset", 0);
-            drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
+            drawCall.uniform("u_highlightId", 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
@@ -1648,107 +1846,105 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 drawRanges[i] = frame;
             }
 
-            if (player) {
-                const index = npcs.length;
+            this.draw(drawCall, drawRanges);
+        }
+    }
+
+    private getActorFrame(actor: ActiveActor, alpha: boolean): DrawRange {
+        if (!this.actorBuffer) {
+            return NULL_DRAW_RANGE;
+        }
+        const actorData = this.actorBuffer.actorData;
+        switch (actor.kind) {
+            case "player": {
+                const { player } = actor;
                 const anim = getPlayerAnimationFrames(
-                    map.playerRenderData!,
+                    actorData.player,
                     player.style,
                     player.animation.seqId,
                 );
-                const frame = anim.frames[player.animation.frame];
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[player.animation.frame] ?? NULL_DRAW_RANGE;
             }
-
-            const enemyStart = npcs.length + Number(player !== undefined);
-            for (let i = 0; i < enemies.length; i++) {
-                const index = enemyStart + i;
-                const enemy = enemies[i];
-                const anim = getEnemyAnimationFrames(map.enemyRenderData!, enemy.animation.seqId);
-                const frame = anim.frames[enemy.animation.frame];
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
+            case "enemy": {
+                const { enemy, animSet } = actor;
+                const anim = getEnemyAnimationFrames(animSet, enemy.animation.seqId);
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[enemy.animation.frame] ?? NULL_DRAW_RANGE;
             }
-
-            const projectileStart = enemyStart + enemies.length;
-            for (let i = 0; i < projectiles.length; i++) {
-                const index = projectileStart + i;
-                const frame = this.getProjectileFrame(map, projectiles[i]);
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
+            case "projectile": {
+                const { projectile } = actor;
+                const { anim } = actorData.projectiles.projectileMeshes[projectile.spec.kind];
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[projectile.animation.frame] ?? NULL_DRAW_RANGE;
             }
-
-            const effectStart = projectileStart + projectiles.length;
-            for (let i = 0; i < visualEffects.length; i++) {
-                const index = effectStart + i;
-                const frame = this.getVisualEffectFrame(map, visualEffects[i]);
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
-            }
-            for (let i = effectStart + visualEffects.length; i < drawRanges.length; i++) {
-                (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
-                (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
-                drawRanges[i] = NULL_DRAW_RANGE;
-            }
-
-            this.draw(drawCall, drawRanges);
-            for (let i = 0; i < projectiles.length; i++) {
-                const frame = this.getProjectileFrame(map, projectiles[i]);
-                if (frame === NULL_DRAW_RANGE) {
-                    continue;
-                }
-                drawCall.uniform("u_drawId", projectileStart + i);
-                drawCall.uniform("u_verticalOffset", projectiles[i].height);
-                drawCall.drawRanges(frame);
-                drawCall.draw();
-            }
-            for (let i = 0; i < visualEffects.length; i++) {
-                const frame = this.getVisualEffectFrame(map, visualEffects[i]);
-                if (frame === NULL_DRAW_RANGE) {
-                    continue;
-                }
-                drawCall.uniform("u_drawId", effectStart + i);
-                drawCall.uniform("u_verticalOffset", visualEffects[i].height);
-                drawCall.drawRanges(frame);
-                drawCall.draw();
+            case "effect": {
+                const { effect } = actor;
+                const anim = actorData.projectiles.effectAnimations[effect.kind];
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[effect.animation.frame] ?? NULL_DRAW_RANGE;
             }
         }
     }
 
-    private getProjectileFrame(map: WebGLMapSquare, projectile: Projectile): DrawRange {
-        if (!map.projectiles) {
-            return NULL_DRAW_RANGE;
+    private drawActorPass(actorDataTexture: Texture, alpha: boolean): void {
+        const actorBuffer = this.actorBuffer;
+        if (!actorBuffer || this.activeActors.length === 0) {
+            return;
         }
-        const { anim } = map.projectiles.projectileMeshes[projectile.spec.kind];
-        return anim.frames[projectile.animation.frame] ?? NULL_DRAW_RANGE;
+
+        const { drawCall, drawRanges } = actorBuffer.drawCall;
+
+        drawCall.texture("u_actorDataTexture", actorDataTexture);
+        drawCall.uniform("u_verticalOffset", 0);
+        drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
+
+        for (let i = 0; i < this.activeActors.length; i++) {
+            const frame = this.getActorFrame(this.activeActors[i], alpha);
+            (drawCall as any).offsets[i] = frame[0];
+            (drawCall as any).numElements[i] = frame[1];
+            drawRanges[i] = frame;
+        }
+        for (let i = this.activeActors.length; i < drawRanges.length; i++) {
+            (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
+            (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
+            drawRanges[i] = NULL_DRAW_RANGE;
+        }
+
+        this.draw(drawCall, drawRanges);
+
+        // Projectiles and visual effects need a per-instance vertical offset above the ground,
+        // which is a uniform rather than instance data, so redraw just those individually.
+        for (let i = 0; i < this.activeActors.length; i++) {
+            const actor = this.activeActors[i];
+            if (actor.kind !== "projectile" && actor.kind !== "effect") {
+                continue;
+            }
+            const frame = this.getActorFrame(actor, alpha);
+            if (frame === NULL_DRAW_RANGE) {
+                continue;
+            }
+            const height =
+                actor.kind === "projectile" ? actor.projectile.height : actor.effect.height;
+            drawCall.uniform("u_drawId", i);
+            drawCall.uniform("u_verticalOffset", height);
+            drawCall.drawRanges(frame);
+            drawCall.draw();
+        }
     }
 
-    private getVisualEffectFrame(map: WebGLMapSquare, effect: VisualEffect): DrawRange {
-        if (!map.projectiles) {
-            return NULL_DRAW_RANGE;
+    renderOpaqueActorPass(actorDataTexture: Texture | undefined): void {
+        if (!actorDataTexture) {
+            return;
         }
-        const anim = map.projectiles.effectAnimations[effect.kind];
-        return anim.frames[effect.animation.frame] ?? NULL_DRAW_RANGE;
+        this.drawActorPass(actorDataTexture, false);
     }
 
-    private getProjectileFrameAlpha(map: WebGLMapSquare, projectile: Projectile): DrawRange {
-        if (!map.projectiles) {
-            return NULL_DRAW_RANGE;
+    renderTransparentActorPass(actorDataTexture: Texture | undefined): void {
+        if (!actorDataTexture) {
+            return;
         }
-        const { anim } = map.projectiles.projectileMeshes[projectile.spec.kind];
-        return anim.framesAlpha?.[projectile.animation.frame] ?? NULL_DRAW_RANGE;
-    }
-
-    private getVisualEffectFrameAlpha(map: WebGLMapSquare, effect: VisualEffect): DrawRange {
-        if (!map.projectiles) {
-            return NULL_DRAW_RANGE;
-        }
-        const anim = map.projectiles.effectAnimations[effect.kind];
-        return anim.framesAlpha?.[effect.animation.frame] ?? NULL_DRAW_RANGE;
+        this.drawActorPass(actorDataTexture, true);
     }
 
     renderTransparentPass(): void {
@@ -1792,25 +1988,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
-        const world = this.mapViewer.world;
-
         for (let i = this.mapManager.visibleMapCount - 1; i >= 0; i--) {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
-            const player = map.playerRenderData !== undefined ? world.player : undefined;
-            const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
-            const projectiles =
-                map.projectiles !== undefined ? world.projectiles : EMPTY_PROJECTILES;
-            const visualEffects =
-                map.projectiles !== undefined ? world.visualEffects : EMPTY_VISUAL_EFFECTS;
 
-            if (
-                npcs.length === 0 &&
-                !player &&
-                enemies.length === 0 &&
-                projectiles.length === 0 &&
-                visualEffects.length === 0
-            ) {
+            if (npcs.length === 0) {
                 continue;
             }
 
@@ -1824,7 +2006,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
             drawCall.uniform("u_verticalOffset", 0);
-            drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
+            drawCall.uniform("u_highlightId", 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
@@ -1842,77 +2024,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 drawRanges[i] = frame;
             }
 
-            if (player) {
-                const index = npcs.length;
-                const frames = getPlayerAnimationFrames(
-                    map.playerRenderData!,
-                    player.style,
-                    player.animation.seqId,
-                ).framesAlpha;
-                const frame = frames ? frames[player.animation.frame] : NULL_DRAW_RANGE;
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
-            }
-
-            const enemyStart = npcs.length + Number(player !== undefined);
-            for (let i = 0; i < enemies.length; i++) {
-                const index = enemyStart + i;
-                const enemy = enemies[i];
-                const frames = getEnemyAnimationFrames(
-                    map.enemyRenderData!,
-                    enemy.animation.seqId,
-                ).framesAlpha;
-                const frame = frames ? frames[enemy.animation.frame] : NULL_DRAW_RANGE;
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
-            }
-
-            const projectileStart = enemyStart + enemies.length;
-            for (let i = 0; i < projectiles.length; i++) {
-                const index = projectileStart + i;
-                const frame = this.getProjectileFrameAlpha(map, projectiles[i]);
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
-            }
-
-            const effectStart = projectileStart + projectiles.length;
-            for (let i = 0; i < visualEffects.length; i++) {
-                const index = effectStart + i;
-                const frame = this.getVisualEffectFrameAlpha(map, visualEffects[i]);
-                (drawCall as any).offsets[index] = frame[0];
-                (drawCall as any).numElements[index] = frame[1];
-                drawRanges[index] = frame;
-            }
-            for (let i = effectStart + visualEffects.length; i < drawRanges.length; i++) {
-                (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
-                (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
-                drawRanges[i] = NULL_DRAW_RANGE;
-            }
-
             this.draw(drawCall, drawRanges);
-            for (let i = 0; i < projectiles.length; i++) {
-                const frame = this.getProjectileFrameAlpha(map, projectiles[i]);
-                if (frame === NULL_DRAW_RANGE) {
-                    continue;
-                }
-                drawCall.uniform("u_drawId", projectileStart + i);
-                drawCall.uniform("u_verticalOffset", projectiles[i].height);
-                drawCall.drawRanges(frame);
-                drawCall.draw();
-            }
-            for (let i = 0; i < visualEffects.length; i++) {
-                const frame = this.getVisualEffectFrameAlpha(map, visualEffects[i]);
-                if (frame === NULL_DRAW_RANGE) {
-                    continue;
-                }
-                drawCall.uniform("u_drawId", effectStart + i);
-                drawCall.uniform("u_verticalOffset", visualEffects[i].height);
-                drawCall.drawRanges(frame);
-                drawCall.draw();
-            }
         }
     }
 
@@ -2084,9 +2196,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     });
                 } else if (interactType === InteractType.ENEMY) {
                     const enemy = this.mapViewer.world.findEnemy(interactId);
-                    const mapId = this.interactBuffer[index + 1];
-                    const map = this.mapManager.getMapSquare(mapId >> 8, mapId & 0xff);
-                    if (!enemy || enemy.health <= 0 || !map?.enemyRenderData) {
+                    if (!enemy || enemy.health <= 0) {
+                        continue;
+                    }
+                    const npcType = this.resolveEnemyNpcType(enemy);
+                    if (!npcType) {
                         continue;
                     }
                     if (enemyIds.has(interactId)) {
@@ -2094,7 +2208,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     }
                     enemyIds.add(interactId);
 
-                    const npcType = this.mapViewer.npcTypeLoader.load(map.enemyRenderData.id);
                     menuEntries.push({
                         option: "Attack",
                         targetId: enemy.id,
@@ -2137,6 +2250,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     override async cleanUp(): Promise<void> {
         super.cleanUp();
         this.mapViewer.workerPool.resetLoader(this.dataLoader);
+        this.mapViewer.workerPool.resetLoader(this.actorLoader);
 
         this.quadArray?.delete();
         this.quadArray = undefined;
@@ -2183,6 +2297,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         for (const texture of this.npcDataTextureBuffer) {
             texture?.delete();
         }
+
+        for (const texture of this.actorDataTextureBuffer) {
+            texture?.delete();
+        }
+
+        this.actorBuffer?.delete();
+        this.actorBuffer = undefined;
 
         this.clearMaps();
 

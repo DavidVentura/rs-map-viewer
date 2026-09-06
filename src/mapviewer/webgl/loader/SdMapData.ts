@@ -1,16 +1,7 @@
 import { CollisionData } from "../../../rs/scene/CollisionMap";
 import { DrawRange } from "../DrawRange";
-import { EnemyRenderData } from "../enemy/EnemyRenderData";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { NpcData } from "../npc/NpcData";
-import { PlayerRenderData } from "../player/PlayerRenderData";
-import { ProjectileRenderData } from "../projectile/ProjectileRenderData";
-
-export type EnemySpawnData = {
-    x: number;
-    y: number;
-    level: number;
-};
 
 export type SdMapData = {
     mapX: number;
@@ -62,10 +53,6 @@ export type SdMapData = {
 
     locsAnimated: LocAnimatedData[];
     npcs: NpcData[];
-    player?: PlayerRenderData;
-    enemy?: EnemyRenderData;
-    enemySpawns: EnemySpawnData[];
-    projectiles?: ProjectileRenderData;
 
     loadedTextures: Map<number, Int32Array>;
 };

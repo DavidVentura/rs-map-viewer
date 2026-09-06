@@ -1,6 +1,7 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
+    AbilityDefinition,
     AbilityEffect,
     AbilityEffectKind,
     AbilityTarget,
@@ -10,14 +11,16 @@ import {
     MultiProjectileEffect,
     WeaponStyle,
 } from "./Ability";
-import { CombatEvent, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
+import { CombatEvent, CombatEventKind, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import { Enemy, computeChaseMovement } from "./Enemy";
+import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
+import { EnemyType } from "./EnemyType";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
+import { SpatialGrid } from "./SpatialGrid";
 import { Terrain } from "./Terrain";
 import { VisualEffect } from "./VisualEffect";
-import { getStyleAttack } from "./abilities";
+import { ENEMY_MELEE, getStyleAttack } from "./abilities";
 import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
 import {
     directionToRotation,
@@ -47,6 +50,9 @@ export class GameWorld {
     static readonly MAX_PROJECTILES = 32;
     static readonly MAX_VISUAL_EFFECTS = 32;
     static readonly BASIC_ATTACK_SLOT = 0;
+    static readonly ENEMY_RESPAWN_SECONDS = 5;
+    static readonly ENEMY_GRID_CELL_SIZE = 256;
+    static readonly ENEMY_NEIGHBOUR_QUERY_RADIUS = 256;
 
     timeSeconds = 0;
     player?: Player;
@@ -74,24 +80,15 @@ export class GameWorld {
         x: number,
         y: number,
         level: number,
-        idleSeqId: number,
-        walkSeqId: number,
-        deathSeqId: number,
-    ): void {
+        enemyType: EnemyType,
+        attackDefinition: AbilityDefinition = ENEMY_MELEE,
+    ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
+        const id = this.nextEnemyId++;
         this.enemies.push(
-            new Enemy(
-                this.nextEnemyId++,
-                spawn.x,
-                spawn.y,
-                level,
-                spawn.x,
-                spawn.y,
-                idleSeqId,
-                walkSeqId,
-                deathSeqId,
-            ),
+            new Enemy(id, spawn.x, spawn.y, level, spawn.x, spawn.y, enemyType, attackDefinition),
         );
+        return id;
     }
 
     findEnemy(id: number): Enemy | undefined {
@@ -123,33 +120,147 @@ export class GameWorld {
         this.timeSeconds += dtSeconds;
 
         if (this.player) {
-            if (input.styleSwitch !== undefined) {
-                this.player.requestStyleSwitch(input.styleSwitch, this.timeSeconds);
-            }
-            this.processAbilityInput(this.player, input.abilities, this.timeSeconds);
-            const movement = this.resolveMovementInput(this.player, input);
-            this.player.update(
-                movement,
-                dtSeconds,
-                this.timeSeconds,
-                this.seqTypeLoader,
-                this.seqFrameLoader,
-                this.terrain,
-            );
-            this.resolveReadyCast(this.player);
+            this.updatePlayer(this.player, input, dtSeconds);
         }
 
+        const enemyGrid = SpatialGrid.build(GameWorld.ENEMY_GRID_CELL_SIZE, this.enemies);
         for (const enemy of this.enemies) {
-            enemy.update(
-                this.player,
+            const neighbours = enemyGrid
+                .neighboursWithin(enemy.x, enemy.y, GameWorld.ENEMY_NEIGHBOUR_QUERY_RADIUS)
+                .filter((neighbour) => neighbour !== enemy);
+            this.updateEnemy(enemy, neighbours, dtSeconds);
+        }
+
+        this.updateProjectiles(dtSeconds);
+
+        this.visualEffects = this.visualEffects.filter((effect) =>
+            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
+        );
+
+        this.checkPlayerDeath();
+    }
+
+    drainEvents(): CombatEvent[] {
+        const events = this.events;
+        this.events = [];
+        return events;
+    }
+
+    private updatePlayer(player: Player, input: SimInput, dtSeconds: number): void {
+        if (player.isDead(this.timeSeconds)) {
+            player.update(
+                input.movement,
                 dtSeconds,
                 this.timeSeconds,
                 this.seqTypeLoader,
                 this.seqFrameLoader,
                 this.terrain,
             );
+            return;
+        }
+        if (player.isAwaitingRespawn(this.timeSeconds)) {
+            player.respawn();
+            this.resetEncounter();
+            return;
         }
 
+        if (input.styleSwitch !== undefined) {
+            player.requestStyleSwitch(input.styleSwitch, this.timeSeconds);
+        }
+        this.processAbilityInput(player, input.abilities, this.timeSeconds);
+        const movement = this.resolveMovementInput(player, input);
+        player.update(
+            movement,
+            dtSeconds,
+            this.timeSeconds,
+            this.seqTypeLoader,
+            this.seqFrameLoader,
+            this.terrain,
+        );
+        this.resolveReadyCast(player);
+    }
+
+    private updateEnemy(enemy: Enemy, neighbours: readonly Enemy[], dtSeconds: number): void {
+        const wasAlive = enemy.state !== EnemyState.DEAD;
+        enemy.update(
+            this.player,
+            neighbours,
+            dtSeconds,
+            this.timeSeconds,
+            this.seqTypeLoader,
+            this.seqFrameLoader,
+            this.terrain,
+        );
+
+        if (wasAlive && enemy.state === EnemyState.DEAD) {
+            enemy.respawnAt = this.timeSeconds + GameWorld.ENEMY_RESPAWN_SECONDS;
+            this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
+            return;
+        }
+        if (!wasAlive) {
+            this.tryRespawnEnemy(enemy);
+            return;
+        }
+        this.resolveEnemyAttack(enemy);
+    }
+
+    private tryRespawnEnemy(enemy: Enemy): void {
+        if (enemy.respawnAt === undefined || this.timeSeconds < enemy.respawnAt) {
+            return;
+        }
+        enemy.respawn();
+        this.events.push({ kind: CombatEventKind.ENEMY_RESPAWNED, target: enemy });
+    }
+
+    private resolveEnemyAttack(enemy: Enemy): void {
+        const cast = enemy.abilityRuntime.takeReadyCast(this.timeSeconds);
+        if (!cast || !this.player || this.player.health <= 0) {
+            return;
+        }
+        switch (cast.definition.effect.kind) {
+            case AbilityEffectKind.MELEE:
+                this.resolveEnemyMelee(enemy, this.player, cast.definition.effect);
+                break;
+            case AbilityEffectKind.PROJECTILE:
+                this.spawnProjectile(enemy, cast.definition.effect.spec, {
+                    x: this.player.x,
+                    y: this.player.y,
+                });
+                break;
+            default:
+                throw new Error(`Unsupported enemy attack effect: ${cast.definition.effect.kind}`);
+        }
+    }
+
+    private resolveEnemyMelee(enemy: Enemy, player: Player, effect: MeleeEffect): void {
+        const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+        if (!isWithinMeleeReach(distance, effect.reach, enemy.hitRadius, player.hitRadius)) {
+            return;
+        }
+        applyDamage(
+            player,
+            rollDamage(effect.minDamage, effect.maxDamage, this.random),
+            this.events,
+        );
+    }
+
+    private checkPlayerDeath(): void {
+        const player = this.player;
+        if (!player || player.health > 0 || player.hasDied()) {
+            return;
+        }
+        player.die(this.timeSeconds);
+        this.events.push({ kind: CombatEventKind.PLAYER_DIED, target: player });
+    }
+
+    private resetEncounter(): void {
+        for (const enemy of this.enemies) {
+            enemy.respawn();
+            this.events.push({ kind: CombatEventKind.ENEMY_RESPAWNED, target: enemy });
+        }
+    }
+
+    private updateProjectiles(dtSeconds: number): void {
         const combatants = this.combatants();
         const survivingProjectiles: Projectile[] = [];
         for (const projectile of this.projectiles) {
@@ -167,16 +278,6 @@ export class GameWorld {
             }
         }
         this.projectiles = survivingProjectiles;
-
-        this.visualEffects = this.visualEffects.filter((effect) =>
-            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
-        );
-    }
-
-    drainEvents(): CombatEvent[] {
-        const events = this.events;
-        this.events = [];
-        return events;
     }
 
     private resolveMovementInput(player: Player, input: SimInput): PlayerInput {
@@ -279,7 +380,7 @@ export class GameWorld {
         }
     }
 
-    private spawnProjectile(caster: Player, spec: ProjectileSpec, target: AbilityTarget): void {
+    private spawnProjectile(caster: Combatant, spec: ProjectileSpec, target: AbilityTarget): void {
         const deltaX = target.x - caster.x;
         const deltaY = target.y - caster.y;
         const distance = Math.hypot(deltaX, deltaY);

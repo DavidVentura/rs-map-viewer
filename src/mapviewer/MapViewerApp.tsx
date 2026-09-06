@@ -1,3 +1,4 @@
+import { vec3 } from "gl-matrix";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { registerSerializer } from "threads";
@@ -13,6 +14,7 @@ import { MapViewerContainer } from "./MapViewerContainer";
 import { WEBGL, getAvailableRenderers } from "./MapViewerRenderers";
 import { fetchNpcSpawns, getNpcSpawnsUrl } from "./data/npc/NpcSpawn";
 import { fetchObjSpawns } from "./data/obj/ObjSpawn";
+import { getEncounter, parseEncounterId } from "./game/Encounter";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -73,15 +75,32 @@ function MapViewerApp() {
             // Add some way to get preferred renderer
             const rendererType = availableRenderers[0];
 
+            const encounterId = parseEncounterId(searchParams.get("enc"));
+
             const mapViewer = new MapViewer(
                 workerPool,
                 cacheList,
                 objSpawns,
                 npcSpawns,
                 mapImageCache,
+                encounterId,
                 rendererType,
                 cache,
             );
+
+            const hasCameraParams =
+                searchParams.get("cx") && searchParams.get("cy") && searchParams.get("cz");
+            if (!hasCameraParams) {
+                const { playerSpawn } = getEncounter(encounterId);
+                mapViewer.setCamera({
+                    position: vec3.fromValues(
+                        playerSpawn.x / 128,
+                        mapViewer.camera.pos[1],
+                        playerSpawn.y / 128,
+                    ),
+                });
+            }
+
             mapViewer.applySearchParams(searchParams);
             mapViewer.init();
 

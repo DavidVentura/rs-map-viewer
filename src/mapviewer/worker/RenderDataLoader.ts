@@ -1,5 +1,6 @@
 import { SerializerImplementation } from "threads";
 
+import { ActorRenderDataLoader } from "../webgl/loader/ActorRenderDataLoader";
 import { SdMapDataLoader } from "../webgl/loader/SdMapDataLoader";
 import { WorkerState } from "./RenderDataWorker";
 
@@ -21,6 +22,7 @@ export interface RenderDataLoader<I, D> {
 
 const loaders = {
     sdMapDataLoader: new SdMapDataLoader(),
+    actorRenderDataLoader: new ActorRenderDataLoader(),
 };
 
 type RenderDataLoaders = typeof loaders;

@@ -5,7 +5,7 @@ import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
 import { Terrain } from "./Terrain";
-import { buildPlayerAbilityBar } from "./abilities";
+import { STYLE_SWITCH_SEQ_IDS, buildPlayerAbilityBar } from "./abilities";
 import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -36,6 +36,8 @@ export class Player implements Combatant, ManaPool {
     static readonly MAX_MANA = 100;
     static readonly MANA_REGEN_PER_SECOND = 4;
     static readonly STYLE_SWITCH_SECONDS = 1;
+    static readonly DEATH_SEQ_ID = 836;
+    static readonly DEATH_SECONDS = 2;
 
     readonly faction = Faction.PLAYER;
     readonly hitRadius = Player.HIT_RADIUS;
@@ -44,6 +46,9 @@ export class Player implements Combatant, ManaPool {
     readonly maxMana = Player.MAX_MANA;
     mana = Player.MAX_MANA;
 
+    readonly spawnX: number;
+    readonly spawnY: number;
+
     static readonly WALK_SPEED = 288 * 1.6;
     static readonly RUN_SPEED = 576 * 1.6;
 
@@ -51,7 +56,10 @@ export class Player implements Combatant, ManaPool {
 
     private castAnimationEndsAt?: number;
     private castAnimationSpeed = 1;
+    private switchAnimationEndsAt?: number;
+    private switchAnimationSpeed = 1;
     private pendingStyleSwitch?: PendingStyleSwitch;
+    private deadUntil?: number;
     style: WeaponStyle = WeaponStyle.RANGED;
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
@@ -62,6 +70,8 @@ export class Player implements Combatant, ManaPool {
         readonly level: number,
         readonly styleSeqIds: StanceSeqIdsByStance,
     ) {
+        this.spawnX = x;
+        this.spawnY = y;
         this.animation = new AnimationState(this.activeSeqIds.idleSeqId);
     }
 
@@ -138,6 +148,37 @@ export class Player implements Combatant, ManaPool {
         this.pendingStyleSwitch = { style, readyAt: timeSeconds + Player.STYLE_SWITCH_SECONDS };
     }
 
+    isDead(timeSeconds: number): boolean {
+        return this.deadUntil !== undefined && timeSeconds < this.deadUntil;
+    }
+
+    isAwaitingRespawn(timeSeconds: number): boolean {
+        return this.deadUntil !== undefined && timeSeconds >= this.deadUntil;
+    }
+
+    hasDied(): boolean {
+        return this.deadUntil !== undefined;
+    }
+
+    die(timeSeconds: number): void {
+        this.health = 0;
+        this.deadUntil = timeSeconds + Player.DEATH_SECONDS;
+        this.animation.restart(Player.DEATH_SEQ_ID);
+    }
+
+    respawn(): void {
+        this.x = this.spawnX;
+        this.y = this.spawnY;
+        this.health = this.maxHealth;
+        this.mana = this.maxMana;
+        this.deadUntil = undefined;
+        this.pendingStyleSwitch = undefined;
+        this.castAnimationEndsAt = undefined;
+        this.switchAnimationEndsAt = undefined;
+        this.abilityRuntime.reset();
+        this.animation.restart(this.idleSeqId);
+    }
+
     update(
         input: PlayerInput,
         deltaTimeSeconds: number,
@@ -146,6 +187,16 @@ export class Player implements Combatant, ManaPool {
         seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
+        if (this.isDead(timeSeconds)) {
+            this.animation.advance(
+                deltaTimeSeconds,
+                seqTypeLoader,
+                seqFrameLoader,
+                AnimationPlayback.ONCE,
+            );
+            return;
+        }
+
         this.mana = Math.min(
             this.maxMana,
             this.mana + Player.MANA_REGEN_PER_SECOND * deltaTimeSeconds,
@@ -156,8 +207,12 @@ export class Player implements Combatant, ManaPool {
                 this.style = this.pendingStyleSwitch.style;
                 this.pendingStyleSwitch = undefined;
             } else {
-                this.animation.setSequence(this.idleSeqId);
-                this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+                this.advanceStyleSwitchAnimation(
+                    deltaTimeSeconds,
+                    timeSeconds,
+                    seqTypeLoader,
+                    seqFrameLoader,
+                );
                 return;
             }
         }
@@ -205,6 +260,36 @@ export class Player implements Combatant, ManaPool {
         this.rotation = directionToRotation(input.x, input.y);
         this.animation.setSequence(input.running ? this.runSeqId : this.walkSeqId);
         this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+    }
+
+    private advanceStyleSwitchAnimation(
+        deltaTimeSeconds: number,
+        timeSeconds: number,
+        seqTypeLoader: SeqTypeLoader,
+        seqFrameLoader: SeqFrameLoader,
+    ): void {
+        const pendingStyleSwitch = this.pendingStyleSwitch!;
+        const switchSeqId = STYLE_SWITCH_SEQ_IDS[pendingStyleSwitch.style];
+        if (switchSeqId === undefined) {
+            this.animation.setSequence(this.idleSeqId);
+            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+            return;
+        }
+
+        if (this.switchAnimationEndsAt !== pendingStyleSwitch.readyAt) {
+            this.switchAnimationEndsAt = pendingStyleSwitch.readyAt;
+            this.animation.restart(switchSeqId);
+            this.switchAnimationSpeed =
+                sequenceDurationSeconds(switchSeqId, seqTypeLoader, seqFrameLoader) /
+                (pendingStyleSwitch.readyAt - timeSeconds);
+        }
+        this.animation.advance(
+            deltaTimeSeconds,
+            seqTypeLoader,
+            seqFrameLoader,
+            AnimationPlayback.ONCE,
+            this.switchAnimationSpeed,
+        );
     }
 
     beginCast(definition: AbilityDefinition, target: AbilityTarget, timeSeconds: number): void {

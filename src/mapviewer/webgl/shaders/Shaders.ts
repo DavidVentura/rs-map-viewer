@@ -1,4 +1,5 @@
 import { ProgramSource, prependDefines } from "./ShaderUtil";
+import actorVertShader from "./actor.vert.glsl";
 import frameFxaaFragShader from "./frame-fxaa.frag.glsl";
 import frameFxaaVertShader from "./frame-fxaa.vert.glsl";
 import frameFragShader from "./frame.frag.glsl";
@@ -36,6 +37,17 @@ export function createNpcProgram(hasMultiDraw: boolean, discardAlpha: boolean): 
         defines.push("DISCARD_ALPHA");
     }
     return [prependDefines(npcVertShader, defines), prependDefines(mainFragShader, defines)];
+}
+
+export function createActorProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {
+    const defines: string[] = ["NPC_PROGRAM"];
+    if (hasMultiDraw) {
+        defines.push("MULTI_DRAW");
+    }
+    if (discardAlpha) {
+        defines.push("DISCARD_ALPHA");
+    }
+    return [prependDefines(actorVertShader, defines), prependDefines(mainFragShader, defines)];
 }
 
 export const FRAME_PROGRAM = [frameVertShader, frameFragShader];

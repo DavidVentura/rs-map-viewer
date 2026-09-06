@@ -79,4 +79,10 @@ export class AbilityRuntime {
     chargeStateFor(definition: AbilityDefinition): ChargeState {
         return this.chargeStateById.get(definition.id) ?? initialChargeState(definition.maxCharges);
     }
+
+    reset(): void {
+        this.groupCooldownUntil = new Map();
+        this.chargeStateById = new Map();
+        this.pendingCast = undefined;
+    }
 }

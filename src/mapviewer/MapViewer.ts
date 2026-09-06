@@ -24,6 +24,7 @@ import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
+import { Encounter, EncounterId, getEncounter } from "./game/Encounter";
 import { GameWorld } from "./game/GameWorld";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -98,11 +99,16 @@ export class MapViewer {
         readonly objSpawns: ObjSpawn[],
         public npcSpawns: NpcSpawn[],
         readonly mapImageCache: Cache,
+        readonly encounterId: EncounterId,
         rendererType: MapViewerRendererType,
         cache: LoadedCache,
     ) {
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
+    }
+
+    get encounter(): Encounter {
+        return getEncounter(this.encounterId);
     }
 
     getSearchParams(): URLSearchParamsInit {
@@ -132,6 +138,10 @@ export class MapViewer {
 
         if (this.loadedCache.info.name !== this.cacheList.latest.name) {
             params["cache"] = this.loadedCache.info.name;
+        }
+
+        if (this.encounterId !== EncounterId.LUMBRIDGE) {
+            params["enc"] = this.encounterId;
         }
 
         params["v"] = 1;

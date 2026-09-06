@@ -3,6 +3,15 @@ import { ARROW_SPEC, MAGIC_SPEC, POWER_SHOT_SPEC } from "./Projectile";
 import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "./VisualEffect";
 
 export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
+export const CLEAVE_CAST_SEQ_ID = 1203;
+export const HEALING_POTION_CAST_SEQ_ID = 829;
+export const IMBUED_HEART_SWITCH_SEQ_ID = 7660;
+export const DRAGON_BATTLEAXE_SWITCH_SEQ_ID = 1056;
+
+export const STYLE_SWITCH_SEQ_IDS: Partial<Record<WeaponStyle, number>> = {
+    [WeaponStyle.MAGIC]: IMBUED_HEART_SWITCH_SEQ_ID,
+    [WeaponStyle.MELEE]: DRAGON_BATTLEAXE_SWITCH_SEQ_ID,
+};
 
 export const BOW_SHOT: AbilityDefinition = {
     id: "bow_shot",
@@ -66,6 +75,7 @@ export const CLEAVE: AbilityDefinition = {
     rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
+    castSeqId: CLEAVE_CAST_SEQ_ID,
     effect: {
         kind: AbilityEffectKind.CONE_MELEE,
         damageMultiplier: 2,
@@ -143,6 +153,7 @@ export const HEALING_POTION: AbilityDefinition = {
         { group: CooldownGroup.HEAL, seconds: 3 },
         { group: CooldownGroup.ATTACK, seconds: 1.5 },
     ],
+    castSeqId: HEALING_POTION_CAST_SEQ_ID,
     effect: { kind: AbilityEffectKind.HEAL, amount: 30 },
 };
 
