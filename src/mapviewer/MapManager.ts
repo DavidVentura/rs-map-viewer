@@ -103,7 +103,7 @@ export class MapManager<T extends MapSquare> {
         this.mapSquares.clear();
     }
 
-    getMap(mapX: number, mapY: number): T | undefined {
+    getMapSquare(mapX: number, mapY: number): T | undefined {
         return this.mapSquares.get(getMapSquareId(mapX, mapY));
     }
 

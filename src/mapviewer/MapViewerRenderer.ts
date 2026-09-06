@@ -7,6 +7,7 @@ import { getAxisDeadzone } from "./InputManager";
 import { MapManager, MapSquare } from "./MapManager";
 import { MapViewer } from "./MapViewer";
 import { MapViewerRendererType } from "./MapViewerRenderers";
+import { Terrain } from "./game/Terrain";
 
 export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends Renderer {
     abstract type: MapViewerRendererType;
@@ -41,6 +42,8 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
             this.mapViewer.unloadDistance,
         );
     }
+
+    abstract createTerrain(): Terrain;
 
     getControls(): Schema {
         return {};

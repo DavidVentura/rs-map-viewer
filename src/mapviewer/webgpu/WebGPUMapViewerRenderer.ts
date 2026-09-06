@@ -1,6 +1,7 @@
 import { isWebGPUSupported } from "../../util/DeviceUtil";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGPU } from "../MapViewerRenderers";
+import { Terrain } from "../game/Terrain";
 import fullscreenTexturedQuadShader from "./shaders/fullscreenTexturedQuad.wgsl?source";
 import redFragShader from "./shaders/red.frag.wgsl?source";
 import triangleVertShader from "./shaders/triangle.vert.wgsl?source";
@@ -23,6 +24,10 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
     textureArray!: GPUTexture;
 
     showResultBindGroup!: GPUBindGroup;
+
+    createTerrain(): Terrain {
+        throw new Error("Not supported");
+    }
 
     static isSupported(): boolean {
         return isWebGPUSupported && ENABLED;

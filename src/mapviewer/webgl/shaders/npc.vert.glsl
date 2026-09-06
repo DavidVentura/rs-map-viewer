@@ -11,7 +11,6 @@
 
 #define FOG_CORNER_ROUNDING 8.0
 
-#define NPC_INTERACT_TYPE 3.0
 
 precision highp float;
 
@@ -55,6 +54,7 @@ struct NpcInfo {
     uint plane;
     uint rotation;
     uint interactId;
+    uint interactType;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -68,7 +68,8 @@ NpcInfo decodeNpcInfo(int offset) {
 
     info.tilePos = vec2(float(data.r), float(data.g));
     info.plane = data.b & 0x3u;
-    info.rotation = data.b >> 2;
+    info.rotation = (data.b >> 2) & 0x7FFu;
+    info.interactType = data.b >> 13;
     info.interactId = data.a;
 
     return info;
@@ -123,7 +124,7 @@ void main() {
     v_fogAmount = isLoading * max(1.0 - loadAlpha, v_fogAmount) +
         (1.0 - isLoading) * v_fogAmount;
 
-    float interactType = NPC_INTERACT_TYPE * when_neq(v_fogAmount, 1.0);
+    float interactType = float(npcInfo.interactType) * when_neq(v_fogAmount, 1.0);
 
     v_interactId = vec4(
         float(npcInfo.interactId),

@@ -24,9 +24,10 @@ import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
+import { GameWorld } from "./game/GameWorld";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
-const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 128;
+const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 64;
 
 const CACHED_MAP_IMAGE_PREFIX = "/map-images/";
 
@@ -37,6 +38,8 @@ export class MapViewer {
     pathfinder: Pathfinder = new Pathfinder();
 
     renderer: MapViewerRenderer;
+
+    world!: GameWorld;
 
     // Cache
     loadedCache!: LoadedCache;
@@ -123,6 +126,8 @@ export class MapViewer {
         if (this.camera.projectionType === ProjectionType.ORTHO) {
             params["pt"] = "o";
             params["z"] = this.camera.orthoZoom.toString();
+        } else {
+            params["pt"] = "p";
         }
 
         if (this.loadedCache.info.name !== this.cacheList.latest.name) {
@@ -146,6 +151,8 @@ export class MapViewer {
 
         if (searchParams.get("pt") === "o") {
             this.camera.projectionType = ProjectionType.ORTHO;
+        } else if (searchParams.get("pt") === "p") {
+            this.camera.projectionType = ProjectionType.PERSPECTIVE;
         }
 
         const zoom = searchParams.get("z");
@@ -204,6 +211,7 @@ export class MapViewer {
         this.isNewTextureAnim = cache.info.game === "runescape" && cache.info.revision >= 681;
 
         this.renderer.initCache();
+        this.initWorld();
 
         this.updateSearchParams();
     }
@@ -211,7 +219,16 @@ export class MapViewer {
     setRenderer(renderer: MapViewerRenderer): void {
         this.renderer = renderer;
         this.renderer.initCache();
+        this.initWorld();
         this.resetMenu();
+    }
+
+    private initWorld(): void {
+        this.world = new GameWorld(
+            this.renderer.createTerrain(),
+            this.seqTypeLoader,
+            this.seqFrameLoader,
+        );
     }
 
     /**

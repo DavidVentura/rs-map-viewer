@@ -17,11 +17,11 @@ import { CollisionFlag } from "../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../rs/scene/CollisionMap";
 import { Scene } from "../../rs/scene/Scene";
 import { DrawRange, newDrawRange } from "./DrawRange";
+import { EnemyRenderData } from "./enemy/EnemyRenderData";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
-import { Player } from "./player/Player";
-import { Projectile } from "./player/Projectile";
+import { PlayerRenderData } from "./player/PlayerRenderData";
 
 const FRAME_RENDER_DELAY = 3;
 
@@ -232,22 +232,9 @@ export class WebGLMapSquare {
             );
         }
 
-        const player = mapData.player
-            ? new Player(
-                  mapData.player.x,
-                  mapData.player.y,
-                  mapData.player.level,
-                  mapData.player.id,
-                  mapData.player.idleAnim,
-                  mapData.player.walkAnim,
-                  mapData.player.runAnim,
-                  mapData.player.attackAnim,
-                  mapData.player.idleSeqId,
-                  mapData.player.walkSeqId,
-                  mapData.player.runSeqId,
-                  mapData.player.attackSeqId,
-              )
-            : undefined;
+        const playerRenderData = mapData.player;
+        const enemyRenderData = mapData.enemy;
+        const enemySpawnCount = enemyRenderData !== undefined ? mapData.enemySpawns.length : 0;
 
         for (const npc of npcs) {
             const collisionMap = collisionMaps[npc.level];
@@ -272,7 +259,8 @@ export class WebGLMapSquare {
             {
                 length:
                     npcs.length +
-                    Number(player !== undefined) +
+                    Number(playerRenderData !== undefined) +
+                    enemySpawnCount +
                     (mapData.projectileFrame || mapData.projectileFrameAlpha ? MAX_PROJECTILES : 0),
             },
             () => newDrawRange(0, 0, 1),
@@ -326,7 +314,9 @@ export class WebGLMapSquare {
 
             locsAnimated,
             npcs,
-            player,
+            playerRenderData,
+            enemyRenderData,
+            enemySpawnCount,
             mapData.projectileFrame,
             mapData.projectileFrameAlpha,
         );
@@ -384,36 +374,16 @@ export class WebGLMapSquare {
         // Npcs
         readonly npcs: Npc[],
 
-        readonly player: Player | undefined,
+        readonly playerRenderData: PlayerRenderData | undefined,
+
+        readonly enemyRenderData: EnemyRenderData | undefined,
+        readonly enemySpawnCount: number,
 
         readonly projectileFrame: DrawRange | undefined,
         readonly projectileFrameAlpha: DrawRange | undefined,
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
-        if (this.player) {
-            const spawn = this.resolvePlayerSpawn(this.player.level, this.player.x, this.player.y);
-            this.player.x = spawn.x;
-            this.player.y = spawn.y;
-        }
-    }
-
-    projectiles: Projectile[] = [];
-
-    addProjectile(projectile: Projectile): void {
-        if (
-            (!this.projectileFrame && !this.projectileFrameAlpha) ||
-            this.projectiles.length >= MAX_PROJECTILES
-        ) {
-            return;
-        }
-        this.projectiles.push(projectile);
-    }
-
-    updateProjectiles(deltaTimeSeconds: number): void {
-        this.projectiles = this.projectiles.filter((projectile) =>
-            projectile.update(deltaTimeSeconds),
-        );
     }
 
     canRender(frameCount: number): boolean {
@@ -446,123 +416,6 @@ export class WebGLMapSquare {
                 getHeight(tileX + 1, tileY + 1) * offsetX) >>
             7;
         return (height0 * (128 - offsetY) + height1 * offsetY) >> 7;
-    }
-
-    movePlayer(
-        level: number,
-        startX: number,
-        startY: number,
-        deltaX: number,
-        deltaY: number,
-    ): { x: number; y: number } {
-        const steps = Math.ceil(Math.max(Math.abs(deltaX), Math.abs(deltaY)) / 16);
-        if (steps === 0) {
-            return { x: startX, y: startY };
-        }
-
-        let x = startX;
-        let y = startY;
-        for (let step = 0; step < steps; step++) {
-            x = this.movePlayerAxis(level, x, y, deltaX / steps, true);
-            y = this.movePlayerAxis(level, x, y, deltaY / steps, false);
-        }
-        return { x, y };
-    }
-
-    private resolvePlayerSpawn(level: number, x: number, y: number): { x: number; y: number } {
-        for (let offset = 0; offset <= 16 * 128; offset += 128) {
-            const candidateY = y + offset;
-            if (this.canOccupy(level, x, candidateY)) {
-                return { x, y: candidateY };
-            }
-        }
-        throw new Error("No valid player spawn position north of the requested location");
-    }
-
-    private movePlayerAxis(
-        level: number,
-        x: number,
-        y: number,
-        delta: number,
-        isX: boolean,
-    ): number {
-        const next = isX ? x + delta : y + delta;
-        if (!this.canOccupy(level, isX ? next : x, isX ? y : next)) {
-            return isX ? x : y;
-        }
-
-        const currentTileX = x >> 7;
-        const currentTileY = y >> 7;
-        const nextTileX = (isX ? next : x) >> 7;
-        const nextTileY = (isX ? y : next) >> 7;
-        if (currentTileX === nextTileX && currentTileY === nextTileY) {
-            return next;
-        }
-
-        const collisionMap = this.collisionMaps[level];
-        const sourceFlag = collisionMap.getFlag(
-            currentTileX + this.borderSize,
-            currentTileY + this.borderSize,
-        );
-        const targetFlag = collisionMap.getFlag(
-            nextTileX + this.borderSize,
-            nextTileY + this.borderSize,
-        );
-        const blocked =
-            (isX &&
-                delta > 0 &&
-                ((sourceFlag & CollisionFlag.WALL_EAST) !== 0 ||
-                    (targetFlag & CollisionFlag.WALL_WEST) !== 0)) ||
-            (isX &&
-                delta < 0 &&
-                ((sourceFlag & CollisionFlag.WALL_WEST) !== 0 ||
-                    (targetFlag & CollisionFlag.WALL_EAST) !== 0)) ||
-            (!isX &&
-                delta > 0 &&
-                ((sourceFlag & CollisionFlag.WALL_NORTH) !== 0 ||
-                    (targetFlag & CollisionFlag.WALL_SOUTH) !== 0)) ||
-            (!isX &&
-                delta < 0 &&
-                ((sourceFlag & CollisionFlag.WALL_SOUTH) !== 0 ||
-                    (targetFlag & CollisionFlag.WALL_NORTH) !== 0));
-        return blocked ? (isX ? x : y) : next;
-    }
-
-    private canOccupy(level: number, x: number, y: number): boolean {
-        const radius = 32;
-        const minTileX = Math.floor((x - radius) / 128);
-        const maxTileX = Math.floor((x + radius) / 128);
-        const minTileY = Math.floor((y - radius) / 128);
-        const maxTileY = Math.floor((y + radius) / 128);
-        if (
-            minTileX < 0 ||
-            minTileY < 0 ||
-            maxTileX >= Scene.MAP_SQUARE_SIZE ||
-            maxTileY >= Scene.MAP_SQUARE_SIZE
-        ) {
-            return false;
-        }
-
-        const collisionMap = this.collisionMaps[level];
-        const blockingFlags =
-            CollisionFlag.OBJECT |
-            CollisionFlag.FLOOR_DECORATION |
-            CollisionFlag.FLOOR |
-            CollisionFlag.BLOCK_PLAYERS;
-        for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
-            for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
-                if (
-                    collisionMap.hasFlag(
-                        tileX + this.borderSize,
-                        tileY + this.borderSize,
-                        blockingFlags,
-                    )
-                ) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     getDrawCall(isAlpha: boolean, isInteract: boolean, isLod: boolean): DrawCallRange {

@@ -3,4 +3,5 @@ export enum InteractType {
     LOC = 1, // object
     OBJ = 2, // item
     NPC = 3,
+    ENEMY = 4,
 }

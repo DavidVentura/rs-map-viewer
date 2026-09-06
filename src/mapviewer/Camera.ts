@@ -26,7 +26,7 @@ export class Camera {
     pitch: number;
     yaw: number;
 
-    projectionType: ProjectionType = ProjectionType.PERSPECTIVE;
+    projectionType: ProjectionType = ProjectionType.ORTHO;
 
     fov: number = 90;
     orthoZoom: number = 140;

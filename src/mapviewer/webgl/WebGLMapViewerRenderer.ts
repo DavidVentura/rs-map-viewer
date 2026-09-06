@@ -1,5 +1,5 @@
 import Denque from "denque";
-import { mat4, vec2, vec4 } from "gl-matrix";
+import { vec2, vec4 } from "gl-matrix";
 import { folder } from "leva";
 import { Schema } from "leva/dist/declarations/src/types";
 import {
@@ -25,14 +25,23 @@ import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceU
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
+import { Enemy } from "../game/Enemy";
+import { AttackRequest } from "../game/GameWorld";
+import { Player, PlayerInput } from "../game/Player";
+import { Projectile } from "../game/Projectile";
+import { Terrain } from "../game/Terrain";
 import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
 import { Interactions } from "./Interactions";
 import { WebGLMapSquare } from "./WebGLMapSquare";
+import { WebGLTerrain } from "./WebGLTerrain";
+import { MAP_SQUARE_UNITS, toWorld } from "./WorldCoords";
+import { getEnemyAnimationFrames } from "./enemy/EnemyRenderData";
+import { screenToGroundPoint } from "./groundPoint";
 import { SdMapData } from "./loader/SdMapData";
 import { SdMapDataLoader } from "./loader/SdMapDataLoader";
 import { SdMapLoaderInput } from "./loader/SdMapLoaderInput";
-import { Projectile } from "./player/Projectile";
+import { getPlayerAnimationFrames } from "./player/PlayerRenderData";
 import {
     FRAME_FXAA_PROGRAM,
     FRAME_PROGRAM,
@@ -45,11 +54,13 @@ const TEXTURE_SIZE = 128;
 
 const INTERACT_BUFFER_COUNT = 2;
 const INTERACTION_RADIUS = 5;
-const PLAYER_SIMULATION_STEP_SECONDS = 1 / 120;
 
-const inverseViewProjectionMatrix = mat4.create();
-const nearPoint = vec4.create();
-const farPoint = vec4.create();
+const EMPTY_PROJECTILES: Projectile[] = [];
+const EMPTY_ENEMIES: Enemy[] = [];
+
+function encodeNpcInfo(interactType: InteractType, rotation: number, level: number): number {
+    return (interactType << 13) | (rotation << 2) | level;
+}
 
 interface ColorRgb {
     r: number;
@@ -133,7 +144,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     interactFramebuffer?: Framebuffer;
 
     // Textures
-    textureFilterMode: TextureFilterMode = TextureFilterMode.ANISOTROPIC_16X;
+    textureFilterMode: TextureFilterMode = TextureFilterMode.DISABLED;
 
     textureArray?: Texture;
     textureMaterials?: Texture;
@@ -179,14 +190,19 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     npcDataTextureBuffer: (Texture | undefined)[] = new Array(5);
 
-    playerSimulationTime = 0;
+    readonly terrain: WebGLTerrain;
 
     constructor(public mapViewer: MapViewer) {
         super(mapViewer);
+        this.terrain = new WebGLTerrain(this.mapManager);
         this.interactions = new Array(INTERACT_BUFFER_COUNT);
         for (let i = 0; i < INTERACT_BUFFER_COUNT; i++) {
             this.interactions[i] = new Interactions(INTERACTION_RADIUS);
         }
+    }
+
+    createTerrain(): Terrain {
+        return this.terrain;
     }
 
     static isSupported(): boolean {
@@ -264,13 +280,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             FRAME_FXAA_PROGRAM,
         );
 
-        const [
-            mainProgram,
-            mainAlphaProgram,
-            npcProgram,
-            frameProgram,
-            frameFxaaProgram,
-        ] = programs;
+        const [mainProgram, mainAlphaProgram, npcProgram, frameProgram, frameFxaaProgram] =
+            programs;
         this.mainProgram = mainProgram;
         this.mainAlphaProgram = mainAlphaProgram;
         this.npcProgram = npcProgram;
@@ -720,6 +731,34 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
 
         this.updateTextureArray(mapData.loadedTextures);
+
+        if (mapData.player) {
+            const { player } = mapData;
+            this.mapViewer.world.spawnPlayer(
+                toWorld(mapX, player.x),
+                toWorld(mapY, player.y),
+                player.level,
+                player.idleSeqId,
+                player.walkSeqId,
+                player.runSeqId,
+                player.attackSeqId,
+            );
+        }
+
+        if (mapData.enemy) {
+            const { enemy } = mapData;
+            this.mapViewer.world.enemies = [];
+            for (const spawn of mapData.enemySpawns) {
+                this.mapViewer.world.spawnEnemy(
+                    spawn.x,
+                    spawn.y,
+                    spawn.level,
+                    enemy.idleSeqId,
+                    enemy.walkSeqId,
+                    enemy.deathSeqId,
+                );
+            }
+        }
     }
 
     isValidMapData(mapData: SdMapData): boolean {
@@ -792,8 +831,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     override handleKeyInput(deltaTime: number): void {
-        if (!this.getPlayer()) {
+        if (!this.mapViewer.world.player) {
             super.handleKeyInput(deltaTime);
+        }
+    }
+
+    override handleMouseInput(): void {
+        if (!this.mapViewer.world.player) {
+            super.handleMouseInput();
         }
     }
 
@@ -852,11 +897,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const camera = this.mapViewer.camera;
 
         this.handleInput(deltaTime);
-        this.updatePlayer(deltaTime / 1000);
+        const attackRequest = this.resolveAttackRequest();
+        this.mapViewer.world.advance(deltaTime / 1000, {
+            movement: this.buildMovementInput(),
+            attackRequest,
+        });
         this.pinCameraToPlayer();
 
         camera.update(this.app.width, this.app.height);
-        this.attackPlayer(timeSec);
 
         const renderDistance = this.mapViewer.renderDistance;
 
@@ -1028,207 +1076,94 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    private getPlayer() {
-        for (const map of this.mapManager.mapSquares.values()) {
-            if (map.player) {
-                return { map, player: map.player };
+    private buildMovementInput(): PlayerInput {
+        const player = this.mapViewer.world.player;
+        const inputManager = this.mapViewer.inputManager;
+        const running = inputManager.isShiftDown();
+        const stationary: PlayerInput = { x: 0, y: 0, running };
+
+        if (!player || !inputManager.isDragging() || this.getHoveredEnemy()) {
+            return stationary;
+        }
+
+        const groundPoint = this.screenToGround(player, inputManager.mouseX, inputManager.mouseY);
+        if (!groundPoint) {
+            return stationary;
+        }
+
+        const deltaX = groundPoint.x - player.x;
+        const deltaY = groundPoint.y - player.y;
+        const length = Math.hypot(deltaX, deltaY);
+        if (length === 0) {
+            return stationary;
+        }
+
+        return { x: deltaX / length, y: deltaY / length, running };
+    }
+
+    private resolveAttackRequest(): AttackRequest | undefined {
+        const player = this.mapViewer.world.player;
+        const inputManager = this.mapViewer.inputManager;
+        if (!player || inputManager.attackX === -1 || inputManager.attackY === -1) {
+            return undefined;
+        }
+
+        const enemy = this.getHoveredEnemy();
+        if (!enemy) {
+            return undefined;
+        }
+        return { targetX: enemy.x, targetY: enemy.y };
+    }
+
+    private screenToGround(
+        player: Player,
+        screenX: number,
+        screenY: number,
+    ): { x: number; y: number } | undefined {
+        const rect = this.canvas.getBoundingClientRect();
+        const groundHeight = this.terrain.getHeight(player.level, player.x, player.y);
+        return screenToGroundPoint(
+            this.mapViewer.camera.viewProjMatrix,
+            screenX,
+            screenY,
+            rect.width,
+            rect.height,
+            groundHeight,
+        );
+    }
+
+    private getHoveredEnemy(): Enemy | undefined {
+        if (!this.interactBuffer) {
+            return undefined;
+        }
+        for (let i = 0; i < INTERACTION_RADIUS + 1; i++) {
+            const indices = this.closestInteractIndices.get(i);
+            if (!indices) {
+                continue;
+            }
+            for (const index of indices) {
+                if (this.interactBuffer[index + 2] !== InteractType.ENEMY) {
+                    continue;
+                }
+                const enemy = this.mapViewer.world.findEnemy(this.interactBuffer[index]);
+                if (enemy) {
+                    return enemy;
+                }
             }
         }
         return undefined;
     }
 
-    private updatePlayer(deltaTimeSeconds: number): void {
-        const playerEntry = this.getPlayer();
-        if (!playerEntry) {
-            return;
-        }
-
-        this.playerSimulationTime += Math.min(deltaTimeSeconds, 0.1);
-        const inputManager = this.mapViewer.inputManager;
-        const moveX =
-            Number(inputManager.isKeyDown("KeyD")) - Number(inputManager.isKeyDown("KeyA"));
-        const moveY =
-            Number(inputManager.isKeyDown("KeyW")) - Number(inputManager.isKeyDown("KeyS"));
-        while (this.playerSimulationTime >= PLAYER_SIMULATION_STEP_SECONDS) {
-            playerEntry.player.update(
-                {
-                    x: moveX,
-                    y: moveY,
-                    running: inputManager.isShiftDown(),
-                },
-                PLAYER_SIMULATION_STEP_SECONDS,
-                this.mapViewer.seqTypeLoader,
-                this.mapViewer.seqFrameLoader,
-                (x, y, deltaX, deltaY) =>
-                    playerEntry.map.movePlayer(playerEntry.player.level, x, y, deltaX, deltaY),
-            );
-            playerEntry.map.updateProjectiles(PLAYER_SIMULATION_STEP_SECONDS);
-            this.playerSimulationTime -= PLAYER_SIMULATION_STEP_SECONDS;
-        }
-    }
-
-    private attackPlayer(timeSeconds: number): void {
-        const playerEntry = this.getPlayer();
-        const inputManager = this.mapViewer.inputManager;
-        if (!playerEntry || inputManager.attackX === -1 || inputManager.attackY === -1) {
-            return;
-        }
-
-        const rect = this.canvas.getBoundingClientRect();
-        const clipX = (inputManager.attackX / rect.width) * 2 - 1;
-        const clipY = 1 - (inputManager.attackY / rect.height) * 2;
-        if (!mat4.invert(inverseViewProjectionMatrix, this.mapViewer.camera.viewProjMatrix)) {
-            return;
-        }
-
-        this.unproject(nearPoint, clipX, clipY, -1);
-        this.unproject(farPoint, clipX, clipY, 1);
-        const { map, player } = playerEntry;
-        const target = this.getProjectileTarget(
-            map,
-            player.x,
-            player.y,
-            player.level,
-            this.getHoveredNpcIds(),
-        );
-        if (!target || Math.hypot(target.x - player.x, target.y - player.y) === 0) {
-            return;
-        }
-        if (!player.canAttack(timeSeconds)) {
-            return;
-        }
-
-        const deltaX = target.x - player.x;
-        const deltaY = target.y - player.y;
-        const distance = Math.hypot(deltaX, deltaY);
-        const rotation = ((Math.atan2(deltaX, deltaY) / (Math.PI * 2)) * 2048) & 2047;
-        player.attack(rotation);
-        map.addProjectile(
-            new Projectile(
-                player.x + (deltaX / distance) * 48,
-                player.y + (deltaY / distance) * 48,
-                player.level,
-                target.x,
-                target.y,
-                target.height,
-                rotation,
-            ),
-        );
-    }
-
-    private getProjectileTarget(
-        map: WebGLMapSquare,
-        playerX: number,
-        playerY: number,
-        level: number,
-        hoveredNpcIds: Set<number>,
-    ): { x: number; y: number; height: number } | undefined {
-        const directionX = farPoint[0] - nearPoint[0];
-        const directionY = farPoint[1] - nearPoint[1];
-        const directionZ = farPoint[2] - nearPoint[2];
-        let closestNpcDistance = Infinity;
-        let npcTarget: { x: number; y: number; height: number } | undefined;
-        let hoveredNpcDistance = Infinity;
-        let hoveredNpcTarget: { x: number; y: number; height: number } | undefined;
-
-        for (const npc of map.npcs) {
-            if (npc.level !== level) {
-                continue;
-            }
-            const npcX = map.mapX * Scene.MAP_SQUARE_SIZE + npc.x / 128;
-            const npcY = -map.getHeightAt(npc.x, npc.y, level) / 128;
-            const npcZ = map.mapY * Scene.MAP_SQUARE_SIZE + npc.y / 128;
-            const radius = npc.getSize() * 0.55;
-            const offsetX = nearPoint[0] - npcX;
-            const offsetZ = nearPoint[2] - npcZ;
-            const a = directionX * directionX + directionZ * directionZ;
-            if (a === 0) {
-                continue;
-            }
-            if (hoveredNpcIds.has(npc.npcType.id)) {
-                const closestDistance =
-                    ((npcX - nearPoint[0]) * directionX + (npcZ - nearPoint[2]) * directionZ) / a;
-                const closestX = nearPoint[0] + directionX * closestDistance;
-                const closestZ = nearPoint[2] + directionZ * closestDistance;
-                const horizontalDistance = Math.hypot(npcX - closestX, npcZ - closestZ);
-                if (horizontalDistance < hoveredNpcDistance) {
-                    hoveredNpcDistance = horizontalDistance;
-                    hoveredNpcTarget = { x: npc.x, y: npc.y, height: 128 };
-                }
-            }
-            const b = 2 * (offsetX * directionX + offsetZ * directionZ);
-            const c = offsetX * offsetX + offsetZ * offsetZ - radius * radius;
-            const discriminant = b * b - 4 * a * c;
-            if (discriminant < 0) {
-                continue;
-            }
-
-            const distance = (-b - Math.sqrt(discriminant)) / (2 * a);
-            const hitY = nearPoint[1] + directionY * distance;
-            if (distance < 0 || distance > 1 || hitY < npcY || hitY > npcY + 4) {
-                continue;
-            }
-            if (distance < closestNpcDistance) {
-                closestNpcDistance = distance;
-                npcTarget = { x: npc.x, y: npc.y, height: 128 };
-            }
-        }
-        if (npcTarget) {
-            return npcTarget;
-        }
-        if (hoveredNpcTarget && hoveredNpcDistance <= 2) {
-            return hoveredNpcTarget;
-        }
-
-        if (directionY === 0) {
-            return undefined;
-        }
-        const distance =
-            (-map.getHeightAt(playerX, playerY, level) / 128 - nearPoint[1]) / directionY;
-        return {
-            x: (nearPoint[0] + directionX * distance - map.mapX * Scene.MAP_SQUARE_SIZE) * 128,
-            y: (nearPoint[2] + directionZ * distance - map.mapY * Scene.MAP_SQUARE_SIZE) * 128,
-            height: 0,
-        };
-    }
-
-    private getHoveredNpcIds(): Set<number> {
-        const npcIds = new Set<number>();
-        if (!this.interactBuffer) {
-            return npcIds;
-        }
-        for (const indices of this.closestInteractIndices.values()) {
-            for (const index of indices) {
-                if (this.interactBuffer[index + 2] === InteractType.NPC) {
-                    npcIds.add(this.interactBuffer[index]);
-                }
-            }
-        }
-        return npcIds;
-    }
-
-    private unproject(point: vec4, x: number, y: number, z: number): void {
-        point[0] = x;
-        point[1] = y;
-        point[2] = z;
-        point[3] = 1;
-        vec4.transformMat4(point, point, inverseViewProjectionMatrix);
-        point[0] /= point[3];
-        point[1] /= point[3];
-        point[2] /= point[3];
-    }
-
     private pinCameraToPlayer(): void {
-        const playerEntry = this.getPlayer();
-        if (!playerEntry) {
+        const player = this.mapViewer.world.player;
+        if (!player) {
             return;
         }
 
-        const { map, player } = playerEntry;
         const camera = this.mapViewer.camera;
-        const playerX = map.mapX * Scene.MAP_SQUARE_SIZE + player.x / 128;
-        const playerZ = map.mapY * Scene.MAP_SQUARE_SIZE + player.y / 128;
-        const playerY = -map.getHeightAt(player.x, player.y, player.level) / 128;
+        const playerX = player.x / 128;
+        const playerZ = player.y / 128;
+        const playerY = -this.terrain.getHeight(player.level, player.x, player.y) / 128;
         const pitch = camera.pitch * RS_TO_RADIANS;
         const yaw = (camera.yaw - 1024) * RS_TO_RADIANS;
         const distance = (playerY - camera.pos[1]) / Math.sin(pitch);
@@ -1272,7 +1207,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     addNpcRenderData(map: WebGLMapSquare) {
         const npcs = map.npcs;
-        const actorCount = npcs.length + Number(map.player !== undefined) + map.projectiles.length;
+        const world = this.mapViewer.world;
+        const player = map.playerRenderData !== undefined ? world.player : undefined;
+        const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
+        const projectiles =
+            map.playerRenderData !== undefined ? world.projectiles : EMPTY_PROJECTILES;
+        const actorCount =
+            npcs.length + Number(player !== undefined) + enemies.length + projectiles.length;
 
         if (actorCount === 0) {
             return;
@@ -1304,30 +1245,54 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
             this.npcRenderData[offset++] = npc.x;
             this.npcRenderData[offset++] = npc.y;
-            this.npcRenderData[offset++] = (npc.rotation << 2) | renderPlane;
+            this.npcRenderData[offset++] = encodeNpcInfo(
+                InteractType.NPC,
+                npc.rotation,
+                renderPlane,
+            );
             this.npcRenderData[offset++] = npc.npcType.id;
 
             this.npcRenderCount++;
         }
 
-        if (map.player) {
+        if (player) {
             const offset = this.npcRenderCount * 4;
-            this.npcRenderData[offset] = map.player.x;
-            this.npcRenderData[offset + 1] = map.player.y;
-            this.npcRenderData[offset + 2] = (map.player.rotation << 2) | map.player.level;
-            this.npcRenderData[offset + 3] = map.player.id;
+            this.npcRenderData[offset] = player.x - map.mapX * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 1] = player.y - map.mapY * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 2] = encodeNpcInfo(
+                InteractType.NONE,
+                player.rotation,
+                player.level,
+            );
+            this.npcRenderData[offset + 3] = map.playerRenderData!.id;
             this.npcRenderCount++;
         }
 
-        for (const projectile of map.projectiles) {
+        for (const enemy of enemies) {
             const offset = this.npcRenderCount * 4;
-            this.npcRenderData[offset] = projectile.x;
-            this.npcRenderData[offset + 1] = projectile.y;
-            this.npcRenderData[offset + 2] = (projectile.rotation << 2) | projectile.level;
+            this.npcRenderData[offset] = enemy.x - map.mapX * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 1] = enemy.y - map.mapY * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 2] = encodeNpcInfo(
+                InteractType.ENEMY,
+                enemy.rotation,
+                enemy.level,
+            );
+            this.npcRenderData[offset + 3] = enemy.id;
+            this.npcRenderCount++;
+        }
+
+        for (const projectile of projectiles) {
+            const offset = this.npcRenderCount * 4;
+            this.npcRenderData[offset] = projectile.x - map.mapX * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 1] = projectile.y - map.mapY * MAP_SQUARE_UNITS;
+            this.npcRenderData[offset + 2] = encodeNpcInfo(
+                InteractType.NONE,
+                projectile.rotation,
+                projectile.level,
+            );
             this.npcRenderData[offset + 3] = 0;
             this.npcRenderCount++;
         }
-
     }
 
     updateNpcDataTexture() {
@@ -1397,11 +1362,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
+        const world = this.mapViewer.world;
+
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
+            const player = map.playerRenderData !== undefined ? world.player : undefined;
+            const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
+            const projectiles =
+                map.playerRenderData !== undefined ? world.projectiles : EMPTY_PROJECTILES;
 
-            if (npcs.length === 0 && !map.player && map.projectiles.length === 0) {
+            if (npcs.length === 0 && !player && enemies.length === 0 && projectiles.length === 0) {
                 continue;
             }
 
@@ -1429,35 +1400,50 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 drawRanges[i] = frame;
             }
 
-            if (map.player) {
+            if (player) {
                 const index = npcs.length;
-                const frame = map.player.getAnimationFrames().frames[map.player.movementFrame];
+                const anim = getPlayerAnimationFrames(
+                    map.playerRenderData!,
+                    player.animation.seqId,
+                );
+                const frame = anim.frames[player.animation.frame];
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
             }
 
-            const projectileStart = npcs.length + Number(map.player !== undefined);
-            for (let i = 0; i < map.projectiles.length; i++) {
+            const enemyStart = npcs.length + Number(player !== undefined);
+            for (let i = 0; i < enemies.length; i++) {
+                const index = enemyStart + i;
+                const enemy = enemies[i];
+                const anim = getEnemyAnimationFrames(map.enemyRenderData!, enemy.animation.seqId);
+                const frame = anim.frames[enemy.animation.frame];
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
+            }
+
+            const projectileStart = enemyStart + enemies.length;
+            for (let i = 0; i < projectiles.length; i++) {
                 const index = projectileStart + i;
                 const frame = map.projectileFrame ?? NULL_DRAW_RANGE;
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
             }
-            for (let i = projectileStart + map.projectiles.length; i < drawRanges.length; i++) {
+            for (let i = projectileStart + projectiles.length; i < drawRanges.length; i++) {
                 (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
                 (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
                 drawRanges[i] = NULL_DRAW_RANGE;
             }
 
             this.draw(drawCall, drawRanges);
-            for (let i = 0; i < map.projectiles.length; i++) {
+            for (let i = 0; i < projectiles.length; i++) {
                 if (!map.projectileFrame) {
                     continue;
                 }
                 drawCall.uniform("u_drawId", projectileStart + i);
-                drawCall.uniform("u_verticalOffset", map.projectiles[i].height);
+                drawCall.uniform("u_verticalOffset", projectiles[i].height);
                 drawCall.drawRanges(map.projectileFrame);
                 drawCall.draw();
             }
@@ -1505,11 +1491,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
+        const world = this.mapViewer.world;
+
         for (let i = this.mapManager.visibleMapCount - 1; i >= 0; i--) {
             const map = this.mapManager.visibleMaps[i];
             const npcs = map.npcs;
+            const player = map.playerRenderData !== undefined ? world.player : undefined;
+            const enemies = map.enemyRenderData !== undefined ? world.enemies : EMPTY_ENEMIES;
+            const projectiles =
+                map.playerRenderData !== undefined ? world.projectiles : EMPTY_PROJECTILES;
 
-            if (npcs.length === 0 && !map.player && map.projectiles.length === 0) {
+            if (npcs.length === 0 && !player && enemies.length === 0 && projectiles.length === 0) {
                 continue;
             }
 
@@ -1540,36 +1532,53 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 drawRanges[i] = frame;
             }
 
-            if (map.player) {
+            if (player) {
                 const index = npcs.length;
-                const frames = map.player.getAnimationFrames().framesAlpha;
-                const frame = frames ? frames[map.player.movementFrame] : NULL_DRAW_RANGE;
+                const frames = getPlayerAnimationFrames(
+                    map.playerRenderData!,
+                    player.animation.seqId,
+                ).framesAlpha;
+                const frame = frames ? frames[player.animation.frame] : NULL_DRAW_RANGE;
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
             }
 
-            const projectileStart = npcs.length + Number(map.player !== undefined);
-            for (let i = 0; i < map.projectiles.length; i++) {
+            const enemyStart = npcs.length + Number(player !== undefined);
+            for (let i = 0; i < enemies.length; i++) {
+                const index = enemyStart + i;
+                const enemy = enemies[i];
+                const frames = getEnemyAnimationFrames(
+                    map.enemyRenderData!,
+                    enemy.animation.seqId,
+                ).framesAlpha;
+                const frame = frames ? frames[enemy.animation.frame] : NULL_DRAW_RANGE;
+                (drawCall as any).offsets[index] = frame[0];
+                (drawCall as any).numElements[index] = frame[1];
+                drawRanges[index] = frame;
+            }
+
+            const projectileStart = enemyStart + enemies.length;
+            for (let i = 0; i < projectiles.length; i++) {
                 const index = projectileStart + i;
                 const frame = map.projectileFrameAlpha ?? NULL_DRAW_RANGE;
                 (drawCall as any).offsets[index] = frame[0];
                 (drawCall as any).numElements[index] = frame[1];
                 drawRanges[index] = frame;
             }
-            for (let i = projectileStart + map.projectiles.length; i < drawRanges.length; i++) {
+            for (let i = projectileStart + projectiles.length; i < drawRanges.length; i++) {
                 (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
                 (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
                 drawRanges[i] = NULL_DRAW_RANGE;
             }
 
             this.draw(drawCall, drawRanges);
-            for (let i = 0; i < map.projectiles.length; i++) {
+            for (let i = 0; i < projectiles.length; i++) {
                 if (!map.projectileFrameAlpha) {
                     continue;
                 }
                 drawCall.uniform("u_drawId", projectileStart + i);
-                drawCall.uniform("u_verticalOffset", map.projectiles[i].height);
+                drawCall.uniform("u_verticalOffset", projectiles[i].height);
                 drawCall.drawRanges(map.projectileFrameAlpha);
                 drawCall.draw();
             }
@@ -1626,6 +1635,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const locIds = new Set<number>();
         const objIds = new Set<number>();
         const npcIds = new Set<number>();
+        const enemyIds = new Set<number>();
 
         for (let i = 0; i < INTERACTION_RADIUS + 1; i++) {
             const indices = this.closestInteractIndices.get(i);
@@ -1740,6 +1750,27 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                         targetName: npcType.name,
                         targetLevel: npcType.combatLevel,
                         onClick: this.mapViewer.onExamine,
+                    });
+                } else if (interactType === InteractType.ENEMY) {
+                    const enemy = this.mapViewer.world.findEnemy(interactId);
+                    const mapId = this.interactBuffer[index + 1];
+                    const map = this.mapManager.getMapSquare(mapId >> 8, mapId & 0xff);
+                    if (!enemy || enemy.health <= 0 || !map?.enemyRenderData) {
+                        continue;
+                    }
+                    if (enemyIds.has(interactId)) {
+                        continue;
+                    }
+                    enemyIds.add(interactId);
+
+                    const npcType = this.mapViewer.npcTypeLoader.load(map.enemyRenderData.id);
+                    menuEntries.push({
+                        option: "Attack",
+                        targetId: enemy.id,
+                        targetType: MenuTargetType.NPC,
+                        targetName: npcType.name,
+                        targetLevel: npcType.combatLevel,
+                        onClick: this.mapViewer.closeMenu,
                     });
                 }
             }

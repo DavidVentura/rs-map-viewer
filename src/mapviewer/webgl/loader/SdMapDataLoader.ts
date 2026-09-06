@@ -7,6 +7,7 @@ import { NpcTypeLoader } from "../../../rs/config/npctype/NpcTypeLoader";
 import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
 import { Model } from "../../../rs/model/Model";
+import { CollisionFlag } from "../../../rs/pathfinder/flag/CollisionFlag";
 import { Scene } from "../../../rs/scene/Scene";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
@@ -20,6 +21,7 @@ import { WorkerState } from "../../worker/RenderDataWorker";
 import { AnimationFrames } from "../AnimationFrames";
 import { DrawRange, NULL_DRAW_RANGE, newDrawRange } from "../DrawRange";
 import { InteractType } from "../InteractType";
+import { toWorld } from "../WorldCoords";
 import { ModelHashBuffer, getModelHash } from "../buffer/ModelHashBuffer";
 import {
     ContourGroundType,
@@ -32,13 +34,14 @@ import {
     getModelFaces,
     isModelFaceTransparent,
 } from "../buffer/SceneBuffer";
+import { EnemyRenderData } from "../enemy/EnemyRenderData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs, isLowDetail } from "../loc/SceneLocs";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
-import { PlayerData } from "../player/PlayerData";
-import { SdMapData } from "./SdMapData";
+import { PlayerRenderData } from "../player/PlayerRenderData";
+import { EnemySpawnData, SdMapData } from "./SdMapData";
 import { SdMapLoaderInput } from "./SdMapLoaderInput";
 
 function loadHeightMapTextureData(scene: Scene): Int16Array {
@@ -535,13 +538,13 @@ function addPlayerAnimationFrames(
     };
 }
 
-function createPlayerData(
+function createPlayerRenderData(
     playerModelLoader: PlayerModelLoader,
     npcTypeLoader: NpcTypeLoader,
     sceneBuf: SceneBuffer,
     mapX: number,
     mapY: number,
-): PlayerData | undefined {
+): PlayerRenderData | undefined {
     const playerWorldX = 3237;
     const playerWorldY = 3225;
     if (mapX !== playerWorldX >> 6 || mapY !== playerWorldY >> 6) {
@@ -578,6 +581,93 @@ function createPlayerData(
         runSeqId: 824,
         attackSeqId: 426,
     };
+}
+
+// Lumbridge "Goblin" (id 3029): idle/walk/death share the same unarmed-squat animation set.
+const ENEMY_NPC_ID = 3029;
+const ENEMY_IDLE_SEQ_ID = 6181;
+const ENEMY_WALK_SEQ_ID = 6180;
+const ENEMY_DEATH_SEQ_ID = 6182;
+
+const ENEMY_SPAWN_TILE_OFFSETS = [
+    { x: 3, y: 1 },
+    { x: -3, y: 1 },
+    { x: 1, y: -3 },
+    { x: -1, y: 3 },
+];
+
+const ENEMY_SPAWN_BLOCKING_FLAGS =
+    CollisionFlag.OBJECT |
+    CollisionFlag.FLOOR_DECORATION |
+    CollisionFlag.FLOOR |
+    CollisionFlag.BLOCK_PLAYERS;
+
+function createEnemyRenderData(
+    npcModelLoader: NpcModelLoader,
+    npcTypeLoader: NpcTypeLoader,
+    sceneBuf: SceneBuffer,
+    mapX: number,
+    mapY: number,
+): EnemyRenderData | undefined {
+    const playerWorldX = 3237;
+    const playerWorldY = 3225;
+    if (mapX !== playerWorldX >> 6 || mapY !== playerWorldY >> 6) {
+        return undefined;
+    }
+
+    const npcType = npcTypeLoader.load(ENEMY_NPC_ID);
+
+    const idleAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, ENEMY_IDLE_SEQ_ID);
+    const walkAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, ENEMY_WALK_SEQ_ID);
+    const deathAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, ENEMY_DEATH_SEQ_ID);
+    if (!idleAnim || !walkAnim || !deathAnim) {
+        return undefined;
+    }
+
+    return {
+        id: npcType.id,
+        idleAnim,
+        walkAnim,
+        deathAnim,
+        idleSeqId: ENEMY_IDLE_SEQ_ID,
+        walkSeqId: ENEMY_WALK_SEQ_ID,
+        deathSeqId: ENEMY_DEATH_SEQ_ID,
+    };
+}
+
+function createEnemySpawns(
+    scene: Scene,
+    borderSize: number,
+    mapX: number,
+    mapY: number,
+): EnemySpawnData[] {
+    const playerWorldX = 3237;
+    const playerWorldY = 3225;
+    if (mapX !== playerWorldX >> 6 || mapY !== playerWorldY >> 6) {
+        return [];
+    }
+
+    const level = 0;
+    const collisionMap = scene.collisionMaps[level];
+    const centerTileX = playerWorldX & 0x3f;
+    const centerTileY = playerWorldY & 0x3f;
+
+    const spawns: EnemySpawnData[] = [];
+    for (const offset of ENEMY_SPAWN_TILE_OFFSETS) {
+        const tileX = centerTileX + offset.x;
+        const tileY = centerTileY + offset.y;
+        if (
+            collisionMap.hasFlag(tileX + borderSize, tileY + borderSize, ENEMY_SPAWN_BLOCKING_FLAGS)
+        ) {
+            continue;
+        }
+        spawns.push({
+            x: toWorld(mapX, tileX * 128 + 64),
+            y: toWorld(mapY, tileY * 128 + 64),
+            level,
+        });
+    }
+    return spawns;
 }
 
 function createNpcSpawnGroups(
@@ -750,7 +840,16 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             state.seqFrameLoader,
             state.skeletalSeqLoader,
         );
-        const player = createPlayerData(playerModelLoader, npcTypeLoader, sceneBuf, mapX, mapY);
+        const player = createPlayerRenderData(
+            playerModelLoader,
+            npcTypeLoader,
+            sceneBuf,
+            mapX,
+            mapY,
+        );
+        const enemy = createEnemyRenderData(npcModelLoader, npcTypeLoader, sceneBuf, mapX, mapY);
+        const enemySpawns = createEnemySpawns(scene, borderSize, mapX, mapY);
+
         const arrowModel = player ? objModelLoader.getModel(882, 1) : undefined;
         const projectileFrame = arrowModel
             ? sceneBuf.addModelAnimFrame(arrowModel, false)
@@ -932,6 +1031,8 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 locsAnimated,
                 npcs,
                 player,
+                enemy,
+                enemySpawns,
                 projectileFrame,
                 projectileFrameAlpha,
 
