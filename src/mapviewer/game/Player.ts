@@ -9,6 +9,7 @@ import { STYLE_SWITCH_SEQ_IDS, buildPlayerAbilityBar } from "./abilities";
 import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
+import { AbilityModifiers, DEFAULT_ABILITY_MODIFIERS, Upgrade, applyModifiers } from "./upgrades";
 
 export type PlayerInput = {
     x: number;
@@ -41,10 +42,18 @@ export class Player implements Combatant, ManaPool {
 
     readonly faction = Faction.PLAYER;
     readonly hitRadius = Player.HIT_RADIUS;
-    readonly maxHealth = Player.MAX_HEALTH;
     health = Player.MAX_HEALTH;
-    readonly maxMana = Player.MAX_MANA;
     mana = Player.MAX_MANA;
+
+    private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
+
+    get maxHealth(): number {
+        return Player.MAX_HEALTH + this.modifiers.maxHealthBonus;
+    }
+
+    get maxMana(): number {
+        return Player.MAX_MANA + this.modifiers.maxManaBonus;
+    }
 
     readonly spawnX: number;
     readonly spawnY: number;
@@ -96,7 +105,25 @@ export class Player implements Combatant, ManaPool {
     }
 
     get abilityBar(): readonly AbilityDefinition[] {
-        return buildPlayerAbilityBar(this.style);
+        return buildPlayerAbilityBar(this.style).map((definition) =>
+            applyModifiers(definition, this.modifiers),
+        );
+    }
+
+    getModifiers(): AbilityModifiers {
+        return this.modifiers;
+    }
+
+    applyUpgrade(upgrade: Upgrade): void {
+        const previousMaxHealth = this.maxHealth;
+        const previousMaxMana = this.maxMana;
+        this.modifiers = upgrade.apply(this.modifiers);
+        this.health = Math.min(this.maxHealth, this.health + (this.maxHealth - previousMaxHealth));
+        this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
+    }
+
+    resetProgression(): void {
+        this.modifiers = DEFAULT_ABILITY_MODIFIERS;
     }
 
     getSlotReadiness(slot: number, timeSeconds: number): AbilitySlotReadiness {
@@ -245,7 +272,9 @@ export class Player implements Combatant, ManaPool {
             return;
         }
 
-        const speed = input.running ? Player.RUN_SPEED : Player.WALK_SPEED;
+        const speed =
+            (input.running ? Player.RUN_SPEED : Player.WALK_SPEED) *
+            this.modifiers.moveSpeedMultiplier;
         const scale = (speed * deltaTimeSeconds) / length;
         const position = resolveMovement(
             terrain,

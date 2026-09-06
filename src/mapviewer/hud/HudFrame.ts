@@ -25,7 +25,7 @@ export type TargetHudInfo = {
 export enum SplatKind {
     DAMAGE = 0,
     HEAL = 1,
-    FROZEN = 2,
+    GROUND_IMPACT = 3,
 }
 
 export type SplatPosition = {
@@ -45,11 +45,19 @@ export type HealSplatEvent = SplatPosition & {
     amount: number;
 };
 
-export type FrozenSplatEvent = SplatPosition & {
-    kind: SplatKind.FROZEN;
+export type GroundImpactSplatEvent = SplatPosition & {
+    kind: SplatKind.GROUND_IMPACT;
+    radius: number;
 };
 
-export type SplatEvent = DamageSplatEvent | HealSplatEvent | FrozenSplatEvent;
+export type SplatEvent = DamageSplatEvent | HealSplatEvent | GroundImpactSplatEvent;
+
+export type GroundShadowHudInfo = {
+    readonly screenX: number;
+    readonly screenY: number;
+    readonly radiusPx: number;
+    readonly progress: number;
+};
 
 export enum AbilitySlotBlockReason {
     NONE = 0,
@@ -75,11 +83,28 @@ export type StyleSwitchHudInfo = {
     readonly progress: number;
 };
 
+export enum WaveStatus {
+    ACTIVE = 0,
+    AWAITING_UPGRADE = 1,
+    CLEARED = 2,
+}
+
 export type WaveHudInfo = {
     readonly index: number;
     readonly total: number;
     readonly aliveEnemies: number;
-    readonly cleared: boolean;
+    readonly status: WaveStatus;
+    readonly modifiersSummary?: string;
+};
+
+export type UpgradeCardHudInfo = {
+    readonly name: string;
+    readonly description: string;
+    readonly keyLabel: string;
+};
+
+export type UpgradeOfferHudInfo = {
+    readonly cards: readonly UpgradeCardHudInfo[];
 };
 
 export type HudFrame = {
@@ -91,5 +116,7 @@ export type HudFrame = {
     activeStyle?: WeaponStyle;
     styleSwitch?: StyleSwitchHudInfo;
     splatEvents: SplatEvent[];
+    groundShadows: GroundShadowHudInfo[];
     wave?: WaveHudInfo;
+    upgradeOffer?: UpgradeOfferHudInfo;
 };

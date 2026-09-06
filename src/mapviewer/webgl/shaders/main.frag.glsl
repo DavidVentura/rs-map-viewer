@@ -16,12 +16,19 @@ in float v_fogAmount;
 flat in vec4 v_interactId;
 #ifdef NPC_PROGRAM
 in float v_highlight;
+#else
+in float v_roofHidden;
 #endif
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 interactId;
 
 void main() {
+#ifndef NPC_PROGRAM
+    if (v_roofHidden > 0.5) {
+        discard;
+    }
+#endif
     vec4 textureColor = texture(u_textures, vec3(v_texCoord, v_texId)).bgra;
     fragColor = pow(textureColor, vec4(vec3(u_brightness), 1.0)) *
         vec4(round(v_color.rgb * u_colorBanding) / u_colorBanding, v_color.a);

@@ -28,7 +28,7 @@ export function initialWaveDirectorState(waveCount: number): WaveDirectorState {
     };
 }
 
-function totalGroupCount(wave: Wave): number {
+export function totalGroupCount(wave: Wave): number {
     return wave.groups.reduce((sum, group) => sum + group.count, 0);
 }
 

@@ -60,6 +60,9 @@ export const MapViewerControls = memo(
         const [varId, setVarId] = useState(0);
         const [varValue, setVarValue] = useState(0);
 
+        const [musicEnabled, setMusicEnabled] = useState(mapViewer.musicPlayer.isEnabled);
+        const [musicVolume, setMusicVolume] = useState(mapViewer.musicPlayer.volume);
+
         const controlsSchema: Schema = {
             Position: { value: positionControls, editable: false },
             Direction: { value: directionControls, editable: false },
@@ -342,6 +345,28 @@ export const MapViewerControls = memo(
                     },
                     { collapsed: true },
                 ),
+                Music: folder(
+                    {
+                        Enabled: {
+                            value: musicEnabled,
+                            onChange: (v: boolean) => {
+                                mapViewer.musicPlayer.setEnabled(v);
+                                setMusicEnabled(v);
+                            },
+                        },
+                        Volume: {
+                            value: musicVolume,
+                            min: 0,
+                            max: 1,
+                            step: 0.01,
+                            onChange: (v: number) => {
+                                mapViewer.musicPlayer.setVolume(v);
+                                setMusicVolume(v);
+                            },
+                        },
+                    },
+                    { collapsed: true },
+                ),
                 Vars: folder(
                     {
                         Type: {
@@ -453,6 +478,8 @@ export const MapViewerControls = memo(
                 varType,
                 varId,
                 varValue,
+                musicEnabled,
+                musicVolume,
                 pointsControls,
                 isCameraRunning,
                 isExportingSprites,

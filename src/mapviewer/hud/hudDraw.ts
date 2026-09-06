@@ -7,7 +7,9 @@ import {
     PlayerHudInfo,
     StyleSwitchHudInfo,
     TargetHudInfo,
+    UpgradeCardHudInfo,
     WaveHudInfo,
+    WaveStatus,
 } from "./HudFrame";
 
 const HEALTH_GLOBE_COLOR = { light: "#ff4a3a", dark: "#5a0606", glow: "#ff9a8a" };
@@ -26,6 +28,9 @@ const SWITCH_LABEL_MARGIN_TOP = 4;
 const STYLE_ICON_SIZE = 26;
 const STYLE_ICON_GAP = 6;
 const STYLE_ROW_MARGIN_BOTTOM = 6;
+const UPGRADE_CARD_WIDTH = 260;
+const UPGRADE_CARD_HEIGHT = 300;
+const UPGRADE_CARD_GAP = 24;
 
 const STYLE_ORDER: readonly WeaponStyle[] = [
     WeaponStyle.MELEE,
@@ -59,9 +64,15 @@ export type HudLayout = {
     slots: { x: number; y: number; size: number }[];
     styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
     switchLabelY: number;
+    upgradeCards: { x: number; y: number; width: number; height: number }[];
 };
 
-export function computeHudLayout(width: number, height: number, slotCount: number): HudLayout {
+export function computeHudLayout(
+    width: number,
+    height: number,
+    slotCount: number,
+    upgradeCardCount: number = 0,
+): HudLayout {
     const panelWidth = Math.min(PANEL_MAX_WIDTH, width);
     const panelX = width / 2 - panelWidth / 2;
     const panelY = height - PANEL_BOTTOM_MARGIN - PANEL_HEIGHT;
@@ -74,6 +85,11 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
         STYLE_ICON_SIZE * STYLE_ORDER.length + STYLE_ICON_GAP * (STYLE_ORDER.length - 1);
     const styleIconsX = width / 2 - styleIconsWidth / 2;
     const styleIconsY = slotsY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
+    const upgradeCardsWidth =
+        UPGRADE_CARD_WIDTH * upgradeCardCount +
+        UPGRADE_CARD_GAP * Math.max(0, upgradeCardCount - 1);
+    const upgradeCardsX = width / 2 - upgradeCardsWidth / 2;
+    const upgradeCardsY = height / 2 - UPGRADE_CARD_HEIGHT / 2;
     return {
         panelX,
         panelY,
@@ -93,6 +109,12 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
             style,
         })),
         switchLabelY: slotsY + ABILITY_SLOT_SIZE + SWITCH_LABEL_MARGIN_TOP,
+        upgradeCards: Array.from({ length: upgradeCardCount }, (_, i) => ({
+            x: upgradeCardsX + i * (UPGRADE_CARD_WIDTH + UPGRADE_CARD_GAP),
+            y: upgradeCardsY,
+            width: UPGRADE_CARD_WIDTH,
+            height: UPGRADE_CARD_HEIGHT,
+        })),
     };
 }
 
@@ -120,15 +142,23 @@ export enum HudRegionKind {
     ORB = 1,
     SLOT = 2,
     STYLE = 3,
+    UPGRADE_CARD = 4,
 }
 
 export type HudRegion =
     | { readonly kind: HudRegionKind.PANEL }
     | { readonly kind: HudRegionKind.ORB }
     | { readonly kind: HudRegionKind.SLOT; readonly slot: number }
-    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle };
+    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle }
+    | { readonly kind: HudRegionKind.UPGRADE_CARD; readonly index: number };
 
 export function hitTestHud(layout: HudLayout, x: number, y: number): HudRegion | undefined {
+    const upgradeCardIndex = layout.upgradeCards.findIndex((card) =>
+        isInsideRect(x, y, card.x, card.y, card.width, card.height),
+    );
+    if (upgradeCardIndex !== -1) {
+        return { kind: HudRegionKind.UPGRADE_CARD, index: upgradeCardIndex };
+    }
     const styleIcon = layout.styleIcons.find((icon) =>
         isInsideRect(x, y, icon.x, icon.y, icon.size, icon.size),
     );
@@ -571,7 +601,6 @@ const SPLAT_RISE_PIXELS = 46;
 const DAMAGE_TO_PLAYER_COLOR = "#ff4d4d";
 const DAMAGE_TO_ENEMY_COLOR = "#ffd24d";
 const HEAL_COLOR = "#4dff7a";
-const FROZEN_COLOR = "#7ac8ff";
 
 function drawSplatText(
     ctx: CanvasRenderingContext2D,
@@ -615,34 +644,175 @@ export function drawHealSplat(
     drawSplatText(ctx, screen, `+${Math.round(amount)}`, HEAL_COLOR, progress);
 }
 
-const WAVE_COUNTER_MARGIN_TOP = 16;
-const WAVE_COUNTER_MARGIN_RIGHT = 20;
+const WAVE_COUNTER_MARGIN_TOP = TARGET_PLATE_MARGIN_TOP + TARGET_PLATE_HEIGHT + 12;
+const WAVE_COUNTER_SUMMARY_MARGIN_TOP = WAVE_COUNTER_MARGIN_TOP + 24;
+
+function waveCounterText(wave: WaveHudInfo): string {
+    switch (wave.status) {
+        case WaveStatus.CLEARED:
+            return "Encounter cleared";
+        case WaveStatus.AWAITING_UPGRADE:
+            return "Wave cleared, choose an upgrade";
+        case WaveStatus.ACTIVE:
+            return `Wave ${wave.index} / ${wave.total} · ${wave.aliveEnemies} left`;
+    }
+}
+
+function waveCounterColor(status: WaveStatus): string {
+    switch (status) {
+        case WaveStatus.CLEARED:
+            return "#4dff7a";
+        case WaveStatus.AWAITING_UPGRADE:
+            return "#ffd24d";
+        case WaveStatus.ACTIVE:
+            return "#e8e0d0";
+    }
+}
 
 export function drawWaveCounter(
     ctx: CanvasRenderingContext2D,
     width: number,
     wave: WaveHudInfo,
 ): void {
-    const text = wave.cleared
-        ? "Encounter cleared"
-        : `Wave ${wave.index} / ${wave.total} · ${wave.aliveEnemies} left`;
-
     ctx.save();
     ctx.font = "700 18px sans-serif";
-    ctx.textAlign = "right";
+    ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillStyle = wave.cleared ? "#4dff7a" : "#e8e0d0";
-    ctx.strokeText(text, width - WAVE_COUNTER_MARGIN_RIGHT, WAVE_COUNTER_MARGIN_TOP);
-    ctx.fillText(text, width - WAVE_COUNTER_MARGIN_RIGHT, WAVE_COUNTER_MARGIN_TOP);
+    ctx.fillStyle = waveCounterColor(wave.status);
+    const text = waveCounterText(wave);
+    ctx.strokeText(text, width / 2, WAVE_COUNTER_MARGIN_TOP);
+    ctx.fillText(text, width / 2, WAVE_COUNTER_MARGIN_TOP);
+
+    if (wave.modifiersSummary) {
+        ctx.font = "600 13px sans-serif";
+        ctx.fillStyle = "#b8ac94";
+        ctx.strokeText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
+        ctx.fillText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
+    }
     ctx.restore();
 }
 
-export function drawFrozenSplat(
+const UPGRADE_OVERLAY_DIM_COLOR = "rgba(0, 0, 0, 0.6)";
+
+function drawUpgradeCard(
+    ctx: CanvasRenderingContext2D,
+    card: { x: number; y: number; width: number; height: number },
+    info: UpgradeCardHudInfo,
+): void {
+    const { x, y, width, height } = card;
+
+    const gradient = ctx.createLinearGradient(0, y, 0, y + height);
+    gradient.addColorStop(0, "rgba(28, 24, 22, 0.96)");
+    gradient.addColorStop(1, "rgba(10, 8, 8, 0.98)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, width, height);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120, 96, 60, 0.7)";
+    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+    ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+
+    ctx.font = "700 20px sans-serif";
+    ctx.fillStyle = "#ffd24d";
+    ctx.textBaseline = "top";
+    ctx.strokeText(info.name, x + width / 2, y + 28, width - 24);
+    ctx.fillText(info.name, x + width / 2, y + 28, width - 24);
+
+    ctx.font = "500 15px sans-serif";
+    ctx.fillStyle = "#e8e0d0";
+    ctx.strokeText(info.description, x + width / 2, y + 64, width - 24);
+    ctx.fillText(info.description, x + width / 2, y + 64, width - 24);
+
+    ctx.font = "700 16px sans-serif";
+    ctx.fillStyle = "#d8cfbc";
+    ctx.textBaseline = "bottom";
+    const keyText = `[${info.keyLabel}]`;
+    ctx.strokeText(keyText, x + width / 2, y + height - 16);
+    ctx.fillText(keyText, x + width / 2, y + height - 16);
+    ctx.restore();
+}
+
+export function drawUpgradeOverlay(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    layout: HudLayout,
+    cards: readonly UpgradeCardHudInfo[],
+): void {
+    ctx.save();
+    ctx.fillStyle = UPGRADE_OVERLAY_DIM_COLOR;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+
+    const cardCount = Math.min(layout.upgradeCards.length, cards.length);
+    for (let i = 0; i < cardCount; i++) {
+        drawUpgradeCard(ctx, layout.upgradeCards[i], cards[i]);
+    }
+}
+
+const GROUND_SHADOW_MIN_SCALE = 0.45;
+const GROUND_SHADOW_VERTICAL_SQUASH = 0.55;
+const GROUND_SHADOW_ALPHA = 0.6;
+const GROUND_SHADOW_RIM_COLOR = "225, 215, 190";
+const GROUND_SHADOW_RIM_ALPHA = 0.45;
+const GROUND_IMPACT_CORE_COLOR = "255, 232, 196";
+const GROUND_IMPACT_MID_COLOR = "255, 178, 96";
+const GROUND_IMPACT_EDGE_COLOR = "255, 140, 60";
+
+function drawGroundDisc(
     ctx: CanvasRenderingContext2D,
     screen: { x: number; y: number },
+    radiusPx: number,
+    addStops: (gradient: CanvasGradient) => void,
+): void {
+    if (radiusPx <= 0) {
+        return;
+    }
+    ctx.save();
+    ctx.translate(screen.x, screen.y);
+    ctx.scale(1, GROUND_SHADOW_VERTICAL_SQUASH);
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radiusPx);
+    addStops(gradient);
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, radiusPx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+export function drawGroundShadow(
+    ctx: CanvasRenderingContext2D,
+    screen: { x: number; y: number },
+    finalRadiusPx: number,
     progress: number,
 ): void {
-    drawSplatText(ctx, screen, "Frozen", FROZEN_COLOR, progress);
+    const scale = GROUND_SHADOW_MIN_SCALE + (1 - GROUND_SHADOW_MIN_SCALE) * clamp(progress, 0, 1);
+    drawGroundDisc(ctx, screen, finalRadiusPx * scale, (gradient) => {
+        gradient.addColorStop(0, `rgba(0, 0, 0, ${GROUND_SHADOW_ALPHA})`);
+        gradient.addColorStop(0.6, `rgba(0, 0, 0, ${GROUND_SHADOW_ALPHA * 0.7})`);
+        gradient.addColorStop(0.78, `rgba(${GROUND_SHADOW_RIM_COLOR}, ${GROUND_SHADOW_RIM_ALPHA})`);
+        gradient.addColorStop(1, `rgba(${GROUND_SHADOW_RIM_COLOR}, 0)`);
+    });
+}
+
+export function drawGroundImpactFlash(
+    ctx: CanvasRenderingContext2D,
+    screen: { x: number; y: number },
+    radiusPx: number,
+    progress: number,
+): void {
+    const alpha = 1 - clamp(progress, 0, 1);
+    drawGroundDisc(ctx, screen, radiusPx, (gradient) => {
+        gradient.addColorStop(0, `rgba(${GROUND_IMPACT_CORE_COLOR}, ${0.9 * alpha})`);
+        gradient.addColorStop(0.5, `rgba(${GROUND_IMPACT_MID_COLOR}, ${0.6 * alpha})`);
+        gradient.addColorStop(1, `rgba(${GROUND_IMPACT_EDGE_COLOR}, 0)`);
+    });
 }

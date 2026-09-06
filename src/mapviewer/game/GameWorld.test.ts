@@ -2,7 +2,7 @@ import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from
 import { CombatEventKind } from "./CombatEvent";
 import { Faction } from "./Combatant";
 import { EnemyState } from "./Enemy";
-import { EnemyType, EnemyTypeId } from "./EnemyType";
+import { EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 import { AbilitySlotInput, GameWorld, SimInput } from "./GameWorld";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { ARROW_SPEC } from "./Projectile";
@@ -62,6 +62,8 @@ function makeEnemyType(
         hitRadius: 64,
         maxHealth: 20,
         walkSpeed: 288 * 1.6,
+        behaviour: EnemyBehaviour.RUSHER,
+        abilities: [ENEMY_MELEE],
     };
 }
 
@@ -403,7 +405,7 @@ describe("Enemy attack cycle", () => {
         };
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, 4), rangedAttack);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, 4), [rangedAttack]);
         const player = world.player!;
 
         advanceSeconds(world, idleInput(), rangedAttack.windupSeconds + 0.05);
@@ -488,5 +490,111 @@ describe("Player death and respawn", () => {
         expect(player.y).toBe(player.spawnY);
         expect(player.abilityRuntime.canUse(BOW_SHOT, player.mana, world.timeSeconds)).toBe(true);
         expect(enemy.health).toBe(enemy.maxHealth);
+    });
+});
+
+const GROUND_STRIKE_TEST: AbilityDefinition = {
+    id: "test_ground_strike",
+    name: "Test Ground Strike",
+    windupSeconds: 0.2,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [],
+    locks: [],
+    effect: {
+        kind: AbilityEffectKind.GROUND_STRIKE,
+        radiusTiles: 1,
+        telegraphSeconds: 0.5,
+        damageMin: 10,
+        damageMax: 10,
+        range: 1000,
+    },
+};
+
+const GROUND_STRIKE_TELEGRAPH_SECONDS =
+    GROUND_STRIKE_TEST.effect.kind === AbilityEffectKind.GROUND_STRIKE
+        ? GROUND_STRIKE_TEST.effect.telegraphSeconds
+        : 0;
+
+describe("Ground strike", () => {
+    it("does not damage on cast, only after the telegraph elapses", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(50, 0, 0, makeEnemyType(1, 2, 3));
+        const player = world.player!;
+        const enemy = world.enemies[0];
+
+        player.beginCast(GROUND_STRIKE_TEST, { x: enemy.x, y: enemy.y }, world.timeSeconds);
+        advanceSeconds(world, idleInput(), GROUND_STRIKE_TEST.windupSeconds + 0.01);
+
+        expect(enemy.health).toBe(enemy.maxHealth);
+        expect(world.pendingGroundStrikes.length).toBe(1);
+        expect(world.pendingGroundStrikes[0].x).toBe(enemy.x);
+        expect(world.pendingGroundStrikes[0].y).toBe(enemy.y);
+
+        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
+
+        expect(enemy.health).toBe(enemy.maxHealth - 10);
+        expect(world.pendingGroundStrikes.length).toBe(0);
+    });
+
+    it("emits GROUND_STRIKE_LANDED with position and radius when a strike lands", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const player = world.player!;
+
+        player.beginCast(GROUND_STRIKE_TEST, { x: 200, y: 300 }, world.timeSeconds);
+        advanceSeconds(world, idleInput(), GROUND_STRIKE_TEST.windupSeconds + 0.01);
+        world.drainEvents();
+
+        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
+        const events = world.drainEvents();
+
+        const landed = events.find((event) => event.kind === CombatEventKind.GROUND_STRIKE_LANDED);
+        expect(landed).toBeDefined();
+        if (landed && landed.kind === CombatEventKind.GROUND_STRIKE_LANDED) {
+            expect(landed.x).toBe(200);
+            expect(landed.y).toBe(300);
+            expect(landed.radius).toBe(128);
+        }
+    });
+
+    it("does not hit combatants outside the strike radius", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(1000, 0, 0, makeEnemyType(1, 2, 3));
+        const player = world.player!;
+        const enemy = world.enemies[0];
+
+        player.beginCast(GROUND_STRIKE_TEST, { x: 0, y: 0 }, world.timeSeconds);
+        advanceSeconds(
+            world,
+            idleInput(),
+            GROUND_STRIKE_TEST.windupSeconds + GROUND_STRIKE_TELEGRAPH_SECONDS + 0.1,
+        );
+
+        expect(enemy.health).toBe(enemy.maxHealth);
+    });
+
+    it("lets an enemy ground-strike the player", () => {
+        const enemyGroundStrike: AbilityDefinition = {
+            ...GROUND_STRIKE_TEST,
+            id: "test_enemy_ground_strike",
+        };
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, 4), [enemyGroundStrike]);
+        const player = world.player!;
+
+        // +0.05 (not +0.01, as other enemy-cast tests in this file use) to cover the tick the
+        // enemy spends going IDLE -> CHASE before it can even start winding up.
+        advanceSeconds(world, idleInput(), enemyGroundStrike.windupSeconds + 0.05);
+        expect(world.pendingGroundStrikes.length).toBe(1);
+
+        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
+
+        expect(player.health).toBe(player.maxHealth - 10);
     });
 });

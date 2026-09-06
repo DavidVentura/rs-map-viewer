@@ -63,3 +63,34 @@ export function worldToScreen(
         y: ((1 - ndcY) / 2) * rectHeight,
     };
 }
+
+export function worldRadiusToScreenPx(
+    viewProjMatrix: mat4,
+    worldX: number,
+    worldY: number,
+    groundHeight: number,
+    radius: number,
+    rectWidth: number,
+    rectHeight: number,
+): number | undefined {
+    const center = worldToScreen(
+        viewProjMatrix,
+        worldX,
+        worldY,
+        groundHeight,
+        rectWidth,
+        rectHeight,
+    );
+    const edge = worldToScreen(
+        viewProjMatrix,
+        worldX + radius,
+        worldY,
+        groundHeight,
+        rectWidth,
+        rectHeight,
+    );
+    if (!center || !edge) {
+        return undefined;
+    }
+    return Math.hypot(edge.x - center.x, edge.y - center.y);
+}

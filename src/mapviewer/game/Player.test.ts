@@ -1,6 +1,7 @@
 import { WeaponStyle } from "./Ability";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH } from "./abilities";
+import { DEFAULT_ABILITY_MODIFIERS, FLEET_FOOTED, VITALITY } from "./upgrades";
 
 const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
 
@@ -170,6 +171,56 @@ describe("Player.requestStyleSwitch", () => {
         player.requestStyleSwitch(WeaponStyle.MELEE, 0);
         expect(player.styleSwitchProgress(0)).toBeCloseTo(0);
         expect(player.styleSwitchProgress(Player.STYLE_SWITCH_SECONDS / 2)).toBeCloseTo(0.5);
+    });
+});
+
+describe("Player.applyUpgrade", () => {
+    it("raises max health and heals the player by the same amount", () => {
+        const player = makePlayer();
+        player.health = 50;
+        player.applyUpgrade(VITALITY);
+        expect(player.maxHealth).toBe(Player.MAX_HEALTH + 20);
+        expect(player.health).toBe(70);
+    });
+
+    it("does not overheal past the new max health", () => {
+        const player = makePlayer();
+        player.applyUpgrade(VITALITY);
+        expect(player.health).toBe(player.maxHealth);
+    });
+
+    it("speeds up movement once Fleet Footed is applied", () => {
+        const player = makePlayer();
+        player.applyUpgrade(FLEET_FOOTED);
+        player.update(
+            { x: 1, y: 0, running: false },
+            0.1,
+            0.1,
+            seqTypeLoader,
+            {} as any,
+            {
+                isLoaded: () => true,
+                canOccupy: () => true,
+                getWallFlag: () => 0,
+                getHeight: () => 0,
+            } as any,
+        );
+        expect(player.x).toBeCloseTo(Player.WALK_SPEED * 1.15 * 0.1);
+    });
+
+    it("stacks modifiers from multiple upgrades", () => {
+        const player = makePlayer();
+        player.applyUpgrade(VITALITY);
+        player.applyUpgrade(VITALITY);
+        expect(player.maxHealth).toBe(Player.MAX_HEALTH + 40);
+    });
+
+    it("resetProgression restores the default modifiers", () => {
+        const player = makePlayer();
+        player.applyUpgrade(VITALITY);
+        player.resetProgression();
+        expect(player.maxHealth).toBe(Player.MAX_HEALTH);
+        expect(player.getModifiers()).toEqual(DEFAULT_ABILITY_MODIFIERS);
     });
 });
 

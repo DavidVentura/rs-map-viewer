@@ -26,21 +26,28 @@ import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceU
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
-import { WeaponStyle } from "../game/Ability";
+import { AbilityTarget, WeaponStyle } from "../game/Ability";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
+import { groundStrikeProgress } from "../game/GroundStrike";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
+import { EnemyScreenCandidate, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
+import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
+import { summarizeModifiers } from "../game/upgrades";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
+    GroundShadowHudInfo,
     HudFrame,
     SplatEvent,
     SplatKind,
+    UpgradeCardHudInfo,
+    WaveStatus,
 } from "../hud/HudFrame";
 import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
 import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
@@ -56,7 +63,7 @@ import {
     getStanceSeqIds,
 } from "./actor/ActorRenderData";
 import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
-import { screenToGroundPoint } from "./groundPoint";
+import { screenToGroundPoint, worldRadiusToScreenPx, worldToScreen } from "./groundPoint";
 import { ActorBufferData } from "./loader/ActorBufferData";
 import { ActorLoaderInput } from "./loader/ActorLoaderInput";
 import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
@@ -76,6 +83,11 @@ const TEXTURE_SIZE = 128;
 
 const INTERACT_BUFFER_COUNT = 2;
 const INTERACTION_RADIUS = 5;
+
+// When the cursor isn't exactly over an enemy's pixels, pick the nearest enemy whose projected
+// screen rect is within this radius, so aiming stays forgiving without becoming auto-aim.
+const ENEMY_HOVER_PICK_RADIUS_PX = 40;
+const ENEMY_BODY_HEIGHT_SCALE = 4;
 
 // Projectiles and visual effects share the actor buffer's instance capacity with the player and
 // every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
@@ -226,6 +238,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     loadObjs: boolean = true;
     loadNpcs: boolean = true;
     runEnabled = true;
+    override fpsLimit = 60;
 
     // State
     lastClientTick: number = 0;
@@ -254,6 +267,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private encounterCleared: boolean = false;
 
     readonly terrain: WebGLTerrain;
+
+    hideAbovePlane: number = Scene.MAX_LEVELS - 1;
+    private lastRoofTileX?: number;
+    private lastRoofTileY?: number;
+    private lastRoofLevel?: number;
+    private lastHiddenTiles: ReadonlySet<string> = new Set();
+    private roofMaskedSquares: Set<WebGLMapSquare> = new Set();
 
     constructor(public mapViewer: MapViewer) {
         super(mapViewer);
@@ -790,25 +810,26 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
 
         const frameCount = this.stats.frameCount;
-        this.mapManager.addMap(
-            mapX,
-            mapY,
-            WebGLMapSquare.load(
-                this.mapViewer.seqTypeLoader,
-                this.mapViewer.npcTypeLoader,
-                this.mapViewer.basTypeLoader,
-                this.app,
-                mainProgram,
-                mainAlphaProgram,
-                npcProgram,
-                textureArray,
-                textureMaterials,
-                sceneUniformBuffer,
-                mapData,
-                time,
-                frameCount,
-            ),
+        const mapSquare = WebGLMapSquare.load(
+            this.mapViewer.seqTypeLoader,
+            this.mapViewer.npcTypeLoader,
+            this.mapViewer.basTypeLoader,
+            this.app,
+            mainProgram,
+            mainAlphaProgram,
+            npcProgram,
+            textureArray,
+            textureMaterials,
+            sceneUniformBuffer,
+            mapData,
+            time,
+            frameCount,
         );
+        mapSquare.setHideAbovePlane(this.hideAbovePlane);
+        if (mapSquare.updateRoofMask(this.lastHiddenTiles)) {
+            this.roofMaskedSquares.add(mapSquare);
+        }
+        this.mapManager.addMap(mapX, mapY, mapSquare);
 
         this.updateTextureArray(mapData.loadedTextures);
     }
@@ -1042,7 +1063,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             movement: this.buildMovementInput(),
             abilities: this.buildAbilityInput(),
             styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
+            chooseUpgrade: this.buildUpgradeChoiceInput(),
         });
+        this.updateRoofHiding();
         this.pinCameraToPlayer();
 
         camera.update(this.app.width, this.app.height);
@@ -1246,6 +1269,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
         );
         return hitTestHud(layout, inputManager.mouseX, inputManager.mouseY) !== undefined;
     }
@@ -1253,16 +1277,42 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private buildStyleSwitchInput(): WeaponStyle | undefined {
         const frame = this.hudFrame;
         const inputManager = this.mapViewer.inputManager;
-        if (!frame || !inputManager.isClick()) {
+        if (!frame || !inputManager.isPressEvent()) {
             return undefined;
         }
         const layout = computeHudLayout(
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
         );
-        const region = hitTestHud(layout, inputManager.clickX, inputManager.clickY);
+        const region = hitTestHud(layout, inputManager.pressEventX, inputManager.pressEventY);
         return region?.kind === HudRegionKind.STYLE ? region.style : undefined;
+    }
+
+    private buildUpgradeChoiceInput(): number | undefined {
+        const frame = this.hudFrame;
+        const cardCount = frame?.upgradeOffer?.cards.length ?? 0;
+        if (!frame || cardCount === 0) {
+            return undefined;
+        }
+        const inputManager = this.mapViewer.inputManager;
+        for (let i = 0; i < cardCount; i++) {
+            if (inputManager.isKeyDownEvent(`Digit${i + 1}`)) {
+                return i;
+            }
+        }
+        if (!inputManager.isPressEvent()) {
+            return undefined;
+        }
+        const layout = computeHudLayout(
+            frame.screenSize.width,
+            frame.screenSize.height,
+            frame.abilities.length,
+            cardCount,
+        );
+        const region = hitTestHud(layout, inputManager.pressEventX, inputManager.pressEventY);
+        return region?.kind === HudRegionKind.UPGRADE_CARD ? region.index : undefined;
     }
 
     private buildMovementInput(): PlayerInput {
@@ -1314,23 +1364,28 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private buildAbilityInput(): AbilityInput {
         const player = this.mapViewer.world.player;
-        if (!player) {
+        if (!player || this.hudFrame?.upgradeOffer) {
             return [];
         }
 
         const inputManager = this.mapViewer.inputManager;
         const pointerOverHud = this.isPointerOverHud();
         const hoveredEnemy = pointerOverHud ? undefined : this.getHoveredEnemy();
-        const enemyTarget = hoveredEnemy
+        const hoverTarget = hoveredEnemy
             ? { x: hoveredEnemy.x, y: hoveredEnemy.y, enemyId: hoveredEnemy.id }
             : undefined;
+        const isDragging = !pointerOverHud && inputManager.isDragging();
 
-        const keySlot = (key: string | undefined, extraHeld: boolean): AbilitySlotInput => {
+        const keySlot = (
+            key: string | undefined,
+            extraHeld: boolean,
+            target: AbilityTarget | undefined,
+        ): AbilitySlotInput => {
             if (!extraHeld && (!key || !inputManager.isKeyDown(key))) {
                 return { held: false };
             }
-            if (enemyTarget) {
-                return { held: true, target: enemyTarget };
+            if (target) {
+                return { held: true, target };
             }
             if (pointerOverHud) {
                 return { held: true, target: undefined };
@@ -1346,12 +1401,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const barLength = player.abilityBar.length;
         return player.abilityBar.map((_, index) => {
             const key = keyForAbilitySlot(index, barLength);
-            const mouseHeld =
-                index === 0 &&
-                !pointerOverHud &&
-                inputManager.isDragging() &&
-                enemyTarget !== undefined;
-            return keySlot(key, mouseHeld);
+            const isBasicAttackSlot = index === 0;
+            const mouseHeld = isBasicAttackSlot && isDragging && hoverTarget !== undefined;
+            return keySlot(key, mouseHeld, hoverTarget);
         });
     }
 
@@ -1373,6 +1425,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     private getHoveredEnemy(): Enemy | undefined {
+        const exact = this.getExactHoveredEnemy();
+        if (exact) {
+            return exact;
+        }
+        const inputManager = this.mapViewer.inputManager;
+        if (inputManager.mouseX === -1 || inputManager.mouseY === -1) {
+            return undefined;
+        }
+        const pickedId = pickEnemyNear(
+            { x: inputManager.mouseX, y: inputManager.mouseY },
+            this.buildEnemyScreenCandidates(),
+            ENEMY_HOVER_PICK_RADIUS_PX,
+        );
+        return pickedId !== undefined ? this.mapViewer.world.findEnemy(pickedId) : undefined;
+    }
+
+    private getExactHoveredEnemy(): Enemy | undefined {
         if (!this.interactBuffer) {
             return undefined;
         }
@@ -1386,12 +1455,73 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     continue;
                 }
                 const enemy = this.mapViewer.world.findEnemy(this.interactBuffer[index]);
-                if (enemy) {
+                if (enemy && enemy.health > 0) {
                     return enemy;
                 }
             }
         }
         return undefined;
+    }
+
+    private buildEnemyScreenCandidates(): EnemyScreenCandidate[] {
+        const candidates: EnemyScreenCandidate[] = [];
+        for (const enemy of this.mapViewer.world.enemies) {
+            if (enemy.state === EnemyState.DEAD) {
+                continue;
+            }
+            const rect = this.projectEnemyScreenRect(enemy);
+            if (rect) {
+                candidates.push({ id: enemy.id, rect });
+            }
+        }
+        return candidates;
+    }
+
+    // A rough body rect above the enemy's feet, scaled from its hit radius, used as a generous
+    // click/hover target instead of the exact model silhouette.
+    private projectEnemyScreenRect(enemy: Enemy): ScreenRect | undefined {
+        const viewProjMatrix = this.mapViewer.camera.viewProjMatrix;
+        const width = this.canvas.clientWidth;
+        const height = this.canvas.clientHeight;
+        const groundHeight = this.terrain.getHeight(enemy.level, enemy.x, enemy.y);
+        const feet = worldToScreen(viewProjMatrix, enemy.x, enemy.y, groundHeight, width, height);
+        if (!feet) {
+            return undefined;
+        }
+        const bodyHeight = enemy.hitRadius * ENEMY_BODY_HEIGHT_SCALE;
+        const top =
+            worldToScreen(
+                viewProjMatrix,
+                enemy.x,
+                enemy.y,
+                groundHeight - bodyHeight,
+                width,
+                height,
+            ) ?? feet;
+        const left =
+            worldToScreen(
+                viewProjMatrix,
+                enemy.x - enemy.hitRadius,
+                enemy.y,
+                groundHeight,
+                width,
+                height,
+            ) ?? feet;
+        const right =
+            worldToScreen(
+                viewProjMatrix,
+                enemy.x + enemy.hitRadius,
+                enemy.y,
+                groundHeight,
+                width,
+                height,
+            ) ?? feet;
+        return {
+            left: Math.min(left.x, right.x),
+            right: Math.max(left.x, right.x),
+            top: Math.min(top.y, feet.y),
+            bottom: Math.max(top.y, feet.y),
+        };
     }
 
     private buildAbilitySlots(player: Player): AbilitySlotHudInfo[] {
@@ -1435,6 +1565,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.encounterCleared = true;
                 continue;
             }
+            if (event.kind === CombatEventKind.GROUND_STRIKE_LANDED) {
+                splatEvents.push({
+                    kind: SplatKind.GROUND_IMPACT,
+                    radius: event.radius,
+                    worldX: event.x,
+                    worldY: event.y,
+                    groundHeight: this.terrain.getHeight(event.level, event.x, event.y),
+                });
+                continue;
+            }
             const groundHeight = this.terrain.getHeight(
                 event.target.level,
                 event.target.x,
@@ -1460,15 +1600,38 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                         groundHeight,
                     });
                     break;
-                case CombatEventKind.FREEZE:
-                    splatEvents.push({
-                        kind: SplatKind.FROZEN,
-                        worldX: event.target.x,
-                        worldY: event.target.y,
-                        groundHeight,
-                    });
-                    break;
             }
+        }
+
+        const groundShadows: GroundShadowHudInfo[] = [];
+        for (const strike of world.pendingGroundStrikes) {
+            const groundHeight = this.terrain.getHeight(strike.level, strike.x, strike.y);
+            const screen = worldToScreen(
+                camera.viewProjMatrix,
+                strike.x,
+                strike.y,
+                groundHeight,
+                this.canvas.clientWidth,
+                this.canvas.clientHeight,
+            );
+            const radiusPx = worldRadiusToScreenPx(
+                camera.viewProjMatrix,
+                strike.x,
+                strike.y,
+                groundHeight,
+                strike.radius,
+                this.canvas.clientWidth,
+                this.canvas.clientHeight,
+            );
+            if (!screen || radiusPx === undefined) {
+                continue;
+            }
+            groundShadows.push({
+                screenX: screen.x,
+                screenY: screen.y,
+                radiusPx,
+                progress: groundStrikeProgress(strike, world.timeSeconds),
+            });
         }
 
         const waveProgress = world.getWaveProgress();
@@ -1502,12 +1665,27 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     ? { target: switchTarget, progress: switchProgress }
                     : undefined,
             splatEvents,
+            groundShadows,
             wave: waveProgress && {
                 index: waveProgress.index,
                 total: waveProgress.total,
                 aliveEnemies: world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)
                     .length,
-                cleared: this.encounterCleared,
+                status: this.encounterCleared
+                    ? WaveStatus.CLEARED
+                    : waveProgress.awaitingUpgrade
+                    ? WaveStatus.AWAITING_UPGRADE
+                    : WaveStatus.ACTIVE,
+                modifiersSummary: player && summarizeModifiers(player.getModifiers()),
+            },
+            upgradeOffer: world.pendingUpgradeOffer && {
+                cards: world.pendingUpgradeOffer.map(
+                    (upgrade, index): UpgradeCardHudInfo => ({
+                        name: upgrade.name,
+                        description: upgrade.description,
+                        keyLabel: `${index + 1}`,
+                    }),
+                ),
             },
         };
     }
@@ -1529,6 +1707,85 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         camera.pos[2] = playerZ - distance * Math.cos(yaw) * Math.cos(pitch);
         camera.updated = true;
         camera.updatedPosition = true;
+    }
+
+    private getTileFlagsForRoof(level: number, tileX: number, tileY: number): number | undefined {
+        const mapX = Math.floor(tileX / Scene.MAP_SQUARE_SIZE);
+        const mapY = Math.floor(tileY / Scene.MAP_SQUARE_SIZE);
+        const mapSquare = this.mapManager.getMapSquare(mapX, mapY);
+        if (!mapSquare) {
+            return undefined;
+        }
+        return mapSquare.getTileRenderFlag(
+            level,
+            tileX - mapX * Scene.MAP_SQUARE_SIZE,
+            tileY - mapY * Scene.MAP_SQUARE_SIZE,
+        );
+    }
+
+    private setHideAbovePlane(plane: number): void {
+        if (this.hideAbovePlane === plane) {
+            return;
+        }
+        this.hideAbovePlane = plane;
+        for (const mapSquare of this.mapManager.mapSquares.values()) {
+            mapSquare.setHideAbovePlane(plane);
+        }
+    }
+
+    private updateRoofHiding(): void {
+        const player = this.mapViewer.world.player;
+        const tileX = player !== undefined ? player.x >> 7 : undefined;
+        const tileY = player !== undefined ? player.y >> 7 : undefined;
+        const level = player?.level;
+
+        if (
+            tileX === this.lastRoofTileX &&
+            tileY === this.lastRoofTileY &&
+            level === this.lastRoofLevel
+        ) {
+            return;
+        }
+        this.lastRoofTileX = tileX;
+        this.lastRoofTileY = tileY;
+        this.lastRoofLevel = level;
+
+        const hiddenTiles =
+            tileX !== undefined && tileY !== undefined && level !== undefined
+                ? computeRoofHiddenTiles(
+                      (lvl, tx, ty) => this.getTileFlagsForRoof(lvl, tx, ty),
+                      level,
+                      tileX,
+                      tileY,
+                  )
+                : new Set<string>();
+
+        this.lastHiddenTiles = hiddenTiles;
+        this.setHideAbovePlane(hiddenTiles.size > 0 ? level! : Scene.MAX_LEVELS - 1);
+
+        const touchedSquares = new Set<WebGLMapSquare>();
+        for (const mapSquare of this.roofMaskedSquares) {
+            if (this.mapManager.getMapSquare(mapSquare.mapX, mapSquare.mapY) === mapSquare) {
+                touchedSquares.add(mapSquare);
+            }
+        }
+        for (const key of hiddenTiles) {
+            const [absTileX, absTileY] = decodeTileKey(key);
+            const mapSquare = this.mapManager.getMapSquare(
+                Math.floor(absTileX / Scene.MAP_SQUARE_SIZE),
+                Math.floor(absTileY / Scene.MAP_SQUARE_SIZE),
+            );
+            if (mapSquare) {
+                touchedSquares.add(mapSquare);
+            }
+        }
+
+        this.roofMaskedSquares.clear();
+        for (const mapSquare of touchedSquares) {
+            if (mapSquare.updateRoofMask(hiddenTiles)) {
+                this.roofMaskedSquares.add(mapSquare);
+            }
+        }
     }
 
     tickPass(time: number, ticksElapsed: number, clientTicksElapsed: number): void {
@@ -1780,12 +2037,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     draw(drawCall: DrawCall, drawRanges: number[][]) {
         if (this.hasMultiDraw) {
             drawCall.draw();
-        } else {
-            for (let i = 0; i < drawRanges.length; i++) {
-                drawCall.uniform("u_drawId", i);
-                drawCall.drawRanges(drawRanges[i]);
-                drawCall.draw();
+            return;
+        }
+        const call = drawCall as any;
+        let bound = false;
+        for (let i = 0; i < drawRanges.length; i++) {
+            const range = drawRanges[i];
+            if (range[1] === 0) {
+                continue;
             }
+            if (!bound) {
+                drawCall.uniform("u_drawId", i);
+                drawCall.drawRanges(range);
+                drawCall.draw();
+                bound = true;
+                continue;
+            }
+            call.currentProgram.uniform("u_drawId", i);
+            this.gl.drawElementsInstanced(
+                call.drawPrimitive,
+                range[1],
+                call.currentVertexArray.indexType,
+                range[0],
+                range[2],
+            );
         }
     }
 

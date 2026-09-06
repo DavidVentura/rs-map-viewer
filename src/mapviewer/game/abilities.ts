@@ -166,14 +166,111 @@ export const ENEMY_MELEE: AbilityDefinition = {
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.8 }],
+    effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 5, reach: 48 },
+};
+
+// Tok-Xil's kiting band tops out at 7 tiles; the strike's cast range matches that band so it can
+// always fire once in range, without needing a second number to keep in sync.
+export const TOK_XIL_GROUND_STRIKE: AbilityDefinition = {
+    id: "tok_xil_ground_strike",
+    name: "Tok-Xil Ground Strike",
+    windupSeconds: 0.4,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 1.2 }],
-    effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 6, reach: 48 },
+    effect: {
+        kind: AbilityEffectKind.GROUND_STRIKE,
+        radiusTiles: 0.5,
+        telegraphSeconds: 0.6,
+        damageMin: 4,
+        damageMax: 8,
+        range: 11 * 128,
+    },
+};
+
+// Ket-Zek's casting band tops out at 10 tiles, matching the strike's cast range for the same
+// reason as Tok-Xil above.
+export const KET_ZEK_GROUND_STRIKE: AbilityDefinition = {
+    id: "ket_zek_ground_strike",
+    name: "Ket-Zek Ground Strike",
+    windupSeconds: 1.2,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 3.5 }],
+    effect: {
+        kind: AbilityEffectKind.GROUND_STRIKE,
+        radiusTiles: 1,
+        telegraphSeconds: 1.4,
+        damageMin: 14,
+        damageMax: 22,
+        range: 10 * 128,
+    },
+};
+
+export const YT_MEJKOT_MELEE: AbilityDefinition = {
+    id: "yt_mejkot_melee",
+    name: "Yt-MejKot Slam",
+    windupSeconds: 0.8,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 2 }],
+    effect: { kind: AbilityEffectKind.MELEE, minDamage: 5, maxDamage: 9, reach: 48 },
+};
+
+// Uses the HEAL cooldown group (not ATTACK) so the pulse recurs on its own 6s timer independently
+// of Yt-MejKot's melee swings.
+export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
+    id: "yt_mejkot_heal_pulse",
+    name: "Yt-MejKot Heal Pulse",
+    windupSeconds: 0.4,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.HEAL],
+    locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
+    effect: { kind: AbilityEffectKind.HEAL_ALLIES, radiusTiles: 4, amount: 15 },
+};
+
+// Elder maul special attack (obj 21003): a wide overhead smash in front of the caster, verified
+// against the cache with a throwaway script (seq 7514, in the same animation block as the elder
+// maul's normal attack, seq 7516).
+export const MAUL_SMASH_CAST_SEQ_ID = 11124;
+const MAUL_SMASH_RECHARGE_SECONDS = 10;
+
+export const MAUL_SMASH: AbilityDefinition = {
+    id: "maul_smash",
+    name: "Maul Smash",
+    windupSeconds: 1,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: MAUL_SMASH_RECHARGE_SECONDS,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
+    castSeqId: MAUL_SMASH_CAST_SEQ_ID,
+    effect: {
+        kind: AbilityEffectKind.CONE_MELEE,
+        damageMultiplier: 2,
+        angleRadians: (2 * Math.PI) / 3,
+        reach: 3 * 128,
+    },
 };
 
 export function buildPlayerAbilityBar(style: WeaponStyle): readonly AbilityDefinition[] {
     switch (style) {
         case WeaponStyle.MELEE:
-            return [SCIMITAR_SLASH, CLEAVE, HEALING_POTION];
+            return [SCIMITAR_SLASH, CLEAVE, MAUL_SMASH, HEALING_POTION];
         case WeaponStyle.MAGIC:
             return [MAGIC_BOLT, ICE_BARRAGE, HEALING_POTION];
         case WeaponStyle.RANGED:

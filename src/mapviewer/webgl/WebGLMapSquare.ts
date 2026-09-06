@@ -16,10 +16,13 @@ import { getMapSquareId } from "../../rs/map/MapFileIndex";
 import { CollisionFlag } from "../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../rs/scene/CollisionMap";
 import { Scene } from "../../rs/scene/Scene";
+import { tileKey } from "../game/roofHiding";
 import { DrawRange, newDrawRange } from "./DrawRange";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
+
+const DEFAULT_HIDE_ABOVE_PLANE = Scene.MAX_LEVELS - 1;
 
 const FRAME_RENDER_DELAY = 3;
 
@@ -42,6 +45,8 @@ export class WebGLMapSquare {
     readonly id: number;
 
     npcDataTextureOffsets: number[];
+
+    private readonly mainDrawCalls: DrawCallRange[];
 
     static load(
         seqTypeLoader: SeqTypeLoader,
@@ -121,6 +126,16 @@ export class WebGLMapSquare {
             },
         );
 
+        const roofMaskSize = heightMapSize;
+        const roofMaskData = new Uint8Array(roofMaskSize * roofMaskSize);
+        const roofMaskTexture = app.createTexture2D(roofMaskData, roofMaskSize, roofMaskSize, {
+            internalFormat: PicoGL.R8UI,
+            minFilter: PicoGL.NEAREST,
+            magFilter: PicoGL.NEAREST,
+            wrapS: PicoGL.CLAMP_TO_EDGE,
+            wrapT: PicoGL.CLAMP_TO_EDGE,
+        });
+
         // const time = performance.now() * 0.001;
 
         const createDrawCall = (
@@ -134,9 +149,11 @@ export class WebGLMapSquare {
                 .uniform("u_timeLoaded", time)
                 .uniform("u_mapPos", mapPos)
                 // .uniform("u_drawIdOffset", drawIdOffset)
+                .uniform("u_hideAbovePlane", DEFAULT_HIDE_ABOVE_PLANE)
                 .texture("u_textures", textureArray)
                 .texture("u_textureMaterials", textureMaterials)
                 .texture("u_heightMap", heightMapTexture)
+                .texture("u_roofMask", roofMaskTexture)
                 // .texture("u_modelInfoTexture", modelInfoTexture)
                 .drawRanges(...drawRanges);
             if (modelInfoTexture) {
@@ -270,6 +287,9 @@ export class WebGLMapSquare {
             heightMapTexture,
             mapData.heightMapTextureData,
 
+            roofMaskTexture,
+            roofMaskData,
+
             modelInfoTexture,
             modelInfoTextureAlpha,
 
@@ -319,6 +339,9 @@ export class WebGLMapSquare {
         readonly heightMapTexture: Texture,
         readonly heightMapTextureData: Int16Array,
 
+        readonly roofMaskTexture: Texture,
+        private roofMaskData: Uint8Array,
+
         // Model info
         readonly modelInfoTexture: Texture,
         readonly modelInfoTextureAlpha: Texture,
@@ -355,6 +378,16 @@ export class WebGLMapSquare {
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
+        this.mainDrawCalls = [
+            drawCall,
+            drawCallAlpha,
+            drawCallLod,
+            drawCallLodAlpha,
+            drawCallInteract,
+            drawCallInteractAlpha,
+            drawCallInteractLod,
+            drawCallInteractLodAlpha,
+        ];
     }
 
     canRender(frameCount: number): boolean {
@@ -363,6 +396,41 @@ export class WebGLMapSquare {
 
     getTileRenderFlag(level: number, tileX: number, tileY: number): number {
         return this.tileRenderFlags[level][tileX + this.borderSize][tileY + this.borderSize];
+    }
+
+    setHideAbovePlane(plane: number): void {
+        for (const { drawCall } of this.mainDrawCalls) {
+            drawCall.uniform("u_hideAbovePlane", plane);
+        }
+    }
+
+    updateRoofMask(hiddenTiles: ReadonlySet<string>): boolean {
+        const size = Scene.MAP_SQUARE_SIZE + this.borderSize * 2;
+        const baseX = this.mapX * Scene.MAP_SQUARE_SIZE - this.borderSize;
+        const baseY = this.mapY * Scene.MAP_SQUARE_SIZE - this.borderSize;
+
+        let hasHiddenTile = false;
+        let changed = false;
+        for (let localY = 0; localY < size; localY++) {
+            const tileY = baseY + localY;
+            for (let localX = 0; localX < size; localX++) {
+                const tileX = baseX + localX;
+                const hidden = hiddenTiles.has(tileKey(tileX, tileY)) ? 1 : 0;
+                hasHiddenTile ||= hidden === 1;
+
+                const index = localY * size + localX;
+                if (this.roofMaskData[index] !== hidden) {
+                    this.roofMaskData[index] = hidden;
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed) {
+            this.roofMaskTexture.data(this.roofMaskData);
+        }
+
+        return hasHiddenTile;
     }
 
     getMapDistance(mapX: number, mapY: number): number {
@@ -411,6 +479,7 @@ export class WebGLMapSquare {
         this.indexBuffer.delete();
 
         this.heightMapTexture.delete();
+        this.roofMaskTexture.delete();
 
         // Model info
         this.modelInfoTexture.delete();

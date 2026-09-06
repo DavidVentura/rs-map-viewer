@@ -5,13 +5,19 @@ import {
     EnemyDecisionInputs,
     EnemyState,
     computeChaseMovement,
+    computeKeepDistanceMovement,
     decideEnemyState,
     enemyAttackRange,
 } from "./Enemy";
-import { EnemyType, EnemyTypeId } from "./EnemyType";
+import { EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 import { ARROW_SPEC } from "./Projectile";
 import { Terrain } from "./Terrain";
-import { ENEMY_MELEE } from "./abilities";
+import {
+    ENEMY_MELEE,
+    TOK_XIL_GROUND_STRIKE,
+    YT_MEJKOT_HEAL_PULSE,
+    YT_MEJKOT_MELEE,
+} from "./abilities";
 import { directionToRotation } from "./projectileMath";
 
 function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDecisionInputs {
@@ -20,6 +26,7 @@ function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDeci
         distanceToPlayer: 0,
         hasPlayer: true,
         attackReach: 176,
+        attackReachMin: 0,
         frozen: false,
         attackReady: true,
         windupComplete: false,
@@ -127,6 +134,24 @@ describe("decideEnemyState", () => {
             EnemyState.CHASE,
         );
     });
+
+    it("keeps chasing (not winding up) when closer than the minimum engage range of a banded attack", () => {
+        expect(
+            decideEnemyState(
+                EnemyState.CHASE,
+                decisionInputs({ distanceToPlayer: 100, attackReachMin: 512, attackReach: 896 }),
+            ),
+        ).toBe(EnemyState.CHASE);
+    });
+
+    it("winds up once within the banded attack's min/max window", () => {
+        expect(
+            decideEnemyState(
+                EnemyState.CHASE,
+                decisionInputs({ distanceToPlayer: 600, attackReachMin: 512, attackReach: 896 }),
+            ),
+        ).toBe(EnemyState.WINDUP);
+    });
 });
 
 describe("enemyAttackRange", () => {
@@ -141,6 +166,36 @@ describe("enemyAttackRange", () => {
             effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
         };
         expect(enemyAttackRange(rangedDefinition, 64, 64)).toBe(ARROW_SPEC.range);
+    });
+
+    it("uses the ground strike's own cast range, ignoring hit radii", () => {
+        expect(enemyAttackRange(TOK_XIL_GROUND_STRIKE, 128, 64)).toBe(
+            TOK_XIL_GROUND_STRIKE.effect.kind === AbilityEffectKind.GROUND_STRIKE
+                ? TOK_XIL_GROUND_STRIKE.effect.range
+                : -1,
+        );
+    });
+});
+
+describe("computeKeepDistanceMovement", () => {
+    it("retreats directly away from the player when closer than minRange", () => {
+        const result = computeKeepDistanceMovement(100, 0, 100, 512, 896);
+        expect(result.x).toBeCloseTo(-1);
+        expect(result.y).toBeCloseTo(0);
+    });
+
+    it("approaches the player when farther than maxRange", () => {
+        const result = computeKeepDistanceMovement(0, 1000, 1000, 512, 896);
+        expect(result.x).toBeCloseTo(0);
+        expect(result.y).toBeCloseTo(1);
+    });
+
+    it("holds ground inside the band", () => {
+        expect(computeKeepDistanceMovement(600, 0, 600, 512, 896)).toEqual({ x: 0, y: 0 });
+    });
+
+    it("returns a zero vector when already on top of the target", () => {
+        expect(computeKeepDistanceMovement(0, 0, 0, 512, 896)).toEqual({ x: 0, y: 0 });
     });
 });
 
@@ -202,6 +257,37 @@ const TEST_ENEMY_TYPE: EnemyType = {
     hitRadius: 64,
     maxHealth: 20,
     walkSpeed: 288 * 1.6,
+    behaviour: EnemyBehaviour.RUSHER,
+    abilities: [ENEMY_MELEE],
+};
+
+const TEST_KITER_TYPE: EnemyType = {
+    id: EnemyTypeId.TOK_XIL,
+    npcTypeId: 0,
+    idleSeqId: 1,
+    walkSeqId: 2,
+    deathSeqId: 3,
+    attackSeqId: 4,
+    hitRadius: 128,
+    maxHealth: 150,
+    walkSpeed: 288 * 1.6,
+    behaviour: EnemyBehaviour.KITER,
+    engagement: { minRange: 512 },
+    abilities: [TOK_XIL_GROUND_STRIKE],
+};
+
+const TEST_TANK_TYPE: EnemyType = {
+    id: EnemyTypeId.YT_MEJKOT,
+    npcTypeId: 0,
+    idleSeqId: 1,
+    walkSeqId: 2,
+    deathSeqId: 3,
+    attackSeqId: 4,
+    hitRadius: 160,
+    maxHealth: 360,
+    walkSpeed: 288 * 1.6,
+    behaviour: EnemyBehaviour.TANK,
+    abilities: [YT_MEJKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
 };
 
 function makeEnemy(): Enemy {
@@ -256,7 +342,7 @@ describe("Enemy freezing", () => {
 
 describe("Enemy attack cycle (integration through Enemy.update)", () => {
     function makeMeleeEnemy(x: number, y: number): Enemy {
-        return new Enemy(1, x, y, 0, x, y, TEST_ENEMY_TYPE, ENEMY_MELEE);
+        return new Enemy(1, x, y, 0, x, y, TEST_ENEMY_TYPE, [ENEMY_MELEE]);
     }
 
     it("winds up once the chasing enemy is within melee reach, without moving", () => {
@@ -327,5 +413,83 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, 10.1, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.abilityRuntime.canUse(ENEMY_MELEE, 0, 10.1)).toBe(true);
+    });
+});
+
+describe("KITER behaviour (integration through Enemy.update)", () => {
+    function makeKiter(x: number, y: number): Enemy {
+        return new Enemy(1, x, y, 0, x, y, TEST_KITER_TYPE);
+    }
+
+    it("backs away when the player is closer than the engagement band", () => {
+        const enemy = makeKiter(0, 0);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(100, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.CHASE);
+        expect(enemy.x).toBeLessThan(0);
+    });
+
+    it("approaches when the player is farther than the engagement band", () => {
+        const enemy = makeKiter(0, 0);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(2000, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.CHASE);
+        expect(enemy.x).toBeGreaterThan(0);
+    });
+
+    it("holds ground and winds up once inside the band", () => {
+        const enemy = makeKiter(0, 0);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(600, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.x).toBe(0);
+    });
+});
+
+describe("TANK behaviour (integration through Enemy.update)", () => {
+    it("prioritizes the heal pulse over melee whenever it is off cooldown", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_TANK_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(10000, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_HEAL_PULSE);
+    });
+
+    it("falls back to melee once the heal pulse is on cooldown and the player is in reach", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_TANK_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const farPlayer = new FakePlayer(10000, 0, 0);
+        const frame = 0.05;
+        let time = 10;
+
+        enemy.update(farPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_HEAL_PULSE);
+
+        let guard = 0;
+        while (enemy.state !== EnemyState.CHASE && guard < 1000) {
+            time += frame;
+            enemy.update(farPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+            guard++;
+        }
+        expect(enemy.state).toBe(EnemyState.CHASE);
+
+        const nearPlayer = new FakePlayer(100, 0, 0);
+        time += frame;
+        enemy.update(nearPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_MELEE);
     });
 });

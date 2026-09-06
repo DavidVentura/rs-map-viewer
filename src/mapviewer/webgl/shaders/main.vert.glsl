@@ -27,6 +27,8 @@ uniform float u_timeLoaded;
 
 uniform highp usampler2D u_modelInfoTexture;
 uniform mediump isampler2DArray u_heightMap;
+uniform highp usampler2D u_roofMask;
+uniform int u_hideAbovePlane;
 
 layout(location = 0) in uvec3 a_vertex;
 
@@ -36,6 +38,7 @@ flat out uint v_texId;
 flat out float v_alphaCutOff;
 out float v_fogAmount;
 flat out vec4 v_interactId;
+out float v_roofHidden;
 
 #include "./includes/branchless-logic.glsl";
 #include "./includes/hsl-to-rgb.glsl";
@@ -98,6 +101,16 @@ void main() {
     ModelInfo modelInfo = decodeModelInfo(offset);
 
     vec3 localPos = vertex.pos + vec3(modelInfo.tilePos.x, 0, modelInfo.tilePos.y);
+
+    v_roofHidden = 0.0;
+    if (int(modelInfo.plane) > u_hideAbovePlane) {
+        ivec2 roofTile = ivec2(localPos.xz) >> tileSizeShift;
+        v_roofHidden = float(texelFetch(
+            u_roofMask,
+            ivec2(sceneBorderSize + roofTile.x, sceneBorderSize + roofTile.y),
+            0
+        ).r);
+    }
 
     vec2 interpPos = modelInfo.tilePos * vec2(when_eq(modelInfo.contourGround, CONTOUR_GROUND_CENTER_TILE))
             + localPos.xz * vec2(when_eq(modelInfo.contourGround, CONTOUR_GROUND_VERTEX));

@@ -7,6 +7,8 @@ import {
     AbilityTarget,
     AreaEffect,
     ConeMeleeEffect,
+    GroundStrikeEffect,
+    HealAlliesEffect,
     MeleeEffect,
     MultiProjectileEffect,
     WeaponStyle,
@@ -16,6 +18,7 @@ import { Combatant } from "./Combatant";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import { EnemyStatsOverride, EnemyType, getEnemyType } from "./EnemyType";
+import { PendingGroundStrike, TILE_SIZE, combatantsHitByGroundStrike } from "./GroundStrike";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
 import { SpatialGrid } from "./SpatialGrid";
@@ -27,8 +30,9 @@ import {
     initialWaveDirectorState,
     pickFarthestSpawnPoint,
     stepWaveDirector,
+    totalGroupCount,
 } from "./WaveDirector";
-import { ENEMY_MELEE, getStyleAttack } from "./abilities";
+import { getStyleAttack } from "./abilities";
 import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
 import {
     directionToRotation,
@@ -38,6 +42,7 @@ import {
     rotationToDirection,
 } from "./projectileMath";
 import { resolveSpawn } from "./spawn";
+import { UPGRADE_POOL, Upgrade, drawUpgradeOffer } from "./upgrades";
 
 export type AbilitySlotInput = {
     readonly held: boolean;
@@ -50,15 +55,21 @@ export type SimInput = {
     movement: PlayerInput;
     abilities: AbilityInput;
     styleSwitch?: WeaponStyle;
+    // Index into the pending upgrade offer; only consulted while one is pending.
+    chooseUpgrade?: number;
 };
+
+const UPGRADE_OFFER_SIZE = 3;
 
 export class GameWorld {
     static readonly FIXED_STEP_SECONDS = 1 / 120;
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
     static readonly MAX_VISUAL_EFFECTS = 32;
+    static readonly MAX_GROUND_STRIKES = 16;
     static readonly BASIC_ATTACK_SLOT = 0;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
+    static readonly CORPSE_SECONDS = 6;
     static readonly ENEMY_GRID_CELL_SIZE = 256;
     static readonly ENEMY_NEIGHBOUR_QUERY_RADIUS = 256;
 
@@ -67,6 +78,7 @@ export class GameWorld {
     enemies: Enemy[] = [];
     projectiles: Projectile[] = [];
     visualEffects: VisualEffect[] = [];
+    pendingGroundStrikes: PendingGroundStrike[] = [];
     private events: CombatEvent[] = [];
 
     private accumulatedSeconds = 0;
@@ -76,6 +88,8 @@ export class GameWorld {
     private waveDirectorState: WaveDirectorState = initialWaveDirectorState(0);
     private enemyWaveIndex = new Map<number, number>();
     private killsByWave: number[] = [];
+    private waveClearedNotified: boolean[] = [];
+    pendingUpgradeOffer?: readonly Upgrade[];
 
     constructor(
         private readonly terrain: Terrain,
@@ -105,7 +119,9 @@ export class GameWorld {
         this.enemies = [];
         this.enemyWaveIndex.clear();
         this.killsByWave = encounter.waves.map(() => 0);
+        this.waveClearedNotified = encounter.waves.map(() => false);
         this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
+        this.pendingUpgradeOffer = undefined;
         if (encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
             this.spawnStaticEncounterEnemies(encounter);
         }
@@ -117,10 +133,14 @@ export class GameWorld {
         this.encounter = undefined;
         this.enemyWaveIndex.clear();
         this.killsByWave = [];
+        this.waveClearedNotified = [];
         this.waveDirectorState = initialWaveDirectorState(0);
+        this.pendingUpgradeOffer = undefined;
     }
 
-    getWaveProgress(): { index: number; total: number; cleared: boolean } | undefined {
+    getWaveProgress():
+        | { index: number; total: number; cleared: boolean; awaitingUpgrade: boolean }
+        | undefined {
         if (!this.encounter || this.encounter.spawnMode !== EncounterSpawnMode.WAVES) {
             return undefined;
         }
@@ -128,6 +148,7 @@ export class GameWorld {
             index: Math.min(this.waveDirectorState.nextWaveIndex, this.encounter.waves.length),
             total: this.encounter.waves.length,
             cleared: this.waveDirectorState.cleared,
+            awaitingUpgrade: this.pendingUpgradeOffer !== undefined,
         };
     }
 
@@ -149,7 +170,7 @@ export class GameWorld {
         y: number,
         level: number,
         enemyType: EnemyType,
-        attackDefinition: AbilityDefinition = ENEMY_MELEE,
+        abilities: readonly AbilityDefinition[] = enemyType.abilities,
         statsOverride?: EnemyStatsOverride,
     ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
@@ -163,7 +184,7 @@ export class GameWorld {
                 spawn.x,
                 spawn.y,
                 enemyType,
-                attackDefinition,
+                abilities,
                 statsOverride,
             ),
         );
@@ -198,6 +219,11 @@ export class GameWorld {
     step(input: SimInput, dtSeconds: number): void {
         this.timeSeconds += dtSeconds;
 
+        if (this.pendingUpgradeOffer) {
+            this.applyUpgradeChoice(input.chooseUpgrade);
+            return;
+        }
+
         if (this.player) {
             this.updatePlayer(this.player, input, dtSeconds);
         }
@@ -210,9 +236,14 @@ export class GameWorld {
             this.updateEnemy(enemy, neighbours, dtSeconds);
         }
 
+        this.enemies = this.enemies.filter(
+            (enemy) => enemy.despawnAt === undefined || this.timeSeconds < enemy.despawnAt,
+        );
+
         this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
+        this.resolveGroundStrikeImpacts();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
             effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
@@ -278,6 +309,7 @@ export class GameWorld {
                 enemy.respawnAt = this.timeSeconds + GameWorld.ENEMY_RESPAWN_SECONDS;
             } else {
                 this.recordWaveEnemyDeath(enemy);
+                enemy.despawnAt = this.timeSeconds + GameWorld.CORPSE_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
             return;
@@ -339,7 +371,48 @@ export class GameWorld {
         }
         if (!wasCleared && result.nextState.cleared) {
             this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
+            return;
         }
+        this.maybeOfferUpgrade(encounter, aliveByWave);
+    }
+
+    // A non-final wave that has fully spawned and died pauses the sim and offers an upgrade; the
+    // final wave's clear is handled above by ENCOUNTER_CLEARED instead, with no offer.
+    private maybeOfferUpgrade(encounter: Encounter, aliveByWave: readonly number[]): void {
+        if (this.pendingUpgradeOffer) {
+            return;
+        }
+        for (let waveIndex = 0; waveIndex < encounter.waves.length - 1; waveIndex++) {
+            if (this.waveClearedNotified[waveIndex]) {
+                continue;
+            }
+            const spawnedFully =
+                (aliveByWave[waveIndex] ?? 0) + (this.killsByWave[waveIndex] ?? 0) >=
+                totalGroupCount(encounter.waves[waveIndex]);
+            if (!spawnedFully || (aliveByWave[waveIndex] ?? 0) !== 0) {
+                continue;
+            }
+            this.waveClearedNotified[waveIndex] = true;
+            this.pendingUpgradeOffer = drawUpgradeOffer(
+                UPGRADE_POOL,
+                UPGRADE_OFFER_SIZE,
+                this.random,
+            );
+            return;
+        }
+    }
+
+    private applyUpgradeChoice(chooseUpgrade: number | undefined): void {
+        const offer = this.pendingUpgradeOffer;
+        if (!offer || chooseUpgrade === undefined || !this.player) {
+            return;
+        }
+        const upgrade = offer[chooseUpgrade];
+        if (!upgrade) {
+            return;
+        }
+        this.player.applyUpgrade(upgrade);
+        this.pendingUpgradeOffer = undefined;
     }
 
     private spawnWaveEnemy(encounter: Encounter, spawn: WaveSpawn): void {
@@ -374,6 +447,12 @@ export class GameWorld {
                     y: this.player.y,
                 });
                 break;
+            case AbilityEffectKind.GROUND_STRIKE:
+                this.resolveGroundStrike(enemy, cast.definition.effect, cast.target);
+                break;
+            case AbilityEffectKind.HEAL_ALLIES:
+                this.resolveEnemyHealAllies(enemy, cast.definition.effect);
+                break;
             default:
                 throw new Error(`Unsupported enemy attack effect: ${cast.definition.effect.kind}`);
         }
@@ -391,6 +470,19 @@ export class GameWorld {
         );
     }
 
+    private resolveEnemyHealAllies(caster: Enemy, effect: HealAlliesEffect): void {
+        const radius = effect.radiusTiles * TILE_SIZE;
+        for (const ally of this.enemies) {
+            if (ally.level !== caster.level || ally.health <= 0) {
+                continue;
+            }
+            if (Math.hypot(ally.x - caster.x, ally.y - caster.y) > radius) {
+                continue;
+            }
+            applyHeal(ally, effect.amount, this.events);
+        }
+    }
+
     private checkPlayerDeath(): void {
         const player = this.player;
         if (!player || player.health > 0 || player.hasDied()) {
@@ -401,6 +493,9 @@ export class GameWorld {
     }
 
     private resetEncounter(): void {
+        this.pendingUpgradeOffer = undefined;
+        this.player?.resetProgression();
+
         const encounter = this.encounter;
         if (!encounter || encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
             for (const enemy of this.enemies) {
@@ -414,6 +509,7 @@ export class GameWorld {
         this.enemies = [];
         this.enemyWaveIndex.clear();
         this.killsByWave = encounter.waves.map(() => 0);
+        this.waveClearedNotified = encounter.waves.map(() => false);
         this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
     }
 
@@ -533,6 +629,9 @@ export class GameWorld {
                 break;
             case AbilityEffectKind.MULTI_PROJECTILE:
                 this.resolveMultiProjectile(caster, effect, target);
+                break;
+            case AbilityEffectKind.GROUND_STRIKE:
+                this.resolveGroundStrike(caster, effect, target);
                 break;
         }
     }
@@ -694,6 +793,61 @@ export class GameWorld {
                     distance,
                 ),
             );
+        }
+    }
+
+    private resolveGroundStrike(
+        caster: Combatant,
+        effect: GroundStrikeEffect,
+        target: AbilityTarget,
+    ): void {
+        if (this.pendingGroundStrikes.length >= GameWorld.MAX_GROUND_STRIKES) {
+            return;
+        }
+        const targetEnemy = this.resolveEnemyTarget(target, caster.level);
+        this.pendingGroundStrikes.push({
+            x: targetEnemy?.x ?? target.x,
+            y: targetEnemy?.y ?? target.y,
+            level: caster.level,
+            radius: effect.radiusTiles * TILE_SIZE,
+            startSeconds: this.timeSeconds,
+            strikeAtSeconds: this.timeSeconds + effect.telegraphSeconds,
+            damageMin: effect.damageMin,
+            damageMax: effect.damageMax,
+            sourceFaction: caster.faction,
+            caster,
+        });
+    }
+
+    private resolveGroundStrikeImpacts(): void {
+        if (this.pendingGroundStrikes.length === 0) {
+            return;
+        }
+        const ready = this.pendingGroundStrikes.filter(
+            (strike) => this.timeSeconds >= strike.strikeAtSeconds,
+        );
+        if (ready.length === 0) {
+            return;
+        }
+        this.pendingGroundStrikes = this.pendingGroundStrikes.filter(
+            (strike) => this.timeSeconds < strike.strikeAtSeconds,
+        );
+        const combatants = this.combatants();
+        for (const strike of ready) {
+            for (const combatant of combatantsHitByGroundStrike(strike, combatants)) {
+                applyDamage(
+                    combatant,
+                    rollDamage(strike.damageMin, strike.damageMax, this.random),
+                    this.events,
+                );
+            }
+            this.events.push({
+                kind: CombatEventKind.GROUND_STRIKE_LANDED,
+                x: strike.x,
+                y: strike.y,
+                level: strike.level,
+                radius: strike.radius,
+            });
         }
     }
 }

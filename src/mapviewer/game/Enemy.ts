@@ -4,9 +4,8 @@ import { AbilityDefinition, AbilityEffectKind } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
-import { EnemyStatsOverride, EnemyType, resolveEnemyStats } from "./EnemyType";
+import { EnemyStatsOverride, EnemyType, isBandedEnemyType, resolveEnemyStats } from "./EnemyType";
 import { Terrain } from "./Terrain";
-import { ENEMY_MELEE } from "./abilities";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
 import { SteeringBody, steerChase } from "./steering";
@@ -24,6 +23,7 @@ export type EnemyDecisionInputs = {
     readonly distanceToPlayer: number;
     readonly hasPlayer: boolean;
     readonly attackReach: number;
+    readonly attackReachMin: number;
     readonly frozen: boolean;
     readonly attackReady: boolean;
     readonly windupComplete: boolean;
@@ -51,7 +51,11 @@ export function decideEnemyState(current: EnemyState, inputs: EnemyDecisionInput
     if (current === EnemyState.IDLE) {
         return inputs.hasPlayer ? EnemyState.CHASE : EnemyState.IDLE;
     }
-    if (inputs.distanceToPlayer <= inputs.attackReach && inputs.attackReady) {
+    if (
+        inputs.distanceToPlayer >= inputs.attackReachMin &&
+        inputs.distanceToPlayer <= inputs.attackReach &&
+        inputs.attackReady
+    ) {
         return EnemyState.WINDUP;
     }
     return EnemyState.CHASE;
@@ -67,6 +71,8 @@ export function enemyAttackRange(
             return definition.effect.reach + casterHitRadius + targetHitRadius;
         case AbilityEffectKind.PROJECTILE:
             return definition.effect.spec.range;
+        case AbilityEffectKind.GROUND_STRIKE:
+            return definition.effect.range;
         default:
             throw new Error(`Unsupported enemy attack effect: ${definition.effect.kind}`);
     }
@@ -84,6 +90,31 @@ export function computeChaseMovement(
     return { x: deltaX / distanceToPlayer, y: deltaY / distanceToPlayer };
 }
 
+// A kiter/caster's movement: retreat when the player has closed inside minRange, approach when
+// beyond maxRange, hold ground inside the band (where it attacks instead of moving).
+export function computeKeepDistanceMovement(
+    deltaX: number,
+    deltaY: number,
+    distance: number,
+    minRange: number,
+    maxRange: number,
+): { x: number; y: number } {
+    if (distance === 0) {
+        return { x: 0, y: 0 };
+    }
+    const directionX = deltaX / distance;
+    const directionY = deltaY / distance;
+    if (distance < minRange) {
+        return { x: -directionX, y: -directionY };
+    }
+    if (distance > maxRange) {
+        return { x: directionX, y: directionY };
+    }
+    return { x: 0, y: 0 };
+}
+
+type AttackWindow = { readonly min: number; readonly max: number };
+
 export class Enemy implements Combatant, SteeringBody {
     static readonly STOP_DISTANCE_MARGIN = 32;
 
@@ -97,6 +128,7 @@ export class Enemy implements Combatant, SteeringBody {
     rotation = 0;
     frozenUntil?: number;
     respawnAt?: number;
+    despawnAt?: number;
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
 
@@ -108,7 +140,7 @@ export class Enemy implements Combatant, SteeringBody {
         readonly spawnX: number,
         readonly spawnY: number,
         readonly type: EnemyType,
-        readonly attackDefinition: AbilityDefinition = ENEMY_MELEE,
+        readonly abilities: readonly AbilityDefinition[] = type.abilities,
         statsOverride?: EnemyStatsOverride,
     ) {
         const stats = resolveEnemyStats(type, statsOverride);
@@ -135,6 +167,10 @@ export class Enemy implements Combatant, SteeringBody {
         return this.type.attackSeqId;
     }
 
+    get castSeqId(): number {
+        return this.type.castSeqId ?? this.type.attackSeqId;
+    }
+
     isFrozen(timeSeconds: number): boolean {
         return this.frozenUntil !== undefined && timeSeconds < this.frozenUntil;
     }
@@ -151,8 +187,15 @@ export class Enemy implements Combatant, SteeringBody {
         const frozen = this.state !== EnemyState.DEAD && this.isFrozen(timeSeconds);
         const distanceToPlayer = frozen ? Infinity : this.distanceTo(player);
         const hasPlayer = !frozen && player !== undefined && player.level === this.level;
-        const attackReach = this.attackReachFor(player);
-        const attackReady = this.abilityRuntime.canUse(this.attackDefinition, 0, timeSeconds);
+
+        let readyAbility: AbilityDefinition | undefined;
+        let attackWindow: AttackWindow | undefined;
+        if (!frozen && player) {
+            readyAbility = this.selectReadyAbility(timeSeconds);
+            if (readyAbility) {
+                attackWindow = this.attackWindowFor(readyAbility, player);
+            }
+        }
         const windupComplete =
             this.state === EnemyState.WINDUP && !this.abilityRuntime.isBusy(timeSeconds);
 
@@ -160,21 +203,23 @@ export class Enemy implements Combatant, SteeringBody {
             health: this.health,
             distanceToPlayer,
             hasPlayer,
-            attackReach,
+            attackReach: attackWindow?.max ?? 0,
+            attackReachMin: attackWindow?.min ?? 0,
             frozen,
-            attackReady,
+            attackReady: readyAbility !== undefined,
             windupComplete,
         });
 
         if (this.state === EnemyState.WINDUP && nextState === EnemyState.CHASE) {
             this.abilityRuntime.reset();
         }
-        if (nextState === EnemyState.WINDUP && this.state !== EnemyState.WINDUP && player) {
-            this.abilityRuntime.use(
-                this.attackDefinition,
-                { x: player.x, y: player.y },
-                timeSeconds,
-            );
+        if (
+            nextState === EnemyState.WINDUP &&
+            this.state !== EnemyState.WINDUP &&
+            player &&
+            readyAbility
+        ) {
+            this.abilityRuntime.use(readyAbility, { x: player.x, y: player.y }, timeSeconds);
         }
         this.state = nextState;
 
@@ -203,7 +248,7 @@ export class Enemy implements Combatant, SteeringBody {
                     this.rotation = directionToRotation(deltaX, deltaY);
                 }
             }
-            this.animation.setSequence(this.attackSeqId);
+            this.animation.setSequence(this.castSeqId);
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
@@ -221,21 +266,11 @@ export class Enemy implements Combatant, SteeringBody {
 
         const deltaX = player.x - this.x;
         const deltaY = player.y - this.y;
-        const stopDistance = Enemy.STOP_DISTANCE_MARGIN + this.hitRadius + player.hitRadius;
-        const chaseDirection =
-            distanceToPlayer > 0
-                ? { x: deltaX / distanceToPlayer, y: deltaY / distanceToPlayer }
-                : { x: 0, y: 0 };
-        const touchingPlayer = distanceToPlayer <= stopDistance;
         this.rotation = directionToRotation(deltaX, deltaY);
 
-        const movement = steerChase(
-            chaseDirection.x,
-            chaseDirection.y,
-            touchingPlayer,
-            this,
-            neighbours,
-        );
+        const movement = isBandedEnemyType(this.type)
+            ? this.computeBandedMovement(deltaX, deltaY, distanceToPlayer, player, neighbours)
+            : this.computeRushMovement(deltaX, deltaY, distanceToPlayer, player, neighbours);
 
         if (movement.x === 0 && movement.y === 0) {
             this.animation.setSequence(this.idleSeqId);
@@ -268,11 +303,59 @@ export class Enemy implements Combatant, SteeringBody {
         this.animation.restart(this.idleSeqId);
     }
 
-    private attackReachFor(player: Combatant | undefined): number {
-        if (!player) {
-            return 0;
+    // The first ability (in priority order) whose own cooldown/resource gate is currently open,
+    // independent of distance to the player. Distance is applied separately via attackWindowFor,
+    // so a ready-but-out-of-range ability still blocks lower-priority ones from being picked.
+    private selectReadyAbility(timeSeconds: number): AbilityDefinition | undefined {
+        return this.abilities.find((ability) =>
+            this.abilityRuntime.canUse(ability, 0, timeSeconds),
+        );
+    }
+
+    private attackWindowFor(ability: AbilityDefinition, player: Combatant): AttackWindow {
+        if (ability.effect.kind === AbilityEffectKind.HEAL_ALLIES) {
+            return { min: 0, max: Infinity };
         }
-        return enemyAttackRange(this.attackDefinition, this.hitRadius, player.hitRadius);
+        const max = enemyAttackRange(ability, this.hitRadius, player.hitRadius);
+        const min = isBandedEnemyType(this.type) ? this.type.engagement.minRange : 0;
+        return { min, max };
+    }
+
+    private computeBandedMovement(
+        deltaX: number,
+        deltaY: number,
+        distanceToPlayer: number,
+        player: Combatant,
+        neighbours: readonly SteeringBody[],
+    ): { x: number; y: number } {
+        if (!isBandedEnemyType(this.type)) {
+            return { x: 0, y: 0 };
+        }
+        const maxRange = enemyAttackRange(this.abilities[0], this.hitRadius, player.hitRadius);
+        const kiteDirection = computeKeepDistanceMovement(
+            deltaX,
+            deltaY,
+            distanceToPlayer,
+            this.type.engagement.minRange,
+            maxRange,
+        );
+        return steerChase(kiteDirection.x, kiteDirection.y, false, this, neighbours);
+    }
+
+    private computeRushMovement(
+        deltaX: number,
+        deltaY: number,
+        distanceToPlayer: number,
+        player: Combatant,
+        neighbours: readonly SteeringBody[],
+    ): { x: number; y: number } {
+        const stopDistance = Enemy.STOP_DISTANCE_MARGIN + this.hitRadius + player.hitRadius;
+        const chaseDirection =
+            distanceToPlayer > 0
+                ? { x: deltaX / distanceToPlayer, y: deltaY / distanceToPlayer }
+                : { x: 0, y: 0 };
+        const touchingPlayer = distanceToPlayer <= stopDistance;
+        return steerChase(chaseDirection.x, chaseDirection.y, touchingPlayer, this, neighbours);
     }
 
     private distanceTo(player: Combatant | undefined): number {

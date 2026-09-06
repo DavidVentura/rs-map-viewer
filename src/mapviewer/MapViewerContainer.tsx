@@ -21,6 +21,8 @@ interface MapViewerContainerProps {
     mapViewer: MapViewer;
 }
 
+const FPS_COUNTER_INTERVAL_MS = 500;
+
 export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.Element {
     const [searchParams, setSearchParams] = useSearchParams();
 
@@ -30,6 +32,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     const [hideUi, setHideUi] = useState(false);
     const [fps, setFps] = useState(0);
+    const lastFpsUpdateRef = useRef(0);
     const [cameraYaw, setCameraYaw] = useState(mapViewer.camera.getYaw());
     const [isWorldMapOpen, setWorldMapOpen] = useState<boolean>(false);
 
@@ -81,6 +84,8 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     );
 
     const animate = (time: DOMHighResTimeStamp) => {
+        mapViewer.syncMusicTrack();
+
         // Wait for 200ms before updating search params
         if (
             mapViewer.needsSearchParamUpdate &&
@@ -94,7 +99,10 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
         drawHud(time);
 
         if (!hideUi) {
-            setFps(Math.round(renderer.stats.frameTimeFps));
+            if (time - lastFpsUpdateRef.current >= FPS_COUNTER_INTERVAL_MS) {
+                lastFpsUpdateRef.current = time;
+                setFps(Math.round(renderer.stats.frameTimeFps));
+            }
             setCameraYaw(mapViewer.camera.getYaw());
         }
 
@@ -117,6 +125,17 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
         requestRef.current = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(requestRef.current!);
     }, [searchParams, hideUi]);
+
+    useEffect(() => {
+        const canvas = renderer.canvas;
+        const unlockMusic = () => mapViewer.musicPlayer.unlock();
+        canvas.addEventListener("pointerdown", unlockMusic);
+        canvas.addEventListener("keydown", unlockMusic);
+        return () => {
+            canvas.removeEventListener("pointerdown", unlockMusic);
+            canvas.removeEventListener("keydown", unlockMusic);
+        };
+    }, [renderer, mapViewer]);
 
     const resetCameraYaw = useCallback(() => {
         mapViewer.camera.setYaw(0);

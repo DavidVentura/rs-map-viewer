@@ -1,22 +1,31 @@
-import { worldToScreen } from "../webgl/groundPoint";
+import { worldRadiusToScreenPx, worldToScreen } from "../webgl/groundPoint";
 import { HudFrame, SplatEvent, SplatKind } from "./HudFrame";
 import {
     computeHudLayout,
     drawAbilityBar,
     drawBottomPanel,
     drawDamageSplat,
-    drawFrozenSplat,
+    drawGroundImpactFlash,
+    drawGroundShadow,
     drawHealSplat,
     drawHealthGlobe,
     drawManaGlobe,
     drawStyleRow,
     drawStyleSwitchLabel,
     drawTargetPlate,
+    drawUpgradeOverlay,
     drawWaveCounter,
     styleDisplayName,
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
+const GROUND_IMPACT_LIFETIME_SECONDS = 0.25;
+
+function splatLifetimeSeconds(kind: SplatKind): number {
+    return kind === SplatKind.GROUND_IMPACT
+        ? GROUND_IMPACT_LIFETIME_SECONDS
+        : SPLAT_LIFETIME_SECONDS;
+}
 
 type LiveSplat = SplatEvent & { ageSeconds: number };
 
@@ -33,7 +42,14 @@ export class Hud {
         const { width, height } = frame.screenSize;
         ctx.clearRect(0, 0, width, height);
 
-        const layout = computeHudLayout(width, height, frame.abilities.length);
+        this.drawGroundShadows(frame);
+
+        const layout = computeHudLayout(
+            width,
+            height,
+            frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
+        );
         drawBottomPanel(ctx, layout);
         drawAbilityBar(ctx, layout, frame.abilities);
         if (frame.activeStyle !== undefined) {
@@ -53,6 +69,9 @@ export class Hud {
             drawWaveCounter(ctx, width, frame.wave);
         }
         this.drawSplats(frame);
+        if (frame.upgradeOffer) {
+            drawUpgradeOverlay(ctx, width, height, layout, frame.upgradeOffer.cards);
+        }
     }
 
     private spawnSplats(events: SplatEvent[]): void {
@@ -64,7 +83,18 @@ export class Hud {
     private tickSplats(deltaSeconds: number): void {
         this.splats = this.splats
             .map((splat) => ({ ...splat, ageSeconds: splat.ageSeconds + deltaSeconds }))
-            .filter((splat) => splat.ageSeconds < SPLAT_LIFETIME_SECONDS);
+            .filter((splat) => splat.ageSeconds < splatLifetimeSeconds(splat.kind));
+    }
+
+    private drawGroundShadows(frame: HudFrame): void {
+        for (const shadow of frame.groundShadows) {
+            drawGroundShadow(
+                this.ctx,
+                { x: shadow.screenX, y: shadow.screenY },
+                shadow.radiusPx,
+                shadow.progress,
+            );
+        }
     }
 
     private drawSplats(frame: HudFrame): void {
@@ -81,17 +111,29 @@ export class Hud {
             if (!screen) {
                 continue;
             }
-            const progress = splat.ageSeconds / SPLAT_LIFETIME_SECONDS;
+            const progress = splat.ageSeconds / splatLifetimeSeconds(splat.kind);
             switch (splat.kind) {
                 case SplatKind.HEAL:
                     drawHealSplat(this.ctx, screen, splat.amount, progress);
                     break;
-                case SplatKind.FROZEN:
-                    drawFrozenSplat(this.ctx, screen, progress);
-                    break;
                 case SplatKind.DAMAGE:
                     drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
                     break;
+                case SplatKind.GROUND_IMPACT: {
+                    const radiusPx = worldRadiusToScreenPx(
+                        frame.viewProjMatrix,
+                        splat.worldX,
+                        splat.worldY,
+                        splat.groundHeight,
+                        splat.radius,
+                        width,
+                        height,
+                    );
+                    if (radiusPx !== undefined) {
+                        drawGroundImpactFlash(this.ctx, screen, radiusPx, progress);
+                    }
+                    break;
+                }
             }
         }
     }

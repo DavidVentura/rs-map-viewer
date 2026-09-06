@@ -22,6 +22,7 @@ import { InputManager } from "./InputManager";
 import { MapManager } from "./MapManager";
 import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
+import { MusicPlayer } from "./audio/MusicPlayer";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
 import { Encounter, EncounterId, getEncounter } from "./game/Encounter";
@@ -92,6 +93,8 @@ export class MapViewer {
     loadingMapImageIds: Set<number> = new Set();
 
     cameraSpeed: number = 1;
+
+    readonly musicPlayer: MusicPlayer = new MusicPlayer();
 
     constructor(
         readonly workerPool: RenderDataWorkerPool,
@@ -192,6 +195,14 @@ export class MapViewer {
         this.workerPool.loadCachedMapImages().then((mapImageUrls) => {
             mapImageUrls.forEach((value, key) => this.mapImageUrls.set(key, value));
         });
+        this.syncMusicTrack();
+    }
+
+    // Sets the music player's track to the current encounter's, if it isn't already. Cheap to
+    // call every frame since setTrack() no-ops when the file hasn't changed; that is how a future
+    // runtime encounter switch would pick up its music without any extra wiring.
+    syncMusicTrack(): void {
+        this.musicPlayer.setTrack(this.encounter.musicFile);
     }
 
     initCache(cache: LoadedCache): void {

@@ -3,6 +3,7 @@ import { EnemyTypeId } from "./EnemyType";
 export enum EncounterId {
     LUMBRIDGE = "lumbridge",
     FIGHT_CAVES = "fightcaves",
+    QUICK_CAVE = "quickcave",
 }
 
 export type MapSquareCoord = {
@@ -64,6 +65,7 @@ export type Encounter = {
     readonly spawnMode: EncounterSpawnMode;
     readonly waves: readonly Wave[];
     readonly ambientNpcs: boolean;
+    readonly musicFile: string;
 };
 
 function tileToWorld(tileX: number, tileY: number, tileCenter: boolean = false): [number, number] {
@@ -99,6 +101,7 @@ const LUMBRIDGE: Encounter = {
     enemyTypeIds: [EnemyTypeId.GOBLIN],
     spawnMode: EncounterSpawnMode.STATIC_RESPAWN,
     ambientNpcs: true,
+    musicFile: "audio/harmony.opus",
     waves: [
         {
             groups: [
@@ -156,9 +159,16 @@ const FIGHT_CAVES: Encounter = {
         );
         return { x, y, level: 0 };
     }),
-    enemyTypeIds: [EnemyTypeId.TZ_KIH, EnemyTypeId.TZ_KEK],
+    enemyTypeIds: [
+        EnemyTypeId.TZ_KIH,
+        EnemyTypeId.TZ_KEK,
+        EnemyTypeId.TOK_XIL,
+        EnemyTypeId.KET_ZEK,
+        EnemyTypeId.YT_MEJKOT,
+    ],
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
+    musicFile: "audio/tzhaar.opus",
     waves: [
         {
             groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 4 }],
@@ -176,24 +186,34 @@ const FIGHT_CAVES: Encounter = {
             startCondition: FIGHT_CAVES_EARLY_START,
         },
         {
-            groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 }],
+            groups: [
+                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            ],
             startCondition: FIGHT_CAVES_EARLY_START,
         },
         {
             groups: [
                 { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
                 { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
             ],
             startCondition: FIGHT_CAVES_LATE_START,
         },
         {
-            groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 }],
+            groups: [
+                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+            ],
             startCondition: FIGHT_CAVES_LATE_START,
         },
         {
             groups: [
                 { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
                 { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
             ],
             startCondition: FIGHT_CAVES_LATE_START,
         },
@@ -201,6 +221,9 @@ const FIGHT_CAVES: Encounter = {
             groups: [
                 { enemyTypeId: EnemyTypeId.TZ_KIH, count: 18 },
                 { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
             ],
             startCondition: FIGHT_CAVES_LATE_START,
         },
@@ -208,6 +231,9 @@ const FIGHT_CAVES: Encounter = {
             groups: [
                 { enemyTypeId: EnemyTypeId.TZ_KIH, count: 20 },
                 { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
             ],
             startCondition: FIGHT_CAVES_LATE_START,
         },
@@ -215,16 +241,32 @@ const FIGHT_CAVES: Encounter = {
             groups: [
                 { enemyTypeId: EnemyTypeId.TZ_KIH, count: 24 },
                 { enemyTypeId: EnemyTypeId.TZ_KEK, count: 4 },
+                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
             ],
             startCondition: FIGHT_CAVES_LATE_START,
-            modifiers: { healthMultiplier: 1.15, speedMultiplier: 1.1 },
+            modifiers: { healthMultiplier: 1.15 },
         },
     ],
+};
+
+const QUICK_CAVE_ENEMY_TYPE_IDS = [EnemyTypeId.TOK_XIL, EnemyTypeId.YT_MEJKOT, EnemyTypeId.KET_ZEK];
+
+const QUICK_CAVE: Encounter = {
+    ...FIGHT_CAVES,
+    id: EncounterId.QUICK_CAVE,
+    enemyTypeIds: QUICK_CAVE_ENEMY_TYPE_IDS,
+    waves: QUICK_CAVE_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
+        groups: [{ enemyTypeId, count: 1 }],
+        startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
+    })),
 };
 
 export const ENCOUNTERS: Readonly<Record<EncounterId, Encounter>> = {
     [EncounterId.LUMBRIDGE]: LUMBRIDGE,
     [EncounterId.FIGHT_CAVES]: FIGHT_CAVES,
+    [EncounterId.QUICK_CAVE]: QUICK_CAVE,
 };
 
 export function getEncounter(id: EncounterId): Encounter {
@@ -232,8 +274,6 @@ export function getEncounter(id: EncounterId): Encounter {
 }
 
 export function parseEncounterId(value: string | null): EncounterId {
-    if (value === EncounterId.FIGHT_CAVES) {
-        return EncounterId.FIGHT_CAVES;
-    }
-    return EncounterId.LUMBRIDGE;
+    const match = Object.values(EncounterId).find((id) => id === value);
+    return match ?? EncounterId.LUMBRIDGE;
 }

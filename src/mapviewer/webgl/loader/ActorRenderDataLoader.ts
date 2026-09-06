@@ -11,7 +11,7 @@ import {
     ProjectileKind,
 } from "../../game/Projectile";
 import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "../../game/VisualEffect";
-import { ICE_BARRAGE_CAST_SEQ_ID } from "../../game/abilities";
+import { ICE_BARRAGE_CAST_SEQ_ID, MAUL_SMASH_CAST_SEQ_ID } from "../../game/abilities";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
@@ -43,15 +43,20 @@ const MAGIC_SWITCH_SEQ_ID = 7660; // imbued heart
 const MELEE_SWITCH_SEQ_ID = 1056; // dragon battleaxe special
 const CLEAVE_SEQ_ID = 1203; // crystal halberd special, melee only
 const PLAYER_DEATH_SEQ_ID = 836;
+const ELDER_MAUL_ITEM_ID = 21003; // maul smash special, baked with the elder maul instead of the scimitar
 
-const COMMON_EXTRA_SEQ_IDS = [
-    POTION_DRINK_SEQ_ID,
-    MAGIC_SWITCH_SEQ_ID,
-    MELEE_SWITCH_SEQ_ID,
-    PLAYER_DEATH_SEQ_ID,
+// A stance's extra (non-movement) animations are baked with the stance's own weapon equipped by
+// default; itemId overrides that for a single seq, e.g. a special attack that needs its own weapon.
+type ExtraSeq = { readonly seqId: number; readonly itemId?: number };
+
+const COMMON_EXTRA_SEQS: readonly ExtraSeq[] = [
+    { seqId: POTION_DRINK_SEQ_ID },
+    { seqId: MAGIC_SWITCH_SEQ_ID },
+    { seqId: MELEE_SWITCH_SEQ_ID },
+    { seqId: PLAYER_DEATH_SEQ_ID },
 ];
 
-type StanceEquipment = StanceSeqIds & { itemId: number; extraSeqIds: readonly number[] };
+type StanceEquipment = StanceSeqIds & { itemId: number; extraSeqs: readonly ExtraSeq[] };
 
 // bow: shortbow, unarmed idle/walk/run, bow attack
 // staff: staff of fire, standard spellcast idle/walk/run/attack, plus the ice barrage cast
@@ -63,7 +68,7 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: 426,
-        extraSeqIds: COMMON_EXTRA_SEQ_IDS,
+        extraSeqs: COMMON_EXTRA_SEQS,
     },
     [WeaponStyle.MAGIC]: {
         itemId: 1387,
@@ -71,7 +76,7 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
         walkSeqId: 1146,
         runSeqId: 1210,
         attackSeqId: 711,
-        extraSeqIds: [...COMMON_EXTRA_SEQ_IDS, ICE_BARRAGE_CAST_SEQ_ID],
+        extraSeqs: [...COMMON_EXTRA_SEQS, { seqId: ICE_BARRAGE_CAST_SEQ_ID }],
     },
     [WeaponStyle.MELEE]: {
         itemId: 1333,
@@ -79,7 +84,11 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: 390,
-        extraSeqIds: [...COMMON_EXTRA_SEQ_IDS, CLEAVE_SEQ_ID],
+        extraSeqs: [
+            ...COMMON_EXTRA_SEQS,
+            { seqId: CLEAVE_SEQ_ID },
+            { seqId: MAUL_SMASH_CAST_SEQ_ID, itemId: ELDER_MAUL_ITEM_ID },
+        ],
     },
 };
 
@@ -102,7 +111,6 @@ function createStanceAnimationSet(
         equipment.walkSeqId,
         equipment.runSeqId,
         equipment.attackSeqId,
-        ...equipment.extraSeqIds,
     ];
 
     const animationsBySeqId = new Map<number, AnimationFrames>();
@@ -115,6 +123,32 @@ function createStanceAnimationSet(
             return undefined;
         }
         animationsBySeqId.set(seqId, anim);
+    }
+
+    for (const extra of equipment.extraSeqs) {
+        if (animationsBySeqId.has(extra.seqId)) {
+            continue;
+        }
+        const extraAppearance =
+            extra.itemId === undefined
+                ? appearance
+                : new PlayerAppearance(
+                      baseNpc.modelIds,
+                      [extra.itemId],
+                      PlayerGender.MALE,
+                      baseNpc.ambient,
+                      baseNpc.contrast,
+                  );
+        const anim = addPlayerAnimationFrames(
+            playerModelLoader,
+            sceneBuf,
+            extraAppearance,
+            extra.seqId,
+        );
+        if (!anim) {
+            return undefined;
+        }
+        animationsBySeqId.set(extra.seqId, anim);
     }
 
     return {

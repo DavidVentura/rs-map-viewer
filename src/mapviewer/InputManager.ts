@@ -43,6 +43,8 @@ export class InputManager {
     pickY: number = -1;
 
     clickX: number = -1;
+    pressEventX: number = -1;
+    pressEventY: number = -1;
     clickY: number = -1;
 
     private pressX: number = -1;
@@ -121,6 +123,10 @@ export class InputManager {
         return this.dragX !== -1 && this.dragY !== -1;
     }
 
+    isPressEvent(): boolean {
+        return this.pressEventX !== -1 && this.pressEventY !== -1;
+    }
+
     isClick(): boolean {
         return this.clickX !== -1 && this.clickY !== -1;
     }
@@ -197,6 +203,8 @@ export class InputManager {
         this.mouseY = y;
         this.pressX = x;
         this.pressY = y;
+        this.pressEventX = x;
+        this.pressEventY = y;
         this.draggedSincePress = false;
     };
 
@@ -319,6 +327,8 @@ export class InputManager {
         this.pickY = -1;
         this.clickX = -1;
         this.clickY = -1;
+        this.pressEventX = -1;
+        this.pressEventY = -1;
         this.lastMouseX = this.mouseX;
         this.lastMouseY = this.mouseY;
     }

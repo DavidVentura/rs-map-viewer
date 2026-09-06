@@ -23,6 +23,8 @@ export enum AbilityEffectKind {
     CONE_MELEE = 3,
     AREA = 4,
     MULTI_PROJECTILE = 5,
+    GROUND_STRIKE = 6,
+    HEAL_ALLIES = 7,
 }
 
 export type ProjectileEffect = {
@@ -58,6 +60,23 @@ export type AreaEffect = {
     readonly hitEffect: ProjectileHitEffect;
 };
 
+export type GroundStrikeEffect = {
+    readonly kind: AbilityEffectKind.GROUND_STRIKE;
+    readonly radiusTiles: number;
+    readonly telegraphSeconds: number;
+    readonly damageMin: number;
+    readonly damageMax: number;
+    // Casting range, i.e. how far from the target the caster may be to start this attack. Not
+    // used by the strike resolution itself, only by enemyAttackRange's engage-distance check.
+    readonly range: number;
+};
+
+export type HealAlliesEffect = {
+    readonly kind: AbilityEffectKind.HEAL_ALLIES;
+    readonly radiusTiles: number;
+    readonly amount: number;
+};
+
 export type MultiProjectileEffect = {
     readonly kind: AbilityEffectKind.MULTI_PROJECTILE;
     readonly spec: ProjectileSpec;
@@ -71,7 +90,9 @@ export type AbilityEffect =
     | MeleeEffect
     | ConeMeleeEffect
     | AreaEffect
-    | MultiProjectileEffect;
+    | MultiProjectileEffect
+    | GroundStrikeEffect
+    | HealAlliesEffect;
 
 export type AbilityDefinition = {
     readonly id: string;
