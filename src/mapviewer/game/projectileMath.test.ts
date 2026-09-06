@@ -25,8 +25,9 @@ describe("directionToRotation", () => {
         expect(directionToRotation(1, 0)).toBe(directionToRotation(1000, 0));
     });
 
-    it("matches the OSRS rotation convention where +y is rotation 0", () => {
-        expect(directionToRotation(0, 1)).toBe(0);
+    it("faces north (rotation 1024) for +y and south (rotation 0) for -y", () => {
+        expect(directionToRotation(0, 1)).toBe(1024);
+        expect(directionToRotation(0, -1)).toBe(0);
     });
 });
 

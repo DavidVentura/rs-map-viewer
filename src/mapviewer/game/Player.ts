@@ -2,18 +2,32 @@ import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityDefinition, AbilityTarget, Stance } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
-import { AnimationPlayback, AnimationState } from "./Animation";
+import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
 import { Terrain } from "./Terrain";
-import { PLAYER_ABILITY_BAR } from "./abilities";
+import { buildPlayerAbilityBar } from "./abilities";
+import {
+    AbilitySlotReadiness,
+    computeSlotReadiness,
+    isStanceSwitchRedundant,
+} from "./abilityRules";
 import { resolveMovement } from "./movement";
-import { computeFacingRotation } from "./projectileMath";
+import { directionToRotation } from "./projectileMath";
 
 export type PlayerInput = {
     x: number;
     y: number;
     running: boolean;
 };
+
+export type StanceSeqIds = {
+    readonly idleSeqId: number;
+    readonly walkSeqId: number;
+    readonly runSeqId: number;
+    readonly attackSeqId: number;
+};
+
+export type StanceSeqIdsByStance = Record<Stance, StanceSeqIds>;
 
 export class Player implements Combatant, ManaPool {
     static readonly HIT_RADIUS = 64;
@@ -30,24 +44,65 @@ export class Player implements Combatant, ManaPool {
 
     static readonly WALK_SPEED = 288 * 1.6;
     static readonly RUN_SPEED = 576 * 1.6;
-    static readonly ATTACK_ANIMATION_SPEED = 4;
 
     rotation = 0;
+
+    private castAnimationEndsAt?: number;
+    private castAnimationSpeed = 1;
     stance: Stance = Stance.RANGED;
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
-    readonly abilityBar: readonly AbilityDefinition[] = PLAYER_ABILITY_BAR;
 
     constructor(
         public x: number,
         public y: number,
         readonly level: number,
-        readonly idleSeqId: number,
-        readonly walkSeqId: number,
-        readonly runSeqId: number,
-        readonly attackSeqId: number,
+        readonly stanceSeqIds: StanceSeqIdsByStance,
     ) {
-        this.animation = new AnimationState(idleSeqId);
+        this.animation = new AnimationState(this.activeSeqIds.idleSeqId);
+    }
+
+    private get activeSeqIds(): StanceSeqIds {
+        return this.stanceSeqIds[this.stance];
+    }
+
+    get idleSeqId(): number {
+        return this.activeSeqIds.idleSeqId;
+    }
+
+    get walkSeqId(): number {
+        return this.activeSeqIds.walkSeqId;
+    }
+
+    get runSeqId(): number {
+        return this.activeSeqIds.runSeqId;
+    }
+
+    get attackSeqId(): number {
+        return this.activeSeqIds.attackSeqId;
+    }
+
+    get abilityBar(): readonly AbilityDefinition[] {
+        return buildPlayerAbilityBar(this.stance);
+    }
+
+    getSlotReadiness(slot: number, timeSeconds: number): AbilitySlotReadiness {
+        const definition = this.abilityBar[slot];
+        return computeSlotReadiness(
+            definition,
+            this.abilityRuntime.chargeStateFor(definition),
+            this.mana,
+            this.stance,
+            timeSeconds,
+        );
+    }
+
+    canUseSlotIgnoringTarget(slot: number, timeSeconds: number): boolean {
+        const definition = this.abilityBar[slot];
+        return (
+            this.abilityRuntime.canUse(definition, this.mana, timeSeconds) &&
+            !isStanceSwitchRedundant(definition.effect, this.stance)
+        );
     }
 
     update(
@@ -63,14 +118,21 @@ export class Player implements Combatant, ManaPool {
             this.mana + Player.MANA_REGEN_PER_SECOND * deltaTimeSeconds,
         );
 
-        if (this.abilityRuntime.isBusy(timeSeconds)) {
-            this.animation.setSequence(this.attackSeqId);
+        const castEndsAt = this.abilityRuntime.castEndsAt();
+        if (castEndsAt !== undefined && timeSeconds < castEndsAt) {
+            if (this.castAnimationEndsAt !== castEndsAt) {
+                this.castAnimationEndsAt = castEndsAt;
+                this.animation.restart(this.attackSeqId);
+                this.castAnimationSpeed =
+                    sequenceDurationSeconds(this.attackSeqId, seqTypeLoader, seqFrameLoader) /
+                    (castEndsAt - timeSeconds);
+            }
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
                 seqFrameLoader,
-                AnimationPlayback.LOOP,
-                Player.ATTACK_ANIMATION_SPEED,
+                AnimationPlayback.ONCE,
+                this.castAnimationSpeed,
             );
             return;
         }
@@ -94,7 +156,7 @@ export class Player implements Combatant, ManaPool {
         );
         this.x = position.x;
         this.y = position.y;
-        this.rotation = ((Math.atan2(input.x, input.y) / (Math.PI * 2)) * 2048 + 1024) & 2047;
+        this.rotation = directionToRotation(input.x, input.y);
         this.animation.setSequence(input.running ? this.runSeqId : this.walkSeqId);
         this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
     }
@@ -105,7 +167,7 @@ export class Player implements Combatant, ManaPool {
         const deltaX = target.x - this.x;
         const deltaY = target.y - this.y;
         if (deltaX !== 0 || deltaY !== 0) {
-            this.rotation = computeFacingRotation(deltaX, deltaY);
+            this.rotation = directionToRotation(deltaX, deltaY);
         }
     }
 }

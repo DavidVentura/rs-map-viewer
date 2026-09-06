@@ -1,13 +1,15 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityEffect, AbilityEffectKind, AbilityTarget, MeleeEffect } from "./Ability";
+import { AbilityEffect, AbilityEffectKind, AbilityTarget, MeleeEffect, Stance } from "./Ability";
 import { CombatEvent, applyDamage, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import { Enemy } from "./Enemy";
-import { Player, PlayerInput } from "./Player";
-import { Projectile, ProjectileSpec } from "./Projectile";
+import { Enemy, computeChaseMovement } from "./Enemy";
+import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
+import { Projectile, ProjectileOutcome, ProjectileSpec } from "./Projectile";
 import { Terrain } from "./Terrain";
-import { RandomSource, rollDamage } from "./abilityRules";
+import { VisualEffect } from "./VisualEffect";
+import { getStanceAttack } from "./abilities";
+import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
 import { resolveSpawn } from "./spawn";
 
 export type AbilitySlotInput = {
@@ -26,11 +28,14 @@ export class GameWorld {
     static readonly FIXED_STEP_SECONDS = 1 / 120;
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
+    static readonly MAX_VISUAL_EFFECTS = 32;
+    static readonly MELEE_ATTACK_SLOT = 0;
 
     timeSeconds = 0;
     player?: Player;
     enemies: Enemy[] = [];
     projectiles: Projectile[] = [];
+    visualEffects: VisualEffect[] = [];
     private events: CombatEvent[] = [];
 
     private accumulatedSeconds = 0;
@@ -43,25 +48,9 @@ export class GameWorld {
         private readonly random: RandomSource = Math.random,
     ) {}
 
-    spawnPlayer(
-        x: number,
-        y: number,
-        level: number,
-        idleSeqId: number,
-        walkSeqId: number,
-        runSeqId: number,
-        attackSeqId: number,
-    ): void {
+    spawnPlayer(x: number, y: number, level: number, stanceSeqIds: StanceSeqIdsByStance): void {
         const spawn = resolveSpawn(this.terrain, level, x, y);
-        this.player = new Player(
-            spawn.x,
-            spawn.y,
-            level,
-            idleSeqId,
-            walkSeqId,
-            runSeqId,
-            attackSeqId,
-        );
+        this.player = new Player(spawn.x, spawn.y, level, stanceSeqIds);
     }
 
     spawnEnemy(
@@ -92,6 +81,11 @@ export class GameWorld {
         return this.enemies.find((enemy) => enemy.id === id);
     }
 
+    private resolveEnemyTarget(target: AbilityTarget, level: number): Enemy | undefined {
+        const enemy = target.enemyId !== undefined ? this.findEnemy(target.enemyId) : undefined;
+        return enemy && enemy.level === level && enemy.health > 0 ? enemy : undefined;
+    }
+
     combatants(): Combatant[] {
         const combatants: Combatant[] = [...this.enemies];
         if (this.player) {
@@ -113,8 +107,9 @@ export class GameWorld {
 
         if (this.player) {
             this.processAbilityInput(this.player, input.abilities, this.timeSeconds);
+            const movement = this.resolveMovementInput(this.player, input);
             this.player.update(
-                input.movement,
+                movement,
                 dtSeconds,
                 this.timeSeconds,
                 this.seqTypeLoader,
@@ -135,8 +130,25 @@ export class GameWorld {
         }
 
         const combatants = this.combatants();
-        this.projectiles = this.projectiles.filter((projectile) =>
-            projectile.update(dtSeconds, combatants, this.events),
+        const survivingProjectiles: Projectile[] = [];
+        for (const projectile of this.projectiles) {
+            const outcome = projectile.update(
+                dtSeconds,
+                combatants,
+                this.events,
+                this.seqTypeLoader,
+                this.seqFrameLoader,
+            );
+            if (outcome === ProjectileOutcome.ALIVE) {
+                survivingProjectiles.push(projectile);
+            } else if (outcome === ProjectileOutcome.HIT) {
+                this.spawnVisualEffect(projectile);
+            }
+        }
+        this.projectiles = survivingProjectiles;
+
+        this.visualEffects = this.visualEffects.filter((effect) =>
+            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader),
         );
     }
 
@@ -146,6 +158,40 @@ export class GameWorld {
         return events;
     }
 
+    private resolveMovementInput(player: Player, input: SimInput): PlayerInput {
+        return this.computeMeleeChaseInput(player, input) ?? input.movement;
+    }
+
+    private computeMeleeChaseInput(player: Player, input: SimInput): PlayerInput | undefined {
+        if (player.stance !== Stance.MELEE) {
+            return undefined;
+        }
+        const slotInput = input.abilities[GameWorld.MELEE_ATTACK_SLOT];
+        if (!slotInput?.held || !slotInput.target) {
+            return undefined;
+        }
+        const enemy = this.resolveEnemyTarget(slotInput.target, player.level);
+        if (!enemy) {
+            return undefined;
+        }
+        const attack = getStanceAttack(Stance.MELEE);
+        if (attack.effect.kind !== AbilityEffectKind.MELEE) {
+            return undefined;
+        }
+        const deltaX = enemy.x - player.x;
+        const deltaY = enemy.y - player.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const reach = attack.effect.reach + player.hitRadius + enemy.hitRadius;
+        if (distance <= reach) {
+            return undefined;
+        }
+        const movement = computeChaseMovement(deltaX, deltaY, distance, reach);
+        if (movement.x === 0 && movement.y === 0) {
+            return undefined;
+        }
+        return { x: movement.x, y: movement.y, running: input.movement.running };
+    }
+
     private processAbilityInput(player: Player, abilities: AbilityInput, time: number): void {
         const slotCount = Math.min(abilities.length, player.abilityBar.length);
         for (let slot = 0; slot < slotCount; slot++) {
@@ -153,12 +199,32 @@ export class GameWorld {
             if (!slotInput.held || !slotInput.target) {
                 continue;
             }
-            const definition = player.abilityBar[slot];
-            if (!player.abilityRuntime.canUse(definition, player.mana, time)) {
+            if (!this.canUseSlot(player, slot, slotInput.target, time)) {
                 continue;
             }
-            player.beginCast(definition, slotInput.target, time);
+            player.beginCast(player.abilityBar[slot], slotInput.target, time);
         }
+    }
+
+    private canUseSlot(player: Player, slot: number, target: AbilityTarget, time: number): boolean {
+        if (!player.canUseSlotIgnoringTarget(slot, time)) {
+            return false;
+        }
+        const definition = player.abilityBar[slot];
+        if (definition.effect.kind !== AbilityEffectKind.MELEE) {
+            return true;
+        }
+        const enemy = this.resolveEnemyTarget(target, player.level);
+        if (!enemy) {
+            return false;
+        }
+        const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        return isWithinMeleeReach(
+            distance,
+            definition.effect.reach,
+            player.hitRadius,
+            enemy.hitRadius,
+        );
     }
 
     private resolveReadyCast(player: Player): void {
@@ -210,13 +276,31 @@ export class GameWorld {
         );
     }
 
+    private spawnVisualEffect(projectile: Projectile): void {
+        const hitEffect = projectile.spec.hitEffect;
+        const target = projectile.hitTarget;
+        if (!hitEffect || !target || this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
+            return;
+        }
+        this.visualEffects.push(
+            new VisualEffect(
+                hitEffect.kind,
+                projectile.level,
+                target.x,
+                target.y,
+                hitEffect.height,
+                hitEffect.seqId,
+            ),
+        );
+    }
+
     private resolveMelee(caster: Player, effect: MeleeEffect, target: AbilityTarget): void {
-        const enemy = target.enemyId !== undefined ? this.findEnemy(target.enemyId) : undefined;
-        if (!enemy || enemy.level !== caster.level || enemy.health <= 0) {
+        const enemy = this.resolveEnemyTarget(target, caster.level);
+        if (!enemy) {
             return;
         }
         const distance = Math.hypot(enemy.x - caster.x, enemy.y - caster.y);
-        if (distance > effect.reach + caster.hitRadius + enemy.hitRadius) {
+        if (!isWithinMeleeReach(distance, effect.reach, caster.hitRadius, enemy.hitRadius)) {
             return;
         }
         applyDamage(

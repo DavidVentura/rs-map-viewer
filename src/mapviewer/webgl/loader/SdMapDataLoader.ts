@@ -5,14 +5,28 @@ import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { NpcTypeLoader } from "../../../rs/config/npctype/NpcTypeLoader";
 import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
+import { SeqTypeLoader } from "../../../rs/config/seqtype/SeqTypeLoader";
+import { SpotAnimType } from "../../../rs/config/spotanimtype/SpotAnimType";
+import { SpotAnimTypeLoader } from "../../../rs/config/spotanimtype/SpotAnimTypeLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
 import { Model } from "../../../rs/model/Model";
+import { ModelData } from "../../../rs/model/ModelData";
+import { ModelLoader } from "../../../rs/model/ModelLoader";
+import { SeqFrameLoader } from "../../../rs/model/seq/SeqFrameLoader";
 import { CollisionFlag } from "../../../rs/pathfinder/flag/CollisionFlag";
 import { Scene } from "../../../rs/scene/Scene";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { NpcSpawn, getMapNpcSpawns } from "../../data/npc/NpcSpawn";
 import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
+import { Stance } from "../../game/Ability";
+import { StanceSeqIds } from "../../game/Player";
+import {
+    FIRE_BOLT_HIT_SEQ_ID,
+    FIRE_BOLT_TRAVEL_SEQ_ID,
+    ProjectileKind,
+} from "../../game/Projectile";
+import { VisualEffectKind } from "../../game/VisualEffect";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { loadMinimapBlob } from "../../worker/MinimapData";
@@ -40,7 +54,8 @@ import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs, isLowDetail } from "../loc/SceneLocs";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
-import { PlayerRenderData } from "../player/PlayerRenderData";
+import { PlayerRenderData, StanceAnimationSet } from "../player/PlayerRenderData";
+import { ProjectileRenderData } from "../projectile/ProjectileRenderData";
 import { EnemySpawnData, SdMapData } from "./SdMapData";
 import { SdMapLoaderInput } from "./SdMapLoaderInput";
 
@@ -552,19 +567,15 @@ function createPlayerRenderData(
     }
 
     const baseNpc = npcTypeLoader.load(3105);
-    const appearance = new PlayerAppearance(
-        baseNpc.modelIds,
-        [841],
-        PlayerGender.MALE,
-        baseNpc.ambient,
-        baseNpc.contrast,
-    );
-    const idleAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 808);
-    const walkAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 819);
-    const runAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 824);
-    const attackAnim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, 426);
-    if (!idleAnim || !walkAnim || !runAnim || !attackAnim) {
-        return undefined;
+
+    const stances: Partial<Record<Stance, StanceAnimationSet>> = {};
+    for (const stance of [Stance.RANGED, Stance.MAGIC, Stance.MELEE] as const) {
+        const equipment = STANCE_EQUIPMENT[stance];
+        const set = createStanceAnimationSet(playerModelLoader, sceneBuf, baseNpc, equipment);
+        if (!set) {
+            return undefined;
+        }
+        stances[stance] = set;
     }
 
     return {
@@ -572,14 +583,89 @@ function createPlayerRenderData(
         y: (playerWorldY & 0x3f) * 128,
         level: 0,
         id: baseNpc.id,
-        idleAnim,
-        walkAnim,
-        runAnim,
-        attackAnim,
+        stances: stances as Record<Stance, StanceAnimationSet>,
+    };
+}
+
+type StanceEquipment = StanceSeqIds & { itemId: number };
+
+// bow: shortbow, unarmed idle/walk/run, bow attack
+// staff: staff of fire, standard spellcast idle/walk/run/attack
+// scimitar: rune scimitar, unarmed idle/walk/run, slash attack
+const STANCE_EQUIPMENT: Record<Stance, StanceEquipment> = {
+    [Stance.RANGED]: {
+        itemId: 841,
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: 426,
+    },
+    [Stance.MAGIC]: {
+        itemId: 1387,
+        idleSeqId: 813,
+        walkSeqId: 1146,
+        runSeqId: 1210,
+        attackSeqId: 711,
+    },
+    [Stance.MELEE]: {
+        itemId: 1333,
+        idleSeqId: 808,
+        walkSeqId: 819,
+        runSeqId: 824,
+        attackSeqId: 390,
+    },
+};
+
+function createStanceAnimationSet(
+    playerModelLoader: PlayerModelLoader,
+    sceneBuf: SceneBuffer,
+    baseNpc: NpcType,
+    equipment: StanceEquipment,
+): StanceAnimationSet | undefined {
+    const appearance = new PlayerAppearance(
+        baseNpc.modelIds,
+        [equipment.itemId],
+        PlayerGender.MALE,
+        baseNpc.ambient,
+        baseNpc.contrast,
+    );
+    const idleAnim = addPlayerAnimationFrames(
+        playerModelLoader,
+        sceneBuf,
+        appearance,
+        equipment.idleSeqId,
+    );
+    const walkAnim = addPlayerAnimationFrames(
+        playerModelLoader,
+        sceneBuf,
+        appearance,
+        equipment.walkSeqId,
+    );
+    const runAnim = addPlayerAnimationFrames(
+        playerModelLoader,
+        sceneBuf,
+        appearance,
+        equipment.runSeqId,
+    );
+    const attackAnim = addPlayerAnimationFrames(
+        playerModelLoader,
+        sceneBuf,
+        appearance,
+        equipment.attackSeqId,
+    );
+    if (!idleAnim || !walkAnim || !runAnim || !attackAnim) {
+        return undefined;
+    }
+
+    return {
+        idleSeqId: equipment.idleSeqId,
+        walkSeqId: equipment.walkSeqId,
+        runSeqId: equipment.runSeqId,
+        attackSeqId: equipment.attackSeqId,
+        idleAnim,
+        walkAnim,
+        runAnim,
+        attackAnim,
     };
 }
 
@@ -668,6 +754,136 @@ function createEnemySpawns(
         });
     }
     return spawns;
+}
+
+// Fire Bolt spell (SpotAnimType ids): 127 travels, 128 hits.
+const FIRE_BOLT_PROJECTILE_SPOTANIM_ID = 127;
+const FIRE_BOLT_HIT_SPOTANIM_ID = 128;
+
+function addStaticModelAnimationFrames(sceneBuf: SceneBuffer, model: Model): AnimationFrames {
+    const frame = sceneBuf.addModelAnimFrame(model, false);
+    const frameAlpha = sceneBuf.addModelAnimFrame(model, true);
+    return {
+        frames: [frame],
+        framesAlpha: frameAlpha[1] > 0 ? [frameAlpha] : undefined,
+    };
+}
+
+function buildSpotAnimModel(
+    modelLoader: ModelLoader,
+    textureLoader: TextureLoader,
+    spotAnim: SpotAnimType,
+): Model | undefined {
+    const modelData = modelLoader.getModel(spotAnim.modelId);
+    if (!modelData) {
+        return undefined;
+    }
+    const model = ModelData.merge([modelData], 1).light(
+        textureLoader,
+        spotAnim.ambient + 64,
+        spotAnim.contrast + 768,
+        -50,
+        -10,
+        -50,
+    );
+    if (spotAnim.widthScale !== 128 || spotAnim.heightScale !== 128) {
+        model.scale(spotAnim.widthScale, spotAnim.heightScale, spotAnim.widthScale);
+    }
+    return model;
+}
+
+function addSpotAnimAnimationFrames(
+    sceneBuf: SceneBuffer,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+    baseModel: Model,
+    seqId: number,
+): AnimationFrames {
+    const seqType = seqTypeLoader.load(seqId);
+    if (!seqType.frameIds || seqType.frameIds.length === 0) {
+        throw new Error(`Spot animation sequence ${seqId} has no frames`);
+    }
+
+    const frames = new Array<DrawRange>(seqType.frameIds.length);
+    const framesAlpha = new Array<DrawRange>(seqType.frameIds.length);
+    let alphaFrameCount = 0;
+    for (let i = 0; i < seqType.frameIds.length; i++) {
+        const seqFrame = seqFrameLoader.load(seqType.frameIds[i]);
+        let frameModel = baseModel;
+        if (seqFrame) {
+            frameModel = Model.copyAnimated(
+                baseModel,
+                !seqFrame.hasAlphaTransform,
+                !seqFrame.hasColorTransform,
+            );
+            frameModel.animate(seqFrame, undefined, seqType.op14);
+        }
+        frames[i] = sceneBuf.addModelAnimFrame(frameModel, false);
+        framesAlpha[i] = sceneBuf.addModelAnimFrame(frameModel, true);
+        if (framesAlpha[i][1] > 0) {
+            alphaFrameCount++;
+        }
+    }
+
+    return {
+        frames,
+        framesAlpha: alphaFrameCount > 0 ? framesAlpha : undefined,
+    };
+}
+
+function createProjectileRenderData(
+    objModelLoader: ObjModelLoader,
+    spotAnimTypeLoader: SpotAnimTypeLoader | undefined,
+    modelLoader: ModelLoader,
+    textureLoader: TextureLoader,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+    sceneBuf: SceneBuffer,
+): ProjectileRenderData {
+    const arrowModel = objModelLoader.getModel(882, 1);
+    if (!arrowModel) {
+        throw new Error("Arrow projectile model is missing from the cache");
+    }
+    if (!spotAnimTypeLoader) {
+        throw new Error("Spot animations are not available in this cache");
+    }
+    const arrowAnim = addStaticModelAnimationFrames(sceneBuf, arrowModel);
+
+    const boltSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_PROJECTILE_SPOTANIM_ID);
+    const boltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
+    if (!boltModel || boltSpotAnim.sequenceId !== FIRE_BOLT_TRAVEL_SEQ_ID) {
+        throw new Error("Fire bolt projectile spot animation does not match the expected sequence");
+    }
+    const boltAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        boltModel,
+        FIRE_BOLT_TRAVEL_SEQ_ID,
+    );
+
+    const boltHitSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_HIT_SPOTANIM_ID);
+    const boltHitModel = buildSpotAnimModel(modelLoader, textureLoader, boltHitSpotAnim);
+    if (!boltHitModel || boltHitSpotAnim.sequenceId !== FIRE_BOLT_HIT_SEQ_ID) {
+        throw new Error("Fire bolt hit spot animation does not match the expected sequence");
+    }
+    const boltHitAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        boltHitModel,
+        FIRE_BOLT_HIT_SEQ_ID,
+    );
+
+    return {
+        projectileMeshes: {
+            [ProjectileKind.ARROW]: { anim: arrowAnim, rotationOffset: 1024 },
+            [ProjectileKind.MAGIC]: { anim: boltAnim, rotationOffset: 0 },
+        },
+        effectAnimations: {
+            [VisualEffectKind.MAGIC_HIT]: boltHitAnim,
+        },
+    };
 }
 
 function createNpcSpawnGroups(
@@ -850,12 +1066,16 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         const enemy = createEnemyRenderData(npcModelLoader, npcTypeLoader, sceneBuf, mapX, mapY);
         const enemySpawns = createEnemySpawns(scene, borderSize, mapX, mapY);
 
-        const arrowModel = player ? objModelLoader.getModel(882, 1) : undefined;
-        const projectileFrame = arrowModel
-            ? sceneBuf.addModelAnimFrame(arrowModel, false)
-            : undefined;
-        const projectileFrameAlpha = arrowModel
-            ? sceneBuf.addModelAnimFrame(arrowModel, true)
+        const projectiles = player
+            ? createProjectileRenderData(
+                  objModelLoader,
+                  state.cacheLoaderFactory.getSpotAnimTypeLoader(),
+                  state.cacheLoaderFactory.getModelLoader(),
+                  textureLoader,
+                  state.seqTypeLoader,
+                  state.seqFrameLoader,
+                  sceneBuf,
+              )
             : undefined;
 
         // Draw ranges
@@ -1033,8 +1253,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 player,
                 enemy,
                 enemySpawns,
-                projectileFrame,
-                projectileFrameAlpha,
+                projectiles,
 
                 loadedTextures,
             },

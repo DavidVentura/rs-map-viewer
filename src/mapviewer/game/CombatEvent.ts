@@ -25,6 +25,10 @@ export function applyDamage(target: Combatant, amount: number, events: CombatEve
 }
 
 export function applyHeal(target: Combatant, amount: number, events: CombatEvent[]): void {
-    target.health = Math.min(target.maxHealth, target.health + amount);
-    events.push({ kind: CombatEventKind.HEAL, target, amount });
+    const healedAmount = Math.min(amount, target.maxHealth - target.health);
+    if (healedAmount <= 0) {
+        return;
+    }
+    target.health += healedAmount;
+    events.push({ kind: CombatEventKind.HEAL, target, amount: healedAmount });
 }

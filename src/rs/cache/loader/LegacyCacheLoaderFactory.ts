@@ -9,6 +9,7 @@ import { DatNpcTypeLoader, NpcTypeLoader } from "../../config/npctype/NpcTypeLoa
 import { DatObjTypeLoader, ObjTypeLoader } from "../../config/objtype/ObjTypeLoader";
 import { QuestTypeLoader } from "../../config/questtype/QuestTypeLoader";
 import { DatSeqTypeLoader, SeqTypeLoader } from "../../config/seqtype/SeqTypeLoader";
+import { SpotAnimTypeLoader } from "../../config/spotanimtype/SpotAnimTypeLoader";
 import { DummyVarBitTypeLoader, VarBitTypeLoader } from "../../config/vartype/bit/VarBitTypeLoader";
 import { Dat2MapIndex } from "../../map/MapFileIndex";
 import { LegacyMapFileLoader, MapFileLoader } from "../../map/MapFileLoader";
@@ -95,6 +96,10 @@ export class LegacyCacheLoaderFactory implements CacheLoaderFactory {
 
     getSeqTypeLoader(): SeqTypeLoader {
         return DatSeqTypeLoader.load(this.cacheInfo, this.configArchive);
+    }
+
+    getSpotAnimTypeLoader(): SpotAnimTypeLoader | undefined {
+        return undefined;
     }
 
     getBasTypeLoader(): BasTypeLoader {

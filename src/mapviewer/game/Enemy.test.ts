@@ -1,4 +1,5 @@
-import { EnemyState, computeChaseMovement, computeFacingRotation, decideEnemyState } from "./Enemy";
+import { EnemyState, computeChaseMovement, decideEnemyState } from "./Enemy";
+import { directionToRotation } from "./projectileMath";
 
 describe("decideEnemyState", () => {
     it("stays idle while the player is outside the aggro radius", () => {
@@ -39,12 +40,12 @@ describe("computeChaseMovement", () => {
     });
 });
 
-describe("computeFacingRotation", () => {
+describe("directionToRotation for facing", () => {
     it("faces north when the target is directly north", () => {
-        expect(computeFacingRotation(0, 100)).toBe(1024);
+        expect(directionToRotation(0, 100)).toBe(1024);
     });
 
     it("faces south when the target is directly south", () => {
-        expect(computeFacingRotation(0, -100)).toBe(0);
+        expect(directionToRotation(0, -100)).toBe(0);
     });
 });

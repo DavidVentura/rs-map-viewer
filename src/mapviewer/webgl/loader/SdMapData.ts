@@ -4,6 +4,7 @@ import { EnemyRenderData } from "../enemy/EnemyRenderData";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { NpcData } from "../npc/NpcData";
 import { PlayerRenderData } from "../player/PlayerRenderData";
+import { ProjectileRenderData } from "../projectile/ProjectileRenderData";
 
 export type EnemySpawnData = {
     x: number;
@@ -64,8 +65,7 @@ export type SdMapData = {
     player?: PlayerRenderData;
     enemy?: EnemyRenderData;
     enemySpawns: EnemySpawnData[];
-    projectileFrame?: DrawRange;
-    projectileFrameAlpha?: DrawRange;
+    projectiles?: ProjectileRenderData;
 
     loadedTextures: Map<number, Int32Array>;
 };

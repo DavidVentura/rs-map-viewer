@@ -21,7 +21,13 @@ export type TargetHudInfo = {
     maxHealth: number;
 };
 
-export type DamageSplatEvent = {
+export enum SplatKind {
+    DAMAGE = 0,
+    HEAL = 1,
+}
+
+export type SplatEvent = {
+    kind: SplatKind;
     amount: number;
     factionHit: Faction;
     worldX: number;
@@ -29,10 +35,33 @@ export type DamageSplatEvent = {
     groundHeight: number;
 };
 
+export enum AbilitySlotBlockReason {
+    NONE = 0,
+    MANA = 1,
+    COOLDOWN = 2,
+    ACTIVE = 3,
+}
+
+export type AbilityCharges = {
+    current: number;
+    max: number;
+};
+
+export type AbilitySlotHudInfo = {
+    name: string;
+    keyLabel: string;
+    cooldownFraction: number;
+    charges?: AbilityCharges;
+    blocked: AbilitySlotBlockReason;
+    isActiveStance: boolean;
+};
+
 export type HudFrame = {
     viewProjMatrix: mat4;
     screenSize: ScreenSize;
     player?: PlayerHudInfo;
     target?: TargetHudInfo;
-    damageEvents: DamageSplatEvent[];
+    abilities: AbilitySlotHudInfo[];
+    stanceName?: string;
+    splatEvents: SplatEvent[];
 };

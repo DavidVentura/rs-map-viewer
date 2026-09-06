@@ -1,4 +1,11 @@
-import { AbilityDefinition, CooldownGroup, CooldownLock } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffect,
+    AbilityEffectKind,
+    CooldownGroup,
+    CooldownLock,
+    Stance,
+} from "./Ability";
 
 export type GroupCooldowns = ReadonlyMap<CooldownGroup, number>;
 
@@ -99,4 +106,64 @@ export type RandomSource = () => number;
 
 export function rollDamage(min: number, max: number, random: RandomSource): number {
     return Math.round(min + random() * (max - min));
+}
+
+export function isStanceSwitchRedundant(effect: AbilityEffect, currentStance: Stance): boolean {
+    return effect.kind === AbilityEffectKind.STANCE && effect.stance === currentStance;
+}
+
+export function isWithinMeleeReach(
+    distance: number,
+    reach: number,
+    casterHitRadius: number,
+    targetHitRadius: number,
+): boolean {
+    return distance <= reach + casterHitRadius + targetHitRadius;
+}
+
+export function computeCooldownFraction(
+    state: ChargeState,
+    maxCharges: number,
+    rechargeSeconds: number,
+    time: number,
+): number {
+    if (rechargeSeconds <= 0 || chargesAvailable(state, maxCharges, rechargeSeconds, time) > 0) {
+        return 0;
+    }
+    const level = currentChargeLevel(state, maxCharges, rechargeSeconds, time);
+    return 1 - (level - Math.floor(level));
+}
+
+export type AbilitySlotReadiness = {
+    readonly cooldownFraction: number;
+    readonly charges: number;
+    readonly maxCharges: number;
+    readonly manaBlocked: boolean;
+    readonly isActiveStance: boolean;
+};
+
+export function computeSlotReadiness(
+    definition: AbilityDefinition,
+    chargeState: ChargeState,
+    mana: number,
+    currentStance: Stance,
+    time: number,
+): AbilitySlotReadiness {
+    return {
+        cooldownFraction: computeCooldownFraction(
+            chargeState,
+            definition.maxCharges,
+            definition.rechargeSeconds,
+            time,
+        ),
+        charges: chargesAvailable(
+            chargeState,
+            definition.maxCharges,
+            definition.rechargeSeconds,
+            time,
+        ),
+        maxCharges: definition.maxCharges,
+        manaBlocked: mana < definition.manaCost,
+        isActiveStance: isStanceSwitchRedundant(definition.effect, currentStance),
+    };
 }

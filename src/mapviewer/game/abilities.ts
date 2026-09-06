@@ -27,6 +27,30 @@ export const MAGIC_BOLT: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.PROJECTILE, spec: MAGIC_SPEC },
 };
 
+export const SCIMITAR_SLASH: AbilityDefinition = {
+    id: "scimitar_slash",
+    name: "Scimitar Slash",
+    windupSeconds: 0.3,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.6 }],
+    effect: { kind: AbilityEffectKind.MELEE, minDamage: 4, maxDamage: 9, reach: 48 },
+};
+
+export function getStanceAttack(stance: Stance): AbilityDefinition {
+    switch (stance) {
+        case Stance.RANGED:
+            return BOW_SHOT;
+        case Stance.MAGIC:
+            return MAGIC_BOLT;
+        case Stance.MELEE:
+            return SCIMITAR_SLASH;
+    }
+}
+
 export const HEALING_POTION: AbilityDefinition = {
     id: "healing_potion",
     name: "Healing Potion",
@@ -43,9 +67,35 @@ export const HEALING_POTION: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.HEAL, amount: 30 },
 };
 
-export const STANCE_SWITCH: AbilityDefinition = {
-    id: "stance_switch",
-    name: "Change Stance",
+export const SWITCH_TO_BOW: AbilityDefinition = {
+    id: "switch_to_bow",
+    name: "Ready Bow",
+    windupSeconds: 0,
+    channelSeconds: 1,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [],
+    locks: [],
+    effect: { kind: AbilityEffectKind.STANCE, stance: Stance.RANGED },
+};
+
+export const SWITCH_TO_STAFF: AbilityDefinition = {
+    id: "switch_to_staff",
+    name: "Ready Staff",
+    windupSeconds: 0,
+    channelSeconds: 1,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [],
+    locks: [],
+    effect: { kind: AbilityEffectKind.STANCE, stance: Stance.MAGIC },
+};
+
+export const SWITCH_TO_SCIMITAR: AbilityDefinition = {
+    id: "switch_to_scimitar",
+    name: "Ready Scimitar",
     windupSeconds: 0,
     channelSeconds: 1,
     manaCost: 0,
@@ -69,9 +119,12 @@ export const ENEMY_MELEE: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 6, reach: 48 },
 };
 
-export const PLAYER_ABILITY_BAR: readonly AbilityDefinition[] = [
-    BOW_SHOT,
-    MAGIC_BOLT,
-    HEALING_POTION,
-    STANCE_SWITCH,
-];
+export function buildPlayerAbilityBar(stance: Stance): readonly AbilityDefinition[] {
+    return [
+        getStanceAttack(stance),
+        HEALING_POTION,
+        SWITCH_TO_BOW,
+        SWITCH_TO_STAFF,
+        SWITCH_TO_SCIMITAR,
+    ];
+}

@@ -20,6 +20,10 @@ export class AnimationState {
         if (this.seqId === seqId) {
             return;
         }
+        this.restart(seqId);
+    }
+
+    restart(seqId: number): void {
         this.seqId = seqId;
         this.frame = 0;
         this.frameTime = 0;
@@ -32,6 +36,9 @@ export class AnimationState {
         playback: AnimationPlayback = AnimationPlayback.LOOP,
         speed: number = 1,
     ): boolean {
+        if (this.seqId === -1) {
+            return false;
+        }
         const sequence = seqTypeLoader.load(this.seqId);
         if (!sequence.frameIds || sequence.frameIds.length === 0) {
             return true;
@@ -53,4 +60,20 @@ export class AnimationState {
         }
         return completed;
     }
+}
+
+export function sequenceDurationSeconds(
+    seqId: number,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): number {
+    const sequence = seqTypeLoader.load(seqId);
+    if (!sequence.frameIds) {
+        return 0;
+    }
+    let total = 0;
+    for (let frame = 0; frame < sequence.frameIds.length; frame++) {
+        total += sequence.getFrameLength(seqFrameLoader, frame);
+    }
+    return total * 0.02;
 }

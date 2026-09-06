@@ -37,6 +37,11 @@ import {
     SeqTypeLoader,
 } from "../../config/seqtype/SeqTypeLoader";
 import {
+    ArchiveSpotAnimTypeLoader,
+    IndexSpotAnimTypeLoader,
+    SpotAnimTypeLoader,
+} from "../../config/spotanimtype/SpotAnimTypeLoader";
+import {
     ArchiveVarBitTypeLoader,
     IndexVarBitTypeLoader,
     VarBitTypeLoader,
@@ -138,6 +143,19 @@ export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
             const seqsArchive = configIndex.getArchive(ConfigType.DAT2.seqs);
             return new ArchiveSeqTypeLoader(this.cacheInfo, seqsArchive);
         }
+    }
+
+    getSpotAnimTypeLoader(): SpotAnimTypeLoader | undefined {
+        if (this.isIndexConfigs()) {
+            const spotAnimsIndex = this.cacheSystem.getIndex(IndexType.RS2.spotAnims);
+            return new IndexSpotAnimTypeLoader(this.cacheInfo, spotAnimsIndex);
+        }
+        const configIndex = this.cacheSystem.getIndex(IndexType.DAT2.configs);
+        if (!configIndex.archiveExists(ConfigType.DAT2.spotAnims)) {
+            return undefined;
+        }
+        const spotAnimsArchive = configIndex.getArchive(ConfigType.DAT2.spotAnims);
+        return new ArchiveSpotAnimTypeLoader(this.cacheInfo, spotAnimsArchive);
     }
 
     getBasTypeLoader(): BasTypeLoader {

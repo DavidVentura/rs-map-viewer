@@ -7,11 +7,7 @@ export type ProjectileArcProfile = {
 };
 
 export function directionToRotation(directionX: number, directionY: number): number {
-    return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048) & 2047;
-}
-
-export function computeFacingRotation(deltaX: number, deltaY: number): number {
-    return (directionToRotation(deltaX, deltaY) + 1024) & 2047;
+    return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
 }
 
 export function reaimTowardTarget(

@@ -1,5 +1,9 @@
+import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
+import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { AnimationPlayback, AnimationState } from "./Animation";
 import { CombatEvent, applyDamage } from "./CombatEvent";
 import { Combatant, Faction } from "./Combatant";
+import { VisualEffectKind } from "./VisualEffect";
 import {
     ProjectileArcProfile,
     computeArcOffset,
@@ -13,6 +17,21 @@ export enum ProjectileKind {
     MAGIC,
 }
 
+export enum ProjectileOutcome {
+    ALIVE = 0,
+    HIT = 1,
+    EXPIRED = 2,
+}
+
+export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
+export const FIRE_BOLT_HIT_SEQ_ID = 662;
+
+export type ProjectileHitEffect = {
+    readonly kind: VisualEffectKind;
+    readonly seqId: number;
+    readonly height: number;
+};
+
 export type ProjectileSpec = {
     kind: ProjectileKind;
     speed: number;
@@ -21,6 +40,8 @@ export type ProjectileSpec = {
     damage: number;
     arc: ProjectileArcProfile;
     homing: boolean;
+    travelSeqId: number;
+    hitEffect?: ProjectileHitEffect;
 };
 
 export const ARROW_SPEC: ProjectileSpec = {
@@ -31,6 +52,7 @@ export const ARROW_SPEC: ProjectileSpec = {
     damage: 8,
     arc: { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 },
     homing: false,
+    travelSeqId: -1,
 };
 
 export const MAGIC_SPEC: ProjectileSpec = {
@@ -41,6 +63,8 @@ export const MAGIC_SPEC: ProjectileSpec = {
     damage: 12,
     arc: { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 },
     homing: false,
+    travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
+    hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
 };
 
 export class Projectile {
@@ -50,6 +74,8 @@ export class Projectile {
     y: number;
     height: number = Projectile.START_HEIGHT;
     rotation: number;
+    hitTarget?: Combatant;
+    readonly animation: AnimationState;
 
     private directionX: number;
     private directionY: number;
@@ -72,9 +98,18 @@ export class Projectile {
         this.directionX = directionX / length;
         this.directionY = directionY / length;
         this.rotation = directionToRotation(this.directionX, this.directionY);
+        this.animation = new AnimationState(spec.travelSeqId);
     }
 
-    update(dtSeconds: number, combatants: readonly Combatant[], events: CombatEvent[]): boolean {
+    update(
+        dtSeconds: number,
+        combatants: readonly Combatant[],
+        events: CombatEvent[],
+        seqTypeLoader: SeqTypeLoader,
+        seqFrameLoader: SeqFrameLoader,
+    ): ProjectileOutcome {
+        this.animation.advance(dtSeconds, seqTypeLoader, seqFrameLoader, AnimationPlayback.LOOP);
+
         if (this.spec.homing && this.homingTarget && this.homingTarget.health > 0) {
             const reaimed = reaimTowardTarget(
                 this.directionX,
@@ -111,9 +146,12 @@ export class Projectile {
             Projectile.START_HEIGHT +
             computeArcOffset(this.distanceTraveled, this.referenceDistance, this.spec.arc);
         if (hit) {
+            this.hitTarget = hit.combatant;
             applyDamage(hit.combatant, this.spec.damage, events);
-            return false;
+            return ProjectileOutcome.HIT;
         }
-        return this.distanceTraveled < this.spec.range;
+        return this.distanceTraveled < this.spec.range
+            ? ProjectileOutcome.ALIVE
+            : ProjectileOutcome.EXPIRED;
     }
 }

@@ -1,10 +1,14 @@
-import { CooldownGroup } from "./Ability";
+import { AbilityEffectKind, CooldownGroup, Stance } from "./Ability";
 import {
     areGroupsUnlocked,
     canUseAbility,
     chargesAvailable,
+    computeCooldownFraction,
+    computeSlotReadiness,
     consumeCharge,
     initialChargeState,
+    isStanceSwitchRedundant,
+    isWithinMeleeReach,
     lockGroups,
     rollDamage,
 } from "./abilityRules";
@@ -162,5 +166,67 @@ describe("rollDamage", () => {
             expect(amount).toBeGreaterThanOrEqual(5);
             expect(amount).toBeLessThanOrEqual(15);
         }
+    });
+});
+
+describe("isStanceSwitchRedundant", () => {
+    it("is redundant only for a stance effect matching the current stance", () => {
+        expect(
+            isStanceSwitchRedundant(
+                { kind: AbilityEffectKind.STANCE, stance: Stance.MAGIC },
+                Stance.MAGIC,
+            ),
+        ).toBe(true);
+        expect(
+            isStanceSwitchRedundant(
+                { kind: AbilityEffectKind.STANCE, stance: Stance.MAGIC },
+                Stance.MELEE,
+            ),
+        ).toBe(false);
+    });
+
+    it("is never redundant for a non-stance effect", () => {
+        expect(
+            isStanceSwitchRedundant({ kind: AbilityEffectKind.HEAL, amount: 10 }, Stance.MAGIC),
+        ).toBe(false);
+    });
+});
+
+describe("isWithinMeleeReach", () => {
+    it("accounts for both hit radii on top of the ability's reach", () => {
+        expect(isWithinMeleeReach(176, 48, 64, 64)).toBe(true);
+        expect(isWithinMeleeReach(177, 48, 64, 64)).toBe(false);
+    });
+});
+
+describe("computeCooldownFraction", () => {
+    it("is zero once a charge is available", () => {
+        const state = initialChargeState(1);
+        expect(computeCooldownFraction(state, 1, 2, 0)).toBe(0);
+    });
+
+    it("counts down toward zero as the recharge elapses", () => {
+        const state = consumeCharge(initialChargeState(1), 1, 2, 0);
+        expect(computeCooldownFraction(state, 1, 2, 0)).toBe(1);
+        expect(computeCooldownFraction(state, 1, 2, 1)).toBeCloseTo(0.5);
+        expect(computeCooldownFraction(state, 1, 2, 2)).toBe(0);
+    });
+});
+
+describe("computeSlotReadiness", () => {
+    const definition = {
+        ...BASE_DEFINITION,
+        manaCost: 10,
+        effect: { kind: AbilityEffectKind.HEAL, amount: 10 } as const,
+    };
+
+    it("reports mana-blocked and active-stance flags alongside cooldown/charges", () => {
+        const state = initialChargeState(1);
+        const readiness = computeSlotReadiness(definition, state, 5, Stance.MAGIC, 0);
+        expect(readiness.manaBlocked).toBe(true);
+        expect(readiness.charges).toBe(1);
+        expect(readiness.maxCharges).toBe(1);
+        expect(readiness.cooldownFraction).toBe(0);
+        expect(readiness.isActiveStance).toBe(false);
     });
 });

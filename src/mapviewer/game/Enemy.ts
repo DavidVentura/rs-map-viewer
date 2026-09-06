@@ -5,9 +5,7 @@ import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import { Terrain } from "./Terrain";
 import { resolveMovement } from "./movement";
-import { computeFacingRotation } from "./projectileMath";
-
-export { computeFacingRotation } from "./projectileMath";
+import { directionToRotation } from "./projectileMath";
 
 export enum EnemyState {
     IDLE = 0,
@@ -114,7 +112,7 @@ export class Enemy implements Combatant {
         const deltaY = player.y - this.y;
         const stopDistance = Enemy.STOP_DISTANCE_MARGIN + this.hitRadius + player.hitRadius;
         const movement = computeChaseMovement(deltaX, deltaY, distanceToPlayer, stopDistance);
-        this.rotation = computeFacingRotation(deltaX, deltaY);
+        this.rotation = directionToRotation(deltaX, deltaY);
 
         if (movement.x === 0 && movement.y === 0) {
             this.animation.setSequence(this.idleSeqId);

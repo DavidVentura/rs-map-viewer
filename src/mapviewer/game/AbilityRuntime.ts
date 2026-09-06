@@ -31,6 +31,10 @@ export class AbilityRuntime {
         );
     }
 
+    castEndsAt(): number | undefined {
+        return this.pendingCast?.readyAt;
+    }
+
     isBusy(time: number): boolean {
         return this.pendingCast !== undefined && time < this.pendingCast.readyAt;
     }
@@ -68,7 +72,7 @@ export class AbilityRuntime {
         return cast;
     }
 
-    private chargeStateFor(definition: AbilityDefinition): ChargeState {
+    chargeStateFor(definition: AbilityDefinition): ChargeState {
         return this.chargeStateById.get(definition.id) ?? initialChargeState(definition.maxCharges);
     }
 }

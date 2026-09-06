@@ -1,35 +1,40 @@
 import { worldToScreen } from "../webgl/groundPoint";
-import { DamageSplatEvent, HudFrame } from "./HudFrame";
+import { HudFrame, SplatEvent, SplatKind } from "./HudFrame";
 import {
     computeHudLayout,
     drawAbilityBar,
     drawBottomPanel,
     drawDamageSplat,
+    drawHealSplat,
     drawHealthGlobe,
     drawManaGlobe,
+    drawStanceLabel,
     drawTargetPlate,
 } from "./hudDraw";
 
-const DAMAGE_SPLAT_LIFETIME_SECONDS = 1;
+const SPLAT_LIFETIME_SECONDS = 1;
 
-type LiveDamageSplat = DamageSplatEvent & { ageSeconds: number };
+type LiveSplat = SplatEvent & { ageSeconds: number };
 
 export class Hud {
-    private splats: LiveDamageSplat[] = [];
+    private splats: LiveSplat[] = [];
 
     constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
     draw(frame: HudFrame, deltaSeconds: number): void {
-        this.spawnSplats(frame.damageEvents);
+        this.spawnSplats(frame.splatEvents);
         this.tickSplats(deltaSeconds);
 
         const { ctx } = this;
         const { width, height } = frame.screenSize;
         ctx.clearRect(0, 0, width, height);
 
-        const layout = computeHudLayout(width, height);
+        const layout = computeHudLayout(width, height, frame.abilities.length);
         drawBottomPanel(ctx, layout);
-        drawAbilityBar(ctx, layout);
+        drawAbilityBar(ctx, layout, frame.abilities);
+        if (frame.stanceName) {
+            drawStanceLabel(ctx, layout, width, frame.stanceName);
+        }
         if (frame.player) {
             drawHealthGlobe(ctx, layout, frame.player);
             drawManaGlobe(ctx, layout, frame.player);
@@ -40,7 +45,7 @@ export class Hud {
         this.drawSplats(frame);
     }
 
-    private spawnSplats(events: DamageSplatEvent[]): void {
+    private spawnSplats(events: SplatEvent[]): void {
         for (const event of events) {
             this.splats.push({ ...event, ageSeconds: 0 });
         }
@@ -49,7 +54,7 @@ export class Hud {
     private tickSplats(deltaSeconds: number): void {
         this.splats = this.splats
             .map((splat) => ({ ...splat, ageSeconds: splat.ageSeconds + deltaSeconds }))
-            .filter((splat) => splat.ageSeconds < DAMAGE_SPLAT_LIFETIME_SECONDS);
+            .filter((splat) => splat.ageSeconds < SPLAT_LIFETIME_SECONDS);
     }
 
     private drawSplats(frame: HudFrame): void {
@@ -66,13 +71,12 @@ export class Hud {
             if (!screen) {
                 continue;
             }
-            drawDamageSplat(
-                this.ctx,
-                screen,
-                splat.amount,
-                splat.factionHit,
-                splat.ageSeconds / DAMAGE_SPLAT_LIFETIME_SECONDS,
-            );
+            const progress = splat.ageSeconds / SPLAT_LIFETIME_SECONDS;
+            if (splat.kind === SplatKind.HEAL) {
+                drawHealSplat(this.ctx, screen, splat.amount, progress);
+            } else {
+                drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
+            }
         }
     }
 }
