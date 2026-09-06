@@ -8,11 +8,14 @@ import { MapManager, MapSquare } from "./MapManager";
 import { MapViewer } from "./MapViewer";
 import { MapViewerRendererType } from "./MapViewerRenderers";
 import { Terrain } from "./game/Terrain";
+import { HudFrame } from "./hud/HudFrame";
 
 export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends Renderer {
     abstract type: MapViewerRendererType;
 
     mapManager: MapManager<T>;
+
+    hudFrame?: HudFrame;
 
     constructor(public mapViewer: MapViewer) {
         super();

@@ -1,3 +1,4 @@
+import { CombatEvent, applyDamage } from "./CombatEvent";
 import { Combatant, Faction } from "./Combatant";
 import {
     ProjectileArcProfile,
@@ -73,7 +74,7 @@ export class Projectile {
         this.rotation = directionToRotation(this.directionX, this.directionY);
     }
 
-    update(dtSeconds: number, combatants: readonly Combatant[]): boolean {
+    update(dtSeconds: number, combatants: readonly Combatant[], events: CombatEvent[]): boolean {
         if (this.spec.homing && this.homingTarget && this.homingTarget.health > 0) {
             const reaimed = reaimTowardTarget(
                 this.directionX,
@@ -110,7 +111,7 @@ export class Projectile {
             Projectile.START_HEIGHT +
             computeArcOffset(this.distanceTraveled, this.referenceDistance, this.spec.arc);
         if (hit) {
-            hit.combatant.health -= this.spec.damage;
+            applyDamage(hit.combatant, this.spec.damage, events);
             return false;
         }
         return this.distanceTraveled < this.spec.range;

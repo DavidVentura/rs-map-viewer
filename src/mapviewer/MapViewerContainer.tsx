@@ -10,11 +10,12 @@ import { WorldMapModal } from "../components/rs/worldmap/WorldMapModal";
 import { RS_TO_DEGREES } from "../rs/MathConstants";
 import { DownloadProgress } from "../rs/cache/CacheFiles";
 import { formatBytes } from "../util/BytesUtil";
-import { isTouchDevice } from "../util/DeviceUtil";
+import { isTouchDevice, pixelRatio } from "../util/DeviceUtil";
 import { MapViewer } from "./MapViewer";
 import "./MapViewerContainer.css";
 import { MapViewerControls } from "./MapViewerControls";
 import { MapViewerRenderer } from "./MapViewerRenderer";
+import { Hud } from "./hud/Hud";
 
 interface MapViewerContainerProps {
     mapViewer: MapViewer;
@@ -36,6 +37,49 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     const requestRef = useRef<number | undefined>();
 
+    const hudCanvasRef = useRef<HTMLCanvasElement>(null);
+    const hudRef = useRef<Hud | undefined>();
+    const lastHudTimeRef = useRef<DOMHighResTimeStamp | undefined>();
+
+    const drawHud = useCallback(
+        (time: DOMHighResTimeStamp) => {
+            const canvas = hudCanvasRef.current;
+            if (!canvas) {
+                return;
+            }
+
+            const lastTime = lastHudTimeRef.current;
+            lastHudTimeRef.current = time;
+            const deltaSeconds = lastTime !== undefined ? (time - lastTime) / 1000 : 0;
+
+            if (hideUi || !renderer.hudFrame) {
+                return;
+            }
+
+            const cssWidth = canvas.clientWidth;
+            const cssHeight = canvas.clientHeight;
+            const backingWidth = Math.round(cssWidth * pixelRatio);
+            const backingHeight = Math.round(cssHeight * pixelRatio);
+            if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+                canvas.width = backingWidth;
+                canvas.height = backingHeight;
+            }
+
+            if (!hudRef.current) {
+                const ctx = canvas.getContext("2d");
+                if (!ctx) {
+                    return;
+                }
+                hudRef.current = new Hud(ctx);
+            }
+
+            const ctx = canvas.getContext("2d")!;
+            ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+            hudRef.current.draw(renderer.hudFrame, deltaSeconds);
+        },
+        [renderer, hideUi],
+    );
+
     const animate = (time: DOMHighResTimeStamp) => {
         // Wait for 200ms before updating search params
         if (
@@ -46,6 +90,8 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
             mapViewer.needsSearchParamUpdate = false;
             console.log("Updated search params");
         }
+
+        drawHud(time);
 
         if (!hideUi) {
             setFps(Math.round(renderer.stats.frameTimeFps));
@@ -197,6 +243,11 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
             )}
 
             <RendererCanvas renderer={renderer} />
+            <canvas
+                ref={hudCanvasRef}
+                className="hud-overlay-canvas"
+                style={{ display: hideUi ? "none" : "block" }}
+            />
         </div>
     );
 }

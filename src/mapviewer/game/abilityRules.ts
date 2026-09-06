@@ -1,0 +1,102 @@
+import { AbilityDefinition, CooldownGroup, CooldownLock } from "./Ability";
+
+export type GroupCooldowns = ReadonlyMap<CooldownGroup, number>;
+
+export function areGroupsUnlocked(
+    groups: readonly CooldownGroup[],
+    groupCooldownUntil: GroupCooldowns,
+    time: number,
+): boolean {
+    return groups.every((group) => (groupCooldownUntil.get(group) ?? 0) <= time);
+}
+
+export function lockGroups(
+    locks: readonly CooldownLock[],
+    groupCooldownUntil: GroupCooldowns,
+    extraSeconds: number,
+    time: number,
+): Map<CooldownGroup, number> {
+    const next = new Map(groupCooldownUntil);
+    for (const lock of locks) {
+        const unlockAt = time + extraSeconds + lock.seconds;
+        next.set(lock.group, Math.max(next.get(lock.group) ?? 0, unlockAt));
+    }
+    return next;
+}
+
+export type ChargeState = {
+    readonly level: number;
+    readonly time: number;
+};
+
+export function initialChargeState(maxCharges: number): ChargeState {
+    return { level: maxCharges, time: 0 };
+}
+
+export function currentChargeLevel(
+    state: ChargeState,
+    maxCharges: number,
+    rechargeSeconds: number,
+    time: number,
+): number {
+    if (rechargeSeconds <= 0) {
+        return maxCharges;
+    }
+    const elapsedSeconds = Math.max(0, time - state.time);
+    return Math.min(maxCharges, state.level + elapsedSeconds / rechargeSeconds);
+}
+
+export function chargesAvailable(
+    state: ChargeState,
+    maxCharges: number,
+    rechargeSeconds: number,
+    time: number,
+): number {
+    return Math.floor(currentChargeLevel(state, maxCharges, rechargeSeconds, time));
+}
+
+export function consumeCharge(
+    state: ChargeState,
+    maxCharges: number,
+    rechargeSeconds: number,
+    time: number,
+): ChargeState {
+    return { level: currentChargeLevel(state, maxCharges, rechargeSeconds, time) - 1, time };
+}
+
+export type AbilityGateState = {
+    readonly busyUntil?: number;
+    readonly groupCooldownUntil: GroupCooldowns;
+    readonly chargeState: ChargeState;
+    readonly mana: number;
+};
+
+export function canUseAbility(
+    definition: AbilityDefinition,
+    state: AbilityGateState,
+    time: number,
+): boolean {
+    if (state.busyUntil !== undefined && time < state.busyUntil) {
+        return false;
+    }
+    if (state.mana < definition.manaCost) {
+        return false;
+    }
+    if (!areGroupsUnlocked(definition.requires, state.groupCooldownUntil, time)) {
+        return false;
+    }
+    return (
+        chargesAvailable(
+            state.chargeState,
+            definition.maxCharges,
+            definition.rechargeSeconds,
+            time,
+        ) > 0
+    );
+}
+
+export type RandomSource = () => number;
+
+export function rollDamage(min: number, max: number, random: RandomSource): number {
+    return Math.round(min + random() * (max - min));
+}

@@ -1,9 +1,13 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { AbilityDefinition, AbilityTarget, Stance } from "./Ability";
+import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
-import { Combatant, Faction } from "./Combatant";
+import { Combatant, Faction, ManaPool } from "./Combatant";
 import { Terrain } from "./Terrain";
+import { PLAYER_ABILITY_BAR } from "./abilities";
 import { resolveMovement } from "./movement";
+import { computeFacingRotation } from "./projectileMath";
 
 export type PlayerInput = {
     x: number;
@@ -11,25 +15,28 @@ export type PlayerInput = {
     running: boolean;
 };
 
-export class Player implements Combatant {
+export class Player implements Combatant, ManaPool {
     static readonly HIT_RADIUS = 64;
     static readonly MAX_HEALTH = 100;
+    static readonly MAX_MANA = 100;
+    static readonly MANA_REGEN_PER_SECOND = 4;
 
     readonly faction = Faction.PLAYER;
     readonly hitRadius = Player.HIT_RADIUS;
     readonly maxHealth = Player.MAX_HEALTH;
     health = Player.MAX_HEALTH;
+    readonly maxMana = Player.MAX_MANA;
+    mana = Player.MAX_MANA;
 
     static readonly WALK_SPEED = 288 * 1.6;
     static readonly RUN_SPEED = 576 * 1.6;
-    static readonly ATTACK_COOLDOWN_SECONDS = 0.2;
     static readonly ATTACK_ANIMATION_SPEED = 4;
 
     rotation = 0;
+    stance: Stance = Stance.RANGED;
     readonly animation: AnimationState;
-
-    private nextAttackTime = 0;
-    private attackActive = false;
+    readonly abilityRuntime = new AbilityRuntime();
+    readonly abilityBar: readonly AbilityDefinition[] = PLAYER_ABILITY_BAR;
 
     constructor(
         public x: number,
@@ -46,23 +53,26 @@ export class Player implements Combatant {
     update(
         input: PlayerInput,
         deltaTimeSeconds: number,
+        timeSeconds: number,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
-        if (this.attackActive) {
-            if (
-                !this.animation.advance(
-                    deltaTimeSeconds,
-                    seqTypeLoader,
-                    seqFrameLoader,
-                    AnimationPlayback.LOOP,
-                    Player.ATTACK_ANIMATION_SPEED,
-                )
-            ) {
-                return;
-            }
-            this.attackActive = false;
+        this.mana = Math.min(
+            this.maxMana,
+            this.mana + Player.MANA_REGEN_PER_SECOND * deltaTimeSeconds,
+        );
+
+        if (this.abilityRuntime.isBusy(timeSeconds)) {
+            this.animation.setSequence(this.attackSeqId);
+            this.animation.advance(
+                deltaTimeSeconds,
+                seqTypeLoader,
+                seqFrameLoader,
+                AnimationPlayback.LOOP,
+                Player.ATTACK_ANIMATION_SPEED,
+            );
+            return;
         }
 
         const length = Math.hypot(input.x, input.y);
@@ -89,14 +99,13 @@ export class Player implements Combatant {
         this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
     }
 
-    isAttackReady(timeSeconds: number): boolean {
-        return timeSeconds >= this.nextAttackTime;
-    }
-
-    attack(timeSeconds: number, rotation: number): void {
-        this.nextAttackTime = timeSeconds + Player.ATTACK_COOLDOWN_SECONDS;
-        this.rotation = (rotation + 1024) & 2047;
-        this.attackActive = true;
-        this.animation.setSequence(this.attackSeqId);
+    beginCast(definition: AbilityDefinition, target: AbilityTarget, timeSeconds: number): void {
+        this.mana -= definition.manaCost;
+        this.abilityRuntime.use(definition, target, timeSeconds);
+        const deltaX = target.x - this.x;
+        const deltaY = target.y - this.y;
+        if (deltaX !== 0 || deltaY !== 0) {
+            this.rotation = computeFacingRotation(deltaX, deltaY);
+        }
     }
 }

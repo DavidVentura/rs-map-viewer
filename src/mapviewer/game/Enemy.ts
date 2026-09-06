@@ -1,10 +1,13 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import { Terrain } from "./Terrain";
 import { resolveMovement } from "./movement";
-import { directionToRotation } from "./projectileMath";
+import { computeFacingRotation } from "./projectileMath";
+
+export { computeFacingRotation } from "./projectileMath";
 
 export enum EnemyState {
     IDLE = 0,
@@ -42,10 +45,6 @@ export function computeChaseMovement(
     return { x: deltaX / distanceToPlayer, y: deltaY / distanceToPlayer };
 }
 
-export function computeFacingRotation(deltaX: number, deltaY: number): number {
-    return (directionToRotation(deltaX, deltaY) + 1024) & 2047;
-}
-
 export class Enemy implements Combatant {
     static readonly SIZE_TILES = 1;
     static readonly HIT_RADIUS = 64;
@@ -63,6 +62,7 @@ export class Enemy implements Combatant {
     state: EnemyState = EnemyState.IDLE;
     rotation = 0;
     readonly animation: AnimationState;
+    readonly abilityRuntime = new AbilityRuntime();
 
     constructor(
         readonly id: number,

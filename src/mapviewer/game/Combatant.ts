@@ -12,3 +12,8 @@ export interface Combatant {
     health: number;
     readonly maxHealth: number;
 }
+
+export interface ManaPool {
+    mana: number;
+    readonly maxMana: number;
+}

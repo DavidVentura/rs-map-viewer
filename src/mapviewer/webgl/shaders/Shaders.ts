@@ -28,7 +28,14 @@ export function createMainProgram(hasMultiDraw: boolean, discardAlpha: boolean):
 }
 
 export function createNpcProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {
-    return createProgram(npcVertShader, mainFragShader, hasMultiDraw, discardAlpha);
+    const defines: string[] = ["NPC_PROGRAM"];
+    if (hasMultiDraw) {
+        defines.push("MULTI_DRAW");
+    }
+    if (discardAlpha) {
+        defines.push("DISCARD_ALPHA");
+    }
+    return [prependDefines(npcVertShader, defines), prependDefines(mainFragShader, defines)];
 }
 
 export const FRAME_PROGRAM = [frameVertShader, frameFragShader];

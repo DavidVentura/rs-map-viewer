@@ -11,6 +11,8 @@
 
 #define FOG_CORNER_ROUNDING 8.0
 
+#define INTERACT_TYPE_ENEMY 4u
+
 
 precision highp float;
 
@@ -26,6 +28,7 @@ uniform float u_timeLoaded;
 
 uniform int u_npcDataOffset;
 uniform float u_verticalOffset;
+uniform int u_highlightId;
 
 uniform highp usampler2D u_npcDataTexture;
 uniform mediump isampler2DArray u_heightMap;
@@ -38,6 +41,7 @@ flat out uint v_texId;
 flat out float v_alphaCutOff;
 out float v_fogAmount;
 flat out vec4 v_interactId;
+out float v_highlight;
 
 #include "./includes/branchless-logic.glsl";
 #include "./includes/hsl-to-rgb.glsl";
@@ -99,6 +103,12 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     NpcInfo npcInfo = decodeNpcInfo(DRAW_ID + u_npcDataOffset);
+
+    v_highlight = float(
+        u_highlightId != 0 &&
+        npcInfo.interactType == INTERACT_TYPE_ENEMY &&
+        int(npcInfo.interactId) == u_highlightId
+    );
 
     vec4 localPos = vec4(vertex.pos, 1.0) * rotationY(float(npcInfo.rotation) * RS_TO_RADIANS) + vec4(npcInfo.tilePos.x, 0, npcInfo.tilePos.y, 0.0);
 

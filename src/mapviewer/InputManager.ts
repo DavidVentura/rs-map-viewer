@@ -32,9 +32,6 @@ export class InputManager {
     dragX: number = -1;
     dragY: number = -1;
 
-    private pointerDownX: number = -1;
-    private pointerDownY: number = -1;
-
     deltaMouseX: number = 0;
     deltaMouseY: number = 0;
 
@@ -42,9 +39,6 @@ export class InputManager {
 
     pickX: number = -1;
     pickY: number = -1;
-
-    attackX: number = -1;
-    attackY: number = -1;
 
     positionJoystickEvent?: IJoystickUpdateEvent;
     cameraJoystickEvent?: IJoystickUpdateEvent;
@@ -186,8 +180,6 @@ export class InputManager {
         const [x, y] = getMousePos(this.element, event);
         this.dragX = x;
         this.dragY = y;
-        this.pointerDownX = x;
-        this.pointerDownY = y;
         this.mouseX = x;
         this.mouseY = y;
     };
@@ -208,17 +200,8 @@ export class InputManager {
     };
 
     private onMouseUp = (event: MouseEvent) => {
-        if (event.button === 0 && this.element && this.pointerDownX !== -1) {
-            const [x, y] = getMousePos(this.element, event);
-            if (Math.hypot(x - this.pointerDownX, y - this.pointerDownY) <= 5) {
-                this.attackX = x;
-                this.attackY = y;
-            }
-        }
         this.dragX = -1;
         this.dragY = -1;
-        this.pointerDownX = -1;
-        this.pointerDownY = -1;
     };
 
     private onMouseLeave = (event: MouseEvent) => {
@@ -249,8 +232,6 @@ export class InputManager {
     private onTouchEnd = (event: TouchEvent) => {
         this.dragX = -1;
         this.dragY = -1;
-        this.pointerDownX = -1;
-        this.pointerDownY = -1;
     };
 
     private onContextMenu = (event: MouseEvent) => {
@@ -290,8 +271,6 @@ export class InputManager {
         this.mouseY = -1;
         this.dragX = -1;
         this.dragY = -1;
-        this.pointerDownX = -1;
-        this.pointerDownY = -1;
     }
 
     onFrameEnd() {
@@ -306,8 +285,6 @@ export class InputManager {
         this.deltaMouseY = 0;
         this.pickX = -1;
         this.pickY = -1;
-        this.attackX = -1;
-        this.attackY = -1;
         this.lastMouseX = this.mouseX;
         this.lastMouseY = this.mouseY;
     }

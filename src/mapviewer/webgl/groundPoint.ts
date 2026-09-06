@@ -41,3 +41,25 @@ export function screenToGroundPoint(
         y: (nearPoint[2] + directionZ * distance) * 128,
     };
 }
+
+export function worldToScreen(
+    viewProjMatrix: mat4,
+    worldX: number,
+    worldY: number,
+    groundHeight: number,
+    rectWidth: number,
+    rectHeight: number,
+): { x: number; y: number } | undefined {
+    const point = vec4.fromValues(worldX / 128, -groundHeight / 128, worldY / 128, 1);
+    vec4.transformMat4(point, point, viewProjMatrix);
+    if (point[3] <= 0) {
+        return undefined;
+    }
+
+    const ndcX = point[0] / point[3];
+    const ndcY = point[1] / point[3];
+    return {
+        x: ((ndcX + 1) / 2) * rectWidth,
+        y: ((1 - ndcY) / 2) * rectHeight,
+    };
+}

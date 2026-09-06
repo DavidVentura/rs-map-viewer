@@ -10,6 +10,10 @@ export function directionToRotation(directionX: number, directionY: number): num
     return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048) & 2047;
 }
 
+export function computeFacingRotation(deltaX: number, deltaY: number): number {
+    return (directionToRotation(deltaX, deltaY) + 1024) & 2047;
+}
+
 export function reaimTowardTarget(
     directionX: number,
     directionY: number,

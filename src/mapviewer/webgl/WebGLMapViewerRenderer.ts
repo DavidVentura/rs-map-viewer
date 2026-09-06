@@ -20,22 +20,25 @@ import { OsrsMenuEntry } from "../../components/rs/menu/OsrsMenu";
 import { createTextureArray } from "../../picogl/PicoTexture";
 import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { MenuTargetType } from "../../rs/MenuEntry";
+import { NpcType } from "../../rs/config/npctype/NpcType";
 import { Scene } from "../../rs/scene/Scene";
 import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceUtil";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
+import { CombatEventKind } from "../game/CombatEvent";
 import { Enemy } from "../game/Enemy";
-import { AttackRequest } from "../game/GameWorld";
+import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
+import { DamageSplatEvent, HudFrame } from "../hud/HudFrame";
 import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
 import { Interactions } from "./Interactions";
 import { WebGLMapSquare } from "./WebGLMapSquare";
 import { WebGLTerrain } from "./WebGLTerrain";
-import { MAP_SQUARE_UNITS, toWorld } from "./WorldCoords";
+import { MAP_SQUARE_UNITS, splitWorldCoord, toWorld } from "./WorldCoords";
 import { getEnemyAnimationFrames } from "./enemy/EnemyRenderData";
 import { screenToGroundPoint } from "./groundPoint";
 import { SdMapData } from "./loader/SdMapData";
@@ -184,6 +187,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     hoveredMapIds: Set<number> = new Set();
     closestInteractIndices: Map<number, number[]> = new Map();
     interactBuffer?: Float32Array;
+    highlightedEnemy?: Enemy;
 
     npcRenderCount: number = 0;
     npcRenderData: Uint16Array = new Uint16Array(16 * 4);
@@ -897,10 +901,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const camera = this.mapViewer.camera;
 
         this.handleInput(deltaTime);
-        const attackRequest = this.resolveAttackRequest();
         this.mapViewer.world.advance(deltaTime / 1000, {
             movement: this.buildMovementInput(),
-            attackRequest,
+            abilities: this.buildAbilityInput(),
         });
         this.pinCameraToPlayer();
 
@@ -938,6 +941,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.hoveredMapIds.clear();
         }
         const interactionsTime = performance.now() - interactionsStart;
+
+        this.highlightedEnemy = this.getHoveredEnemy();
+        this.hudFrame = this.buildHudFrame();
 
         if (this.cullBackFace) {
             this.app.enable(PicoGL.CULL_FACE);
@@ -1101,18 +1107,39 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return { x: deltaX / length, y: deltaY / length, running };
     }
 
-    private resolveAttackRequest(): AttackRequest | undefined {
+    private buildAbilityInput(): AbilityInput {
         const player = this.mapViewer.world.player;
-        const inputManager = this.mapViewer.inputManager;
-        if (!player || inputManager.attackX === -1 || inputManager.attackY === -1) {
-            return undefined;
+        if (!player) {
+            return [];
         }
 
-        const enemy = this.getHoveredEnemy();
-        if (!enemy) {
-            return undefined;
-        }
-        return { targetX: enemy.x, targetY: enemy.y };
+        const inputManager = this.mapViewer.inputManager;
+        const hoveredEnemy = this.getHoveredEnemy();
+        const enemyTarget = hoveredEnemy
+            ? { x: hoveredEnemy.x, y: hoveredEnemy.y, enemyId: hoveredEnemy.id }
+            : undefined;
+
+        const bowSlot: AbilitySlotInput = {
+            held: inputManager.isDragging() && enemyTarget !== undefined,
+            target: enemyTarget,
+        };
+
+        const keySlot = (key: string): AbilitySlotInput => {
+            if (!inputManager.isKeyDown(key)) {
+                return { held: false };
+            }
+            if (enemyTarget) {
+                return { held: true, target: enemyTarget };
+            }
+            const groundPoint = this.screenToGround(
+                player,
+                inputManager.mouseX,
+                inputManager.mouseY,
+            );
+            return groundPoint ? { held: true, target: groundPoint } : { held: false };
+        };
+
+        return [bowSlot, keySlot("Digit1"), keySlot("Digit2"), keySlot("Digit3")];
     }
 
     private screenToGround(
@@ -1152,6 +1179,63 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
         }
         return undefined;
+    }
+
+    private resolveEnemyNpcType(enemy: Enemy): NpcType | undefined {
+        const { mapCoord: mapX } = splitWorldCoord(enemy.x);
+        const { mapCoord: mapY } = splitWorldCoord(enemy.y);
+        const map = this.mapManager.getMapSquare(mapX, mapY);
+        if (!map?.enemyRenderData) {
+            return undefined;
+        }
+        return this.mapViewer.npcTypeLoader.load(map.enemyRenderData.id);
+    }
+
+    private buildHudFrame(): HudFrame {
+        const world = this.mapViewer.world;
+        const camera = this.mapViewer.camera;
+
+        const player = world.player;
+
+        const damageEvents: DamageSplatEvent[] = [];
+        for (const event of world.drainEvents()) {
+            if (event.kind !== CombatEventKind.DAMAGE) {
+                continue;
+            }
+            damageEvents.push({
+                amount: event.amount,
+                factionHit: event.target.faction,
+                worldX: event.target.x,
+                worldY: event.target.y,
+                groundHeight: this.terrain.getHeight(
+                    event.target.level,
+                    event.target.x,
+                    event.target.y,
+                ),
+            });
+        }
+
+        const targetEnemy = this.highlightedEnemy;
+        const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
+
+        return {
+            viewProjMatrix: camera.viewProjMatrix,
+            screenSize: { width: this.canvas.clientWidth, height: this.canvas.clientHeight },
+            player: player && {
+                health: player.health,
+                maxHealth: player.maxHealth,
+                mana: player.mana,
+                maxMana: player.maxMana,
+            },
+            target: targetEnemy &&
+                targetNpcType && {
+                    name: targetNpcType.name,
+                    combatLevel: targetNpcType.combatLevel,
+                    health: targetEnemy.health,
+                    maxHealth: targetEnemy.maxHealth,
+                },
+            damageEvents,
+        };
     }
 
     private pinCameraToPlayer(): void {
@@ -1386,6 +1470,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
             drawCall.uniform("u_verticalOffset", 0);
+            drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
@@ -1515,6 +1600,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_npcDataOffset", dataOffset);
             drawCall.texture("u_npcDataTexture", npcDataTexture);
             drawCall.uniform("u_verticalOffset", 0);
+            drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
 
             for (let i = 0; i < npcs.length; i++) {
                 const npc = npcs[i];
