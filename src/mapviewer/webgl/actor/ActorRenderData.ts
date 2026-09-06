@@ -28,29 +28,19 @@ export function getPlayerAnimationFrames(
 }
 
 export type EnemyTypeAnimationSet = {
-    idleAnim: AnimationFrames;
-    walkAnim: AnimationFrames;
-    deathAnim: AnimationFrames;
-    attackAnim: AnimationFrames;
     idleSeqId: number;
-    walkSeqId: number;
-    deathSeqId: number;
-    attackSeqId: number;
+    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
 };
 
 export function getEnemyAnimationFrames(
     data: EnemyTypeAnimationSet,
     seqId: number,
 ): AnimationFrames {
-    return resolveAnimationFrames(
-        seqId,
-        [
-            { seqId: data.walkSeqId, anim: data.walkAnim },
-            { seqId: data.deathSeqId, anim: data.deathAnim },
-            { seqId: data.attackSeqId, anim: data.attackAnim },
-        ],
-        data.idleAnim,
-    );
+    const anim = data.animationsBySeqId.get(seqId);
+    if (anim) {
+        return anim;
+    }
+    return data.animationsBySeqId.get(data.idleSeqId)!;
 }
 
 export type ProjectileMesh = {

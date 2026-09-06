@@ -168,7 +168,11 @@ export class Enemy implements Combatant, SteeringBody {
     }
 
     get castSeqId(): number {
-        return this.type.castSeqId ?? this.type.attackSeqId;
+        return (
+            this.abilityRuntime.pendingDefinition()?.castSeqId ??
+            this.type.castSeqId ??
+            this.type.attackSeqId
+        );
     }
 
     isFrozen(timeSeconds: number): boolean {

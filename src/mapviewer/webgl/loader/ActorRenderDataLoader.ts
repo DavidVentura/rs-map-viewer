@@ -181,42 +181,34 @@ function createPlayerActorData(
     return { stances: stances as Record<WeaponStyle, StanceAnimationSet> };
 }
 
+function enemyTypeSeqIds(enemyType: EnemyType): number[] {
+    const seqIds = [
+        enemyType.idleSeqId,
+        enemyType.walkSeqId,
+        enemyType.deathSeqId,
+        enemyType.attackSeqId,
+        enemyType.castSeqId,
+        ...enemyType.abilities.map((ability) => ability.castSeqId),
+    ];
+    return [...new Set(seqIds.filter((seqId): seqId is number => seqId !== undefined))];
+}
+
 function createEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
     sceneBuf: SceneBuffer,
     enemyType: EnemyType,
-): EnemyTypeAnimationSet | undefined {
+): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(enemyType.npcTypeId);
-
-    const idleAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, enemyType.idleSeqId);
-    const walkAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, enemyType.walkSeqId);
-    const deathAnim = addNpcAnimationFrames(
-        npcModelLoader,
-        sceneBuf,
-        npcType,
-        enemyType.deathSeqId,
-    );
-    const attackAnim = addNpcAnimationFrames(
-        npcModelLoader,
-        sceneBuf,
-        npcType,
-        enemyType.attackSeqId,
-    );
-    if (!idleAnim || !walkAnim || !deathAnim || !attackAnim) {
-        return undefined;
+    const animationsBySeqId = new Map<number, AnimationFrames>();
+    for (const seqId of enemyTypeSeqIds(enemyType)) {
+        const anim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, seqId);
+        if (!anim) {
+            throw new Error(`Failed baking seq ${seqId} for enemy type ${enemyType.id}`);
+        }
+        animationsBySeqId.set(seqId, anim);
     }
-
-    return {
-        idleAnim,
-        walkAnim,
-        deathAnim,
-        attackAnim,
-        idleSeqId: enemyType.idleSeqId,
-        walkSeqId: enemyType.walkSeqId,
-        deathSeqId: enemyType.deathSeqId,
-        attackSeqId: enemyType.attackSeqId,
-    };
+    return { idleSeqId: enemyType.idleSeqId, animationsBySeqId };
 }
 
 // Fire Bolt spell (SpotAnimType ids): 127 travels, 128 hits.
@@ -337,16 +329,12 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>> = {};
         for (const enemyTypeId of encounter.enemyTypeIds) {
             const enemyType = getEnemyType(enemyTypeId);
-            const animSet = createEnemyTypeAnimationSet(
+            enemyTypes[enemyTypeId] = createEnemyTypeAnimationSet(
                 npcModelLoader,
                 npcTypeLoader,
                 sceneBuf,
                 enemyType,
             );
-            if (!animSet) {
-                throw new Error(`Failed baking enemy actor animation data for ${enemyTypeId}`);
-            }
-            enemyTypes[enemyTypeId] = animSet;
         }
 
         const projectiles = createProjectileActorData(state, sceneBuf);
