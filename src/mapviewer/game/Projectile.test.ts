@@ -4,6 +4,7 @@ import {
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
     MAGIC_SPEC,
+    POWER_SHOT_SPEC,
     Projectile,
     ProjectileKind,
     ProjectileOutcome,
@@ -135,6 +136,46 @@ describe("Projectile collision", () => {
         const outcome = update(projectile, 1000 / ARROW_SPEC.speed, [enemy], []);
         expect(outcome).toBe(ProjectileOutcome.ALIVE);
         expect(enemy.health).toBe(100);
+    });
+});
+
+describe("Projectile piercing", () => {
+    it("gives power shot piercing and the basic arrow non-piercing", () => {
+        expect(ARROW_SPEC.piercing).toBe(false);
+        expect(POWER_SHOT_SPEC.piercing).toBe(true);
+    });
+
+    it("stops at the first hit for a non-piercing projectile", () => {
+        const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
+        const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
+        const outcome = update(projectile, 400 / ARROW_SPEC.speed, [near, far], []);
+        expect(outcome).toBe(ProjectileOutcome.HIT);
+        expect(near.health).toBeLessThan(100);
+        expect(far.health).toBe(100);
+    });
+
+    it("continues through multiple hostile combatants for a piercing projectile", () => {
+        const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
+        const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(POWER_SHOT_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
+        // Hits register one sweep-step at a time, so advance in small increments
+        // to let the projectile reach and pass through both combatants in turn.
+        let outcome = ProjectileOutcome.ALIVE;
+        for (let i = 0; i < 50 && outcome === ProjectileOutcome.ALIVE; i++) {
+            outcome = update(projectile, 0.01, [near, far], []);
+        }
+        expect(near.health).toBe(100 - POWER_SHOT_SPEC.damage);
+        expect(far.health).toBe(100 - POWER_SHOT_SPEC.damage);
+    });
+
+    it("does not damage the same combatant twice while still overlapping it", () => {
+        const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(POWER_SHOT_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
+        update(projectile, 250 / POWER_SHOT_SPEC.speed, [enemy], []);
+        const healthAfterFirstHit = enemy.health;
+        update(projectile, 0.001, [enemy], []);
+        expect(enemy.health).toBe(healthAfterFirstHit);
     });
 });
 

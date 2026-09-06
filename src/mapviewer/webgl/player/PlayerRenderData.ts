@@ -1,12 +1,10 @@
-import { Stance } from "../../game/Ability";
+import { WeaponStyle } from "../../game/Ability";
 import { StanceSeqIds, StanceSeqIdsByStance } from "../../game/Player";
-import { AnimationFrames, resolveAnimationFrames } from "../AnimationFrames";
+import { AnimationFrames } from "../AnimationFrames";
 
 export type StanceAnimationSet = StanceSeqIds & {
     idleAnim: AnimationFrames;
-    walkAnim: AnimationFrames;
-    runAnim: AnimationFrames;
-    attackAnim: AnimationFrames;
+    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
 };
 
 export type PlayerRenderData = {
@@ -14,7 +12,7 @@ export type PlayerRenderData = {
     y: number;
     level: number;
     id: number;
-    stances: Record<Stance, StanceAnimationSet>;
+    stances: Record<WeaponStyle, StanceAnimationSet>;
 };
 
 export function getStanceSeqIds(data: PlayerRenderData): StanceSeqIdsByStance {
@@ -23,17 +21,9 @@ export function getStanceSeqIds(data: PlayerRenderData): StanceSeqIdsByStance {
 
 export function getPlayerAnimationFrames(
     data: PlayerRenderData,
-    stance: Stance,
+    style: WeaponStyle,
     seqId: number,
 ): AnimationFrames {
-    const set = data.stances[stance];
-    return resolveAnimationFrames(
-        seqId,
-        [
-            { seqId: set.walkSeqId, anim: set.walkAnim },
-            { seqId: set.runSeqId, anim: set.runAnim },
-            { seqId: set.attackSeqId, anim: set.attackAnim },
-        ],
-        set.idleAnim,
-    );
+    const set = data.stances[style];
+    return set.animationsBySeqId.get(seqId) ?? set.idleAnim;
 }

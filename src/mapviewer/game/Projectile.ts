@@ -15,6 +15,7 @@ import {
 export enum ProjectileKind {
     ARROW,
     MAGIC,
+    POWER_SHOT,
 }
 
 export enum ProjectileOutcome {
@@ -40,6 +41,7 @@ export type ProjectileSpec = {
     damage: number;
     arc: ProjectileArcProfile;
     homing: boolean;
+    piercing: boolean;
     travelSeqId: number;
     hitEffect?: ProjectileHitEffect;
 };
@@ -52,6 +54,7 @@ export const ARROW_SPEC: ProjectileSpec = {
     damage: 8,
     arc: { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 },
     homing: false,
+    piercing: false,
     travelSeqId: -1,
 };
 
@@ -63,8 +66,21 @@ export const MAGIC_SPEC: ProjectileSpec = {
     damage: 12,
     arc: { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 },
     homing: false,
+    piercing: false,
     travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
     hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
+};
+
+export const POWER_SHOT_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.POWER_SHOT,
+    speed: 1792,
+    range: 4096,
+    hitRadius: 24,
+    damage: 20,
+    arc: { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 },
+    homing: false,
+    piercing: true,
+    travelSeqId: -1,
 };
 
 export class Projectile {
@@ -80,6 +96,7 @@ export class Projectile {
     private directionX: number;
     private directionY: number;
     private distanceTraveled = 0;
+    private readonly piercedCombatants = new Set<Combatant>();
 
     constructor(
         readonly spec: ProjectileSpec,
@@ -137,6 +154,7 @@ export class Projectile {
             this.level,
             this.sourceFaction,
             combatants,
+            this.spec.piercing ? this.piercedCombatants : undefined,
         );
         const fraction = hit ? hit.fraction : 1;
         this.x += (nextX - this.x) * fraction;
@@ -148,7 +166,11 @@ export class Projectile {
         if (hit) {
             this.hitTarget = hit.combatant;
             applyDamage(hit.combatant, this.spec.damage, events);
-            return ProjectileOutcome.HIT;
+            if (this.spec.piercing) {
+                this.piercedCombatants.add(hit.combatant);
+            } else {
+                return ProjectileOutcome.HIT;
+            }
         }
         return this.distanceTraveled < this.spec.range
             ? ProjectileOutcome.ALIVE

@@ -1,5 +1,8 @@
-import { AbilityDefinition, AbilityEffectKind, CooldownGroup, Stance } from "./Ability";
-import { ARROW_SPEC, MAGIC_SPEC } from "./Projectile";
+import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from "./Ability";
+import { ARROW_SPEC, MAGIC_SPEC, POWER_SHOT_SPEC } from "./Projectile";
+import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "./VisualEffect";
+
+export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
 
 export const BOW_SHOT: AbilityDefinition = {
     id: "bow_shot",
@@ -36,20 +39,96 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.6 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 4, maxDamage: 9, reach: 48 },
 };
 
-export function getStanceAttack(stance: Stance): AbilityDefinition {
-    switch (stance) {
-        case Stance.RANGED:
+export function getStyleAttack(style: WeaponStyle): AbilityDefinition {
+    switch (style) {
+        case WeaponStyle.RANGED:
             return BOW_SHOT;
-        case Stance.MAGIC:
+        case WeaponStyle.MAGIC:
             return MAGIC_BOLT;
-        case Stance.MELEE:
+        case WeaponStyle.MELEE:
             return SCIMITAR_SLASH;
     }
 }
+
+const SPECIAL_RECHARGE_SECONDS = 6;
+
+export const CLEAVE: AbilityDefinition = {
+    id: "cleave",
+    name: "Cleave",
+    windupSeconds: 0.6,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
+    effect: {
+        kind: AbilityEffectKind.CONE_MELEE,
+        damageMultiplier: 2,
+        angleRadians: Math.PI / 2,
+        reach: 2.5 * 128,
+    },
+};
+
+export const ICE_BARRAGE: AbilityDefinition = {
+    id: "ice_barrage",
+    name: "Ice Barrage",
+    windupSeconds: 1.2,
+    channelSeconds: 0,
+    manaCost: 30,
+    maxCharges: 1,
+    rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.3 }],
+    castSeqId: ICE_BARRAGE_CAST_SEQ_ID,
+    effect: {
+        kind: AbilityEffectKind.AREA,
+        radiusTiles: 1,
+        damageMin: MAGIC_SPEC.damage,
+        damageMax: MAGIC_SPEC.damage,
+        freezeSeconds: 3,
+        hitEffect: {
+            kind: VisualEffectKind.ICE_BARRAGE_HIT,
+            seqId: ICE_BARRAGE_HIT_SEQ_ID,
+            height: 100,
+        },
+    },
+};
+
+export const VOLLEY: AbilityDefinition = {
+    id: "volley",
+    name: "Volley",
+    windupSeconds: 0.6,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
+    effect: {
+        kind: AbilityEffectKind.MULTI_PROJECTILE,
+        spec: ARROW_SPEC,
+        count: 8,
+        spreadAngleRadians: Math.PI / 3,
+    },
+};
+
+export const POWER_SHOT: AbilityDefinition = {
+    id: "power_shot",
+    name: "Power Shot",
+    windupSeconds: 0.6,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
+    effect: { kind: AbilityEffectKind.PROJECTILE, spec: POWER_SHOT_SPEC },
+};
 
 export const HEALING_POTION: AbilityDefinition = {
     id: "healing_potion",
@@ -67,45 +146,6 @@ export const HEALING_POTION: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.HEAL, amount: 30 },
 };
 
-export const SWITCH_TO_BOW: AbilityDefinition = {
-    id: "switch_to_bow",
-    name: "Ready Bow",
-    windupSeconds: 0,
-    channelSeconds: 1,
-    manaCost: 0,
-    maxCharges: 1,
-    rechargeSeconds: 0,
-    requires: [],
-    locks: [],
-    effect: { kind: AbilityEffectKind.STANCE, stance: Stance.RANGED },
-};
-
-export const SWITCH_TO_STAFF: AbilityDefinition = {
-    id: "switch_to_staff",
-    name: "Ready Staff",
-    windupSeconds: 0,
-    channelSeconds: 1,
-    manaCost: 0,
-    maxCharges: 1,
-    rechargeSeconds: 0,
-    requires: [],
-    locks: [],
-    effect: { kind: AbilityEffectKind.STANCE, stance: Stance.MAGIC },
-};
-
-export const SWITCH_TO_SCIMITAR: AbilityDefinition = {
-    id: "switch_to_scimitar",
-    name: "Ready Scimitar",
-    windupSeconds: 0,
-    channelSeconds: 1,
-    manaCost: 0,
-    maxCharges: 1,
-    rechargeSeconds: 0,
-    requires: [],
-    locks: [],
-    effect: { kind: AbilityEffectKind.STANCE, stance: Stance.MELEE },
-};
-
 export const ENEMY_MELEE: AbilityDefinition = {
     id: "enemy_melee",
     name: "Enemy Melee",
@@ -119,12 +159,13 @@ export const ENEMY_MELEE: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 6, reach: 48 },
 };
 
-export function buildPlayerAbilityBar(stance: Stance): readonly AbilityDefinition[] {
-    return [
-        getStanceAttack(stance),
-        HEALING_POTION,
-        SWITCH_TO_BOW,
-        SWITCH_TO_STAFF,
-        SWITCH_TO_SCIMITAR,
-    ];
+export function buildPlayerAbilityBar(style: WeaponStyle): readonly AbilityDefinition[] {
+    switch (style) {
+        case WeaponStyle.MELEE:
+            return [SCIMITAR_SLASH, CLEAVE, HEALING_POTION];
+        case WeaponStyle.MAGIC:
+            return [MAGIC_BOLT, ICE_BARRAGE, HEALING_POTION];
+        case WeaponStyle.RANGED:
+            return [BOW_SHOT, VOLLEY, POWER_SHOT, HEALING_POTION];
+    }
 }

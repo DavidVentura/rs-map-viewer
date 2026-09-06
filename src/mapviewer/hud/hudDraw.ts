@@ -1,10 +1,11 @@
 import { clamp } from "../../util/MathUtil";
-import { Stance } from "../game/Ability";
+import { WeaponStyle } from "../game/Ability";
 import { Faction } from "../game/Combatant";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
     PlayerHudInfo,
+    StyleSwitchHudInfo,
     TargetHudInfo,
 } from "./HudFrame";
 
@@ -20,7 +21,32 @@ const ABILITY_SLOT_GAP = 8;
 const TARGET_PLATE_WIDTH = 300;
 const TARGET_PLATE_HEIGHT = 56;
 const TARGET_PLATE_MARGIN_TOP = 16;
-const STANCE_LABEL_MARGIN_TOP = 4;
+const SWITCH_LABEL_MARGIN_TOP = 4;
+const STYLE_ICON_SIZE = 26;
+const STYLE_ICON_GAP = 6;
+const STYLE_ROW_MARGIN_BOTTOM = 6;
+
+const STYLE_ORDER: readonly WeaponStyle[] = [
+    WeaponStyle.MELEE,
+    WeaponStyle.RANGED,
+    WeaponStyle.MAGIC,
+];
+
+const STYLE_NAMES: Record<WeaponStyle, string> = {
+    [WeaponStyle.MELEE]: "Melee",
+    [WeaponStyle.RANGED]: "Ranged",
+    [WeaponStyle.MAGIC]: "Magic",
+};
+
+const STYLE_KEY_LABELS: Record<WeaponStyle, string> = {
+    [WeaponStyle.MELEE]: "Q",
+    [WeaponStyle.RANGED]: "W",
+    [WeaponStyle.MAGIC]: "E",
+};
+
+export function styleDisplayName(style: WeaponStyle): string {
+    return STYLE_NAMES[style];
+}
 
 export type HudLayout = {
     panelX: number;
@@ -30,7 +56,8 @@ export type HudLayout = {
     healthGlobe: { x: number; y: number; radius: number };
     manaGlobe: { x: number; y: number; radius: number };
     slots: { x: number; y: number; size: number }[];
-    stanceLabelY: number;
+    styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
+    switchLabelY: number;
 };
 
 export function computeHudLayout(width: number, height: number, slotCount: number): HudLayout {
@@ -42,6 +69,10 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
         ABILITY_SLOT_SIZE * slotCount + ABILITY_SLOT_GAP * Math.max(0, slotCount - 1);
     const slotsX = width / 2 - slotsWidth / 2;
     const slotsY = panelY + PANEL_HEIGHT / 2 - ABILITY_SLOT_SIZE / 2;
+    const styleIconsWidth =
+        STYLE_ICON_SIZE * STYLE_ORDER.length + STYLE_ICON_GAP * (STYLE_ORDER.length - 1);
+    const styleIconsX = width / 2 - styleIconsWidth / 2;
+    const styleIconsY = slotsY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
     return {
         panelX,
         panelY,
@@ -54,7 +85,13 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
             y: slotsY,
             size: ABILITY_SLOT_SIZE,
         })),
-        stanceLabelY: slotsY + ABILITY_SLOT_SIZE + STANCE_LABEL_MARGIN_TOP,
+        styleIcons: STYLE_ORDER.map((style, i) => ({
+            x: styleIconsX + i * (STYLE_ICON_SIZE + STYLE_ICON_GAP),
+            y: styleIconsY,
+            size: STYLE_ICON_SIZE,
+            style,
+        })),
+        switchLabelY: slotsY + ABILITY_SLOT_SIZE + SWITCH_LABEL_MARGIN_TOP,
     };
 }
 
@@ -77,24 +114,39 @@ function isInsideCircle(
     return Math.hypot(x - circle.x, y - circle.y) <= circle.radius;
 }
 
-export function hitTestHud(layout: HudLayout, x: number, y: number): boolean {
-    if (isInsideRect(x, y, layout.panelX, layout.panelY, layout.panelWidth, layout.panelHeight)) {
-        return true;
-    }
-    if (isInsideCircle(x, y, layout.healthGlobe) || isInsideCircle(x, y, layout.manaGlobe)) {
-        return true;
-    }
-    return layout.slots.some((slot) => isInsideRect(x, y, slot.x, slot.y, slot.size, slot.size));
+export enum HudRegionKind {
+    PANEL = 0,
+    ORB = 1,
+    SLOT = 2,
+    STYLE = 3,
 }
 
-const STANCE_NAMES: Record<Stance, string> = {
-    [Stance.MELEE]: "Melee",
-    [Stance.RANGED]: "Ranged",
-    [Stance.MAGIC]: "Magic",
-};
+export type HudRegion =
+    | { readonly kind: HudRegionKind.PANEL }
+    | { readonly kind: HudRegionKind.ORB }
+    | { readonly kind: HudRegionKind.SLOT; readonly slot: number }
+    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle };
 
-export function stanceDisplayName(stance: Stance): string {
-    return STANCE_NAMES[stance];
+export function hitTestHud(layout: HudLayout, x: number, y: number): HudRegion | undefined {
+    const styleIcon = layout.styleIcons.find((icon) =>
+        isInsideRect(x, y, icon.x, icon.y, icon.size, icon.size),
+    );
+    if (styleIcon) {
+        return { kind: HudRegionKind.STYLE, style: styleIcon.style };
+    }
+    const slotIndex = layout.slots.findIndex((slot) =>
+        isInsideRect(x, y, slot.x, slot.y, slot.size, slot.size),
+    );
+    if (slotIndex !== -1) {
+        return { kind: HudRegionKind.SLOT, slot: slotIndex };
+    }
+    if (isInsideCircle(x, y, layout.healthGlobe) || isInsideCircle(x, y, layout.manaGlobe)) {
+        return { kind: HudRegionKind.ORB };
+    }
+    if (isInsideRect(x, y, layout.panelX, layout.panelY, layout.panelWidth, layout.panelHeight)) {
+        return { kind: HudRegionKind.PANEL };
+    }
+    return undefined;
 }
 
 function percentOf(current: number, max: number): number {
@@ -240,9 +292,12 @@ export function drawManaGlobe(
 }
 
 const ABILITY_NAME_MAX_LENGTH = 10;
-const ACTIVE_STANCE_BORDER_COLOR = "#ffd24d";
 const MANA_BLOCK_TINT = "rgba(20, 30, 90, 0.55)";
 const COOLDOWN_SWEEP_COLOR = "rgba(0, 0, 0, 0.72)";
+const STYLE_SWITCH_SWEEP_COLOR = "rgba(255, 210, 77, 0.55)";
+const STYLE_ACTIVE_BORDER_COLOR = "#ffd24d";
+const STYLE_INACTIVE_BORDER_COLOR = "rgba(120, 96, 60, 0.6)";
+const STYLE_GLYPH_COLOR = "#e8e0d0";
 
 function abbreviateAbilityName(name: string): string {
     if (name.length <= ABILITY_NAME_MAX_LENGTH) {
@@ -255,25 +310,26 @@ function abbreviateAbilityName(name: string): string {
     return initials.length > 0 ? initials.toUpperCase() : name.slice(0, ABILITY_NAME_MAX_LENGTH);
 }
 
-function drawCooldownSweep(
+function drawRadialSweep(
     ctx: CanvasRenderingContext2D,
-    slot: { x: number; y: number; size: number },
-    cooldownFraction: number,
+    box: { x: number; y: number; size: number },
+    fraction: number,
+    color: string,
 ): void {
-    if (cooldownFraction <= 0) {
+    if (fraction <= 0) {
         return;
     }
-    const cx = slot.x + slot.size / 2;
-    const cy = slot.y + slot.size / 2;
-    const radius = slot.size * 0.75;
+    const cx = box.x + box.size / 2;
+    const cy = box.y + box.size / 2;
+    const radius = box.size * 0.75;
     const startAngle = -Math.PI / 2;
-    const endAngle = startAngle + Math.PI * 2 * clamp(cooldownFraction, 0, 1);
+    const endAngle = startAngle + Math.PI * 2 * clamp(fraction, 0, 1);
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(slot.x, slot.y, slot.size, slot.size);
+    ctx.rect(box.x, box.y, box.size, box.size);
     ctx.clip();
-    ctx.fillStyle = COOLDOWN_SWEEP_COLOR;
+    ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, radius, startAngle, endAngle);
@@ -306,7 +362,7 @@ function drawAbilitySlot(
         ctx.restore();
     }
 
-    drawCooldownSweep(ctx, slot, ability.cooldownFraction);
+    drawRadialSweep(ctx, slot, ability.cooldownFraction, COOLDOWN_SWEEP_COLOR);
 
     if (ability.blocked === AbilitySlotBlockReason.MANA) {
         ctx.fillStyle = MANA_BLOCK_TINT;
@@ -338,10 +394,8 @@ function drawAbilitySlot(
     ctx.fillText(ability.keyLabel, x + 4, y + 3);
     ctx.restore();
 
-    ctx.lineWidth = ability.isActiveStance ? 3 : 2;
-    ctx.strokeStyle = ability.isActiveStance
-        ? ACTIVE_STANCE_BORDER_COLOR
-        : "rgba(120, 96, 60, 0.6)";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = STYLE_INACTIVE_BORDER_COLOR;
     ctx.strokeRect(x + 1, y + 1, size - 2, size - 2);
 }
 
@@ -359,11 +413,110 @@ export function drawAbilityBar(
     }
 }
 
-export function drawStanceLabel(
+function drawStyleGlyph(
+    ctx: CanvasRenderingContext2D,
+    style: WeaponStyle,
+    cx: number,
+    cy: number,
+    size: number,
+): void {
+    const r = size * 0.28;
+    ctx.save();
+    ctx.strokeStyle = STYLE_GLYPH_COLOR;
+    ctx.fillStyle = STYLE_GLYPH_COLOR;
+    ctx.lineWidth = 2;
+    switch (style) {
+        case WeaponStyle.MELEE:
+            ctx.beginPath();
+            ctx.moveTo(cx - r, cy - r);
+            ctx.lineTo(cx + r, cy + r);
+            ctx.moveTo(cx + r, cy - r);
+            ctx.lineTo(cx - r, cy + r);
+            ctx.stroke();
+            break;
+        case WeaponStyle.RANGED:
+            ctx.beginPath();
+            ctx.moveTo(cx - r, cy + r);
+            ctx.lineTo(cx + r, cy - r);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx + r, cy - r);
+            ctx.lineTo(cx + r - size * 0.2, cy - r);
+            ctx.lineTo(cx + r, cy - r + size * 0.2);
+            ctx.closePath();
+            ctx.fill();
+            break;
+        case WeaponStyle.MAGIC:
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - r);
+            ctx.lineTo(cx + r * 0.3, cy - r * 0.3);
+            ctx.lineTo(cx + r, cy);
+            ctx.lineTo(cx + r * 0.3, cy + r * 0.3);
+            ctx.lineTo(cx, cy + r);
+            ctx.lineTo(cx - r * 0.3, cy + r * 0.3);
+            ctx.lineTo(cx - r, cy);
+            ctx.lineTo(cx - r * 0.3, cy - r * 0.3);
+            ctx.closePath();
+            ctx.fill();
+            break;
+    }
+    ctx.restore();
+}
+
+function drawStyleIcon(
+    ctx: CanvasRenderingContext2D,
+    icon: { x: number; y: number; size: number; style: WeaponStyle },
+    active: boolean,
+    switchProgress: number | undefined,
+): void {
+    const { x, y, size, style } = icon;
+
+    ctx.fillStyle = "rgba(6, 6, 8, 0.9)";
+    ctx.fillRect(x, y, size, size);
+
+    drawStyleGlyph(ctx, style, x + size / 2, y + size / 2, size);
+
+    if (switchProgress !== undefined) {
+        drawRadialSweep(ctx, icon, switchProgress, STYLE_SWITCH_SWEEP_COLOR);
+    }
+
+    ctx.save();
+    ctx.font = "700 10px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = "#d8cfbc";
+    const keyLabel = STYLE_KEY_LABELS[style];
+    ctx.strokeText(keyLabel, x + 3, y + 2);
+    ctx.fillText(keyLabel, x + 3, y + 2);
+    ctx.restore();
+
+    ctx.lineWidth = active ? 3 : 2;
+    ctx.strokeStyle = active ? STYLE_ACTIVE_BORDER_COLOR : STYLE_INACTIVE_BORDER_COLOR;
+    ctx.strokeRect(x + 1, y + 1, size - 2, size - 2);
+}
+
+export function drawStyleRow(
+    ctx: CanvasRenderingContext2D,
+    layout: HudLayout,
+    activeStyle: WeaponStyle,
+    styleSwitch: StyleSwitchHudInfo | undefined,
+): void {
+    for (const icon of layout.styleIcons) {
+        const switchProgress =
+            styleSwitch !== undefined && styleSwitch.target === icon.style
+                ? styleSwitch.progress
+                : undefined;
+        drawStyleIcon(ctx, icon, icon.style === activeStyle, switchProgress);
+    }
+}
+
+export function drawStyleSwitchLabel(
     ctx: CanvasRenderingContext2D,
     layout: HudLayout,
     width: number,
-    stanceName: string,
+    targetStyleName: string,
 ): void {
     ctx.save();
     ctx.font = "600 13px sans-serif";
@@ -372,9 +525,9 @@ export function drawStanceLabel(
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
     ctx.fillStyle = "#ffd24d";
-    const text = `Stance: ${stanceName}`;
-    ctx.strokeText(text, width / 2, layout.stanceLabelY);
-    ctx.fillText(text, width / 2, layout.stanceLabelY);
+    const text = `Switching to ${targetStyleName}`;
+    ctx.strokeText(text, width / 2, layout.switchLabelY);
+    ctx.fillText(text, width / 2, layout.switchLabelY);
     ctx.restore();
 }
 
@@ -417,6 +570,7 @@ const SPLAT_RISE_PIXELS = 46;
 const DAMAGE_TO_PLAYER_COLOR = "#ff4d4d";
 const DAMAGE_TO_ENEMY_COLOR = "#ffd24d";
 const HEAL_COLOR = "#4dff7a";
+const FROZEN_COLOR = "#7ac8ff";
 
 function drawSplatText(
     ctx: CanvasRenderingContext2D,
@@ -458,4 +612,12 @@ export function drawHealSplat(
     progress: number,
 ): void {
     drawSplatText(ctx, screen, `+${Math.round(amount)}`, HEAL_COLOR, progress);
+}
+
+export function drawFrozenSplat(
+    ctx: CanvasRenderingContext2D,
+    screen: { x: number; y: number },
+    progress: number,
+): void {
+    drawSplatText(ctx, screen, "Frozen", FROZEN_COLOR, progress);
 }

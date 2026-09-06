@@ -19,14 +19,15 @@ import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { NpcSpawn, getMapNpcSpawns } from "../../data/npc/NpcSpawn";
 import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
-import { Stance } from "../../game/Ability";
+import { WeaponStyle } from "../../game/Ability";
 import { StanceSeqIds } from "../../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
     ProjectileKind,
 } from "../../game/Projectile";
-import { VisualEffectKind } from "../../game/VisualEffect";
+import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "../../game/VisualEffect";
+import { ICE_BARRAGE_CAST_SEQ_ID } from "../../game/abilities";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { loadMinimapBlob } from "../../worker/MinimapData";
@@ -568,14 +569,14 @@ function createPlayerRenderData(
 
     const baseNpc = npcTypeLoader.load(3105);
 
-    const stances: Partial<Record<Stance, StanceAnimationSet>> = {};
-    for (const stance of [Stance.RANGED, Stance.MAGIC, Stance.MELEE] as const) {
-        const equipment = STANCE_EQUIPMENT[stance];
+    const stances: Partial<Record<WeaponStyle, StanceAnimationSet>> = {};
+    for (const style of [WeaponStyle.RANGED, WeaponStyle.MAGIC, WeaponStyle.MELEE] as const) {
+        const equipment = STANCE_EQUIPMENT[style];
         const set = createStanceAnimationSet(playerModelLoader, sceneBuf, baseNpc, equipment);
         if (!set) {
             return undefined;
         }
-        stances[stance] = set;
+        stances[style] = set;
     }
 
     return {
@@ -583,31 +584,32 @@ function createPlayerRenderData(
         y: (playerWorldY & 0x3f) * 128,
         level: 0,
         id: baseNpc.id,
-        stances: stances as Record<Stance, StanceAnimationSet>,
+        stances: stances as Record<WeaponStyle, StanceAnimationSet>,
     };
 }
 
-type StanceEquipment = StanceSeqIds & { itemId: number };
+type StanceEquipment = StanceSeqIds & { itemId: number; extraSeqIds?: readonly number[] };
 
 // bow: shortbow, unarmed idle/walk/run, bow attack
-// staff: staff of fire, standard spellcast idle/walk/run/attack
+// staff: staff of fire, standard spellcast idle/walk/run/attack, plus the ice barrage cast
 // scimitar: rune scimitar, unarmed idle/walk/run, slash attack
-const STANCE_EQUIPMENT: Record<Stance, StanceEquipment> = {
-    [Stance.RANGED]: {
+const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
+    [WeaponStyle.RANGED]: {
         itemId: 841,
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: 426,
     },
-    [Stance.MAGIC]: {
+    [WeaponStyle.MAGIC]: {
         itemId: 1387,
         idleSeqId: 813,
         walkSeqId: 1146,
         runSeqId: 1210,
         attackSeqId: 711,
+        extraSeqIds: [ICE_BARRAGE_CAST_SEQ_ID],
     },
-    [Stance.MELEE]: {
+    [WeaponStyle.MELEE]: {
         itemId: 1333,
         idleSeqId: 808,
         walkSeqId: 819,
@@ -629,32 +631,25 @@ function createStanceAnimationSet(
         baseNpc.ambient,
         baseNpc.contrast,
     );
-    const idleAnim = addPlayerAnimationFrames(
-        playerModelLoader,
-        sceneBuf,
-        appearance,
+
+    const seqIds = [
         equipment.idleSeqId,
-    );
-    const walkAnim = addPlayerAnimationFrames(
-        playerModelLoader,
-        sceneBuf,
-        appearance,
         equipment.walkSeqId,
-    );
-    const runAnim = addPlayerAnimationFrames(
-        playerModelLoader,
-        sceneBuf,
-        appearance,
         equipment.runSeqId,
-    );
-    const attackAnim = addPlayerAnimationFrames(
-        playerModelLoader,
-        sceneBuf,
-        appearance,
         equipment.attackSeqId,
-    );
-    if (!idleAnim || !walkAnim || !runAnim || !attackAnim) {
-        return undefined;
+        ...(equipment.extraSeqIds ?? []),
+    ];
+
+    const animationsBySeqId = new Map<number, AnimationFrames>();
+    for (const seqId of seqIds) {
+        if (animationsBySeqId.has(seqId)) {
+            continue;
+        }
+        const anim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, seqId);
+        if (!anim) {
+            return undefined;
+        }
+        animationsBySeqId.set(seqId, anim);
     }
 
     return {
@@ -662,10 +657,8 @@ function createStanceAnimationSet(
         walkSeqId: equipment.walkSeqId,
         runSeqId: equipment.runSeqId,
         attackSeqId: equipment.attackSeqId,
-        idleAnim,
-        walkAnim,
-        runAnim,
-        attackAnim,
+        idleAnim: animationsBySeqId.get(equipment.idleSeqId)!,
+        animationsBySeqId,
     };
 }
 
@@ -760,6 +753,12 @@ function createEnemySpawns(
 const FIRE_BOLT_PROJECTILE_SPOTANIM_ID = 127;
 const FIRE_BOLT_HIT_SPOTANIM_ID = 128;
 
+// Ice Barrage hit graphic (SpotAnimType id): 369.
+const ICE_BARRAGE_HIT_SPOTANIM_ID = 369;
+
+// A visually distinct, larger arrow model for the ranged Power Shot special.
+const POWER_SHOT_MODEL_SCALE = 200;
+
 function addStaticModelAnimationFrames(sceneBuf: SceneBuffer, model: Model): AnimationFrames {
     const frame = sceneBuf.addModelAnimFrame(model, false);
     const frameAlpha = sceneBuf.addModelAnimFrame(model, true);
@@ -849,6 +848,10 @@ function createProjectileRenderData(
     }
     const arrowAnim = addStaticModelAnimationFrames(sceneBuf, arrowModel);
 
+    const powerShotModel = Model.copy(arrowModel);
+    powerShotModel.scale(POWER_SHOT_MODEL_SCALE, POWER_SHOT_MODEL_SCALE, POWER_SHOT_MODEL_SCALE);
+    const powerShotAnim = addStaticModelAnimationFrames(sceneBuf, powerShotModel);
+
     const boltSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_PROJECTILE_SPOTANIM_ID);
     const boltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
     if (!boltModel || boltSpotAnim.sequenceId !== FIRE_BOLT_TRAVEL_SEQ_ID) {
@@ -875,13 +878,28 @@ function createProjectileRenderData(
         FIRE_BOLT_HIT_SEQ_ID,
     );
 
+    const iceBarrageSpotAnim = spotAnimTypeLoader.load(ICE_BARRAGE_HIT_SPOTANIM_ID);
+    const iceBarrageModel = buildSpotAnimModel(modelLoader, textureLoader, iceBarrageSpotAnim);
+    if (!iceBarrageModel || iceBarrageSpotAnim.sequenceId !== ICE_BARRAGE_HIT_SEQ_ID) {
+        throw new Error("Ice barrage hit spot animation does not match the expected sequence");
+    }
+    const iceBarrageAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        iceBarrageModel,
+        ICE_BARRAGE_HIT_SEQ_ID,
+    );
+
     return {
         projectileMeshes: {
             [ProjectileKind.ARROW]: { anim: arrowAnim, rotationOffset: 1024 },
             [ProjectileKind.MAGIC]: { anim: boltAnim, rotationOffset: 0 },
+            [ProjectileKind.POWER_SHOT]: { anim: powerShotAnim, rotationOffset: 1024 },
         },
         effectAnimations: {
             [VisualEffectKind.MAGIC_HIT]: boltHitAnim,
+            [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
         },
     };
 }

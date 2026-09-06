@@ -3,6 +3,7 @@ import { Combatant } from "./Combatant";
 export enum CombatEventKind {
     DAMAGE = 0,
     HEAL = 1,
+    FREEZE = 2,
 }
 
 export type DamageEvent = {
@@ -17,7 +18,22 @@ export type HealEvent = {
     amount: number;
 };
 
-export type CombatEvent = DamageEvent | HealEvent;
+export type FreezeEvent = {
+    kind: CombatEventKind.FREEZE;
+    target: Combatant;
+    untilSeconds: number;
+};
+
+export type CombatEvent = DamageEvent | HealEvent | FreezeEvent;
+
+export interface Freezable extends Combatant {
+    frozenUntil?: number;
+}
+
+export function applyFreeze(target: Freezable, untilSeconds: number, events: CombatEvent[]): void {
+    target.frozenUntil = Math.max(target.frozenUntil ?? 0, untilSeconds);
+    events.push({ kind: CombatEventKind.FREEZE, target, untilSeconds });
+}
 
 export function applyDamage(target: Combatant, amount: number, events: CombatEvent[]): void {
     target.health = Math.max(0, target.health - amount);

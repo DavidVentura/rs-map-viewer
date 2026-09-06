@@ -18,6 +18,8 @@ export function getAxisDeadzone(axis: number, zone: number): number {
     }
 }
 
+const CLICK_DRAG_THRESHOLD_PIXELS = 4;
+
 export class InputManager {
     element?: HTMLElement;
 
@@ -39,6 +41,13 @@ export class InputManager {
 
     pickX: number = -1;
     pickY: number = -1;
+
+    clickX: number = -1;
+    clickY: number = -1;
+
+    private pressX: number = -1;
+    private pressY: number = -1;
+    private draggedSincePress: boolean = false;
 
     positionJoystickEvent?: IJoystickUpdateEvent;
     cameraJoystickEvent?: IJoystickUpdateEvent;
@@ -112,6 +121,10 @@ export class InputManager {
         return this.dragX !== -1 && this.dragY !== -1;
     }
 
+    isClick(): boolean {
+        return this.clickX !== -1 && this.clickY !== -1;
+    }
+
     isPointerLock(): boolean {
         return document.pointerLockElement === this.element;
     }
@@ -182,6 +195,9 @@ export class InputManager {
         this.dragY = y;
         this.mouseX = x;
         this.mouseY = y;
+        this.pressX = x;
+        this.pressY = y;
+        this.draggedSincePress = false;
     };
 
     private onMouseMove = (event: MouseEvent) => {
@@ -192,6 +208,13 @@ export class InputManager {
         this.mouseX = x;
         this.mouseY = y;
 
+        if (
+            this.pressX !== -1 &&
+            Math.hypot(x - this.pressX, y - this.pressY) > CLICK_DRAG_THRESHOLD_PIXELS
+        ) {
+            this.draggedSincePress = true;
+        }
+
         if (this.isPointerLock()) {
             this.deltaMouseX -= event.movementX;
             this.deltaMouseY -= event.movementY;
@@ -200,8 +223,15 @@ export class InputManager {
     };
 
     private onMouseUp = (event: MouseEvent) => {
+        if (event.button === 0 && this.element && this.pressX !== -1 && !this.draggedSincePress) {
+            const [x, y] = getMousePos(this.element, event);
+            this.clickX = x;
+            this.clickY = y;
+        }
         this.dragX = -1;
         this.dragY = -1;
+        this.pressX = -1;
+        this.pressY = -1;
     };
 
     private onMouseLeave = (event: MouseEvent) => {
@@ -271,6 +301,8 @@ export class InputManager {
         this.mouseY = -1;
         this.dragX = -1;
         this.dragY = -1;
+        this.pressX = -1;
+        this.pressY = -1;
     }
 
     onFrameEnd() {
@@ -285,6 +317,8 @@ export class InputManager {
         this.deltaMouseY = 0;
         this.pickX = -1;
         this.pickY = -1;
+        this.clickX = -1;
+        this.clickY = -1;
         this.lastMouseX = this.mouseX;
         this.lastMouseY = this.mouseY;
     }

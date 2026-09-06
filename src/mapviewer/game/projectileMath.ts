@@ -1,3 +1,4 @@
+import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { Combatant, Faction } from "./Combatant";
 
 export type ProjectileArcProfile = {
@@ -85,13 +86,15 @@ export function findSweepHit<T extends Combatant>(
     level: number,
     sourceFaction: Faction,
     combatants: readonly T[],
+    excluded?: ReadonlySet<T>,
 ): { combatant: T; fraction: number } | undefined {
     let closest: { combatant: T; fraction: number } | undefined;
     for (const combatant of combatants) {
         if (
             combatant.level !== level ||
             combatant.faction === sourceFaction ||
-            combatant.health <= 0
+            combatant.health <= 0 ||
+            excluded?.has(combatant)
         ) {
             continue;
         }
@@ -112,4 +115,61 @@ export function findSweepHit<T extends Combatant>(
         }
     }
     return closest;
+}
+
+export function rotationToDirection(rotation: number): { x: number; y: number } {
+    const theta = (rotation - 1024) * RS_TO_RADIANS;
+    return { x: Math.sin(theta), y: Math.cos(theta) };
+}
+
+export function rotationAngleDifference(a: number, b: number): number {
+    const diff = Math.abs(a - b) & 2047;
+    return diff > 1024 ? 2048 - diff : diff;
+}
+
+export function isPointInCone(
+    originX: number,
+    originY: number,
+    facingRotation: number,
+    totalAngleRadians: number,
+    reach: number,
+    pointX: number,
+    pointY: number,
+): boolean {
+    const dx = pointX - originX;
+    const dy = pointY - originY;
+    const distance = Math.hypot(dx, dy);
+    if (distance === 0 || distance > reach) {
+        return false;
+    }
+    const targetRotation = directionToRotation(dx, dy);
+    const angleDifferenceRadians =
+        rotationAngleDifference(facingRotation, targetRotation) * RS_TO_RADIANS;
+    return angleDifferenceRadians <= totalAngleRadians / 2;
+}
+
+export function isWithinTileArea(
+    centerX: number,
+    centerY: number,
+    radiusTiles: number,
+    pointX: number,
+    pointY: number,
+): boolean {
+    const tileDx = Math.floor(pointX / 128) - Math.floor(centerX / 128);
+    const tileDy = Math.floor(pointY / 128) - Math.floor(centerY / 128);
+    return Math.max(Math.abs(tileDx), Math.abs(tileDy)) <= radiusTiles;
+}
+
+export function generateSpreadDirections(
+    baseRotation: number,
+    spreadAngleRadians: number,
+    count: number,
+): number[] {
+    if (count <= 1) {
+        return [baseRotation & 2047];
+    }
+    const spreadUnits = spreadAngleRadians / RS_TO_RADIANS;
+    const step = spreadUnits / (count - 1);
+    const start = baseRotation - spreadUnits / 2;
+    return Array.from({ length: count }, (_, i) => Math.round(start + step * i) & 2047);
 }

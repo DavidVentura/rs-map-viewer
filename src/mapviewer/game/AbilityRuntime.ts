@@ -35,6 +35,10 @@ export class AbilityRuntime {
         return this.pendingCast?.readyAt;
     }
 
+    pendingDefinition(): AbilityDefinition | undefined {
+        return this.pendingCast?.definition;
+    }
+
     isBusy(time: number): boolean {
         return this.pendingCast !== undefined && time < this.pendingCast.readyAt;
     }

@@ -3,7 +3,12 @@ import {
     computeArcOffset,
     directionToRotation,
     findSweepHit,
+    generateSpreadDirections,
+    isPointInCone,
+    isWithinTileArea,
     reaimTowardTarget,
+    rotationAngleDifference,
+    rotationToDirection,
     sweepCircleHitFraction,
 } from "./projectileMath";
 
@@ -125,5 +130,105 @@ describe("findSweepHit", () => {
         dead.health = 0;
         const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [dead]);
         expect(hit).toBeUndefined();
+    });
+
+    it("ignores combatants present in the excluded set", () => {
+        const enemy = new FakeCombatant(300, 0, 0, Faction.ENEMY);
+        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [enemy], new Set([enemy]));
+        expect(hit).toBeUndefined();
+    });
+});
+
+describe("rotationToDirection", () => {
+    it("inverts directionToRotation for the cardinal directions", () => {
+        for (const [dx, dy] of [
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+        ]) {
+            const rotation = directionToRotation(dx, dy);
+            const direction = rotationToDirection(rotation);
+            expect(direction.x).toBeCloseTo(dx);
+            expect(direction.y).toBeCloseTo(dy);
+        }
+    });
+});
+
+describe("rotationAngleDifference", () => {
+    it("is zero for identical rotations", () => {
+        expect(rotationAngleDifference(512, 512)).toBe(0);
+    });
+
+    it("is symmetric", () => {
+        expect(rotationAngleDifference(0, 512)).toBe(rotationAngleDifference(512, 0));
+    });
+
+    it("wraps around the 2048-unit circle rather than exceeding a half turn", () => {
+        expect(rotationAngleDifference(0, 2047)).toBe(1);
+        expect(rotationAngleDifference(0, 1024)).toBe(1024);
+    });
+});
+
+describe("isPointInCone", () => {
+    it("hits a point directly ahead, within reach", () => {
+        expect(isPointInCone(0, 0, 1024, Math.PI / 2, 500, 0, 100)).toBe(true);
+    });
+
+    it("misses a point behind the facing direction", () => {
+        expect(isPointInCone(0, 0, 1024, Math.PI / 2, 500, 0, -100)).toBe(false);
+    });
+
+    it("misses a point beyond the reach", () => {
+        expect(isPointInCone(0, 0, 1024, Math.PI / 2, 50, 0, 100)).toBe(false);
+    });
+
+    it("misses a point just outside the half-angle", () => {
+        const direction = rotationToDirection(1024 + 257);
+        const point = { x: direction.x * 100, y: direction.y * 100 };
+        expect(isPointInCone(0, 0, 1024, Math.PI / 2, 500, point.x, point.y)).toBe(false);
+    });
+
+    it("hits a point just inside the half-angle", () => {
+        const direction = rotationToDirection(1024 + 255);
+        const point = { x: direction.x * 100, y: direction.y * 100 };
+        expect(isPointInCone(0, 0, 1024, Math.PI / 2, 500, point.x, point.y)).toBe(true);
+    });
+});
+
+describe("isWithinTileArea", () => {
+    it("includes the center tile", () => {
+        expect(isWithinTileArea(0, 0, 1, 0, 0)).toBe(true);
+    });
+
+    it("includes tiles within the radius in every direction", () => {
+        expect(isWithinTileArea(128, 128, 1, 0, 0)).toBe(true);
+        expect(isWithinTileArea(128, 128, 1, 255, 255)).toBe(true);
+    });
+
+    it("excludes tiles beyond the radius", () => {
+        expect(isWithinTileArea(0, 0, 1, 256, 0)).toBe(false);
+    });
+});
+
+describe("generateSpreadDirections", () => {
+    it("returns exactly the base rotation for a single projectile", () => {
+        expect(generateSpreadDirections(1024, Math.PI / 3, 1)).toEqual([1024]);
+    });
+
+    it("returns the requested count of directions", () => {
+        expect(generateSpreadDirections(1024, Math.PI / 3, 8)).toHaveLength(8);
+    });
+
+    it("centers the spread on the base rotation", () => {
+        const directions = generateSpreadDirections(1024, Math.PI / 2, 3);
+        expect(directions[1]).toBe(1024);
+    });
+
+    it("spans the full requested spread angle between the outer directions", () => {
+        const spreadAngleRadians = Math.PI / 2;
+        const directions = generateSpreadDirections(1024, spreadAngleRadians, 5);
+        const outerDifference = rotationAngleDifference(directions[0], directions[4]);
+        expect((outerDifference * (2 * Math.PI)) / 2048).toBeCloseTo(spreadAngleRadians);
     });
 });

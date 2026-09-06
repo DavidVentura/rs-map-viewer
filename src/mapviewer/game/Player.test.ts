@@ -1,52 +1,41 @@
-import { AbilityEffectKind, Stance } from "./Ability";
+import { WeaponStyle } from "./Ability";
 import { Player, StanceSeqIdsByStance } from "./Player";
-import {
-    BOW_SHOT,
-    HEALING_POTION,
-    MAGIC_BOLT,
-    SCIMITAR_SLASH,
-    SWITCH_TO_BOW,
-    SWITCH_TO_SCIMITAR,
-    SWITCH_TO_STAFF,
-} from "./abilities";
+import { BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH } from "./abilities";
 
 const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
 
-const STANCE_SEQ_IDS: StanceSeqIdsByStance = {
-    [Stance.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
-    [Stance.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
-    [Stance.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
+const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
+    [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
+    [WeaponStyle.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
+    [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
 };
 
 function makePlayer(): Player {
-    return new Player(0, 0, 0, STANCE_SEQ_IDS);
+    return new Player(0, 0, 0, STYLE_SEQ_IDS);
 }
 
 describe("Player ability bar", () => {
-    it("resolves slot 0 from the current stance, and fixes the rest", () => {
+    it("resolves slot 0 from the current style, with the potion last", () => {
         const player = makePlayer();
         expect(player.abilityBar[0]).toBe(BOW_SHOT);
-        expect(player.abilityBar[1]).toBe(HEALING_POTION);
-        expect(player.abilityBar[2]).toBe(SWITCH_TO_BOW);
-        expect(player.abilityBar[3]).toBe(SWITCH_TO_STAFF);
-        expect(player.abilityBar[4]).toBe(SWITCH_TO_SCIMITAR);
+        expect(player.abilityBar[player.abilityBar.length - 1].id).toBe("healing_potion");
     });
 
-    it("switches slot 0 to the melee attack once in the melee stance", () => {
+    it("switches slot 0 to the melee attack once in the melee style", () => {
         const player = makePlayer();
-        player.stance = Stance.MELEE;
+        player.style = WeaponStyle.MELEE;
         expect(player.abilityBar[0]).toBe(SCIMITAR_SLASH);
     });
 
-    it("switches slot 0 to the magic attack once in the magic stance", () => {
+    it("switches slot 0 to the magic attack once in the magic style", () => {
         const player = makePlayer();
-        player.stance = Stance.MAGIC;
+        player.style = WeaponStyle.MAGIC;
         expect(player.abilityBar[0]).toBe(MAGIC_BOLT);
     });
 });
 
-describe("Player animation ids follow the equipped stance", () => {
-    it("uses the ranged stance's seq ids by default", () => {
+describe("Player animation ids follow the equipped style", () => {
+    it("uses the ranged style's seq ids by default", () => {
         const player = makePlayer();
         expect(player.idleSeqId).toBe(808);
         expect(player.walkSeqId).toBe(819);
@@ -54,9 +43,9 @@ describe("Player animation ids follow the equipped stance", () => {
         expect(player.attackSeqId).toBe(426);
     });
 
-    it("switches to the magic stance's seq ids once the stance changes", () => {
+    it("switches to the magic style's seq ids once the style changes", () => {
         const player = makePlayer();
-        player.stance = Stance.MAGIC;
+        player.style = WeaponStyle.MAGIC;
         expect(player.idleSeqId).toBe(813);
         expect(player.walkSeqId).toBe(1146);
         expect(player.runSeqId).toBe(1210);
@@ -114,42 +103,83 @@ describe("Player movement while busy", () => {
     });
 });
 
-describe("Stance switch abilities", () => {
-    it("channel, blocking further ability use until they complete", () => {
+describe("Player.requestStyleSwitch", () => {
+    it("defaults the player to the ranged style", () => {
         const player = makePlayer();
-        expect(SWITCH_TO_SCIMITAR.effect.kind).toBe(AbilityEffectKind.STANCE);
-        player.beginCast(SWITCH_TO_SCIMITAR, { x: 0, y: 0 }, 0);
-        expect(player.abilityRuntime.isChanneling(0)).toBe(true);
-        expect(player.abilityRuntime.canUse(BOW_SHOT, player.mana, 0)).toBe(false);
-        expect(player.abilityRuntime.isChanneling(SWITCH_TO_SCIMITAR.channelSeconds)).toBe(false);
+        expect(player.style).toBe(WeaponStyle.RANGED);
     });
 
-    it("defaults the player to the ranged stance", () => {
+    it("is a no-op when requesting the currently active style", () => {
         const player = makePlayer();
-        expect(player.stance).toBe(Stance.RANGED);
+        player.requestStyleSwitch(WeaponStyle.RANGED, 0);
+        expect(player.isSwitchingStyle(0)).toBe(false);
     });
 
-    it("is not usable while already in the target stance", () => {
+    it("channels for STYLE_SWITCH_SECONDS, blocking further ability use until it completes", () => {
         const player = makePlayer();
-        expect(player.canUseSlotIgnoringTarget(2, 0)).toBe(false);
-        player.stance = Stance.MAGIC;
-        expect(player.canUseSlotIgnoringTarget(2, 0)).toBe(true);
+        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
+        expect(player.isSwitchingStyle(0)).toBe(true);
+        expect(player.canUseSlotIgnoringTarget(0, 0)).toBe(false);
+        expect(player.style).toBe(WeaponStyle.RANGED);
+
+        expect(player.isSwitchingStyle(Player.STYLE_SWITCH_SECONDS - 0.001)).toBe(true);
+        expect(player.isSwitchingStyle(Player.STYLE_SWITCH_SECONDS)).toBe(false);
+    });
+
+    it("does not start a new switch while already busy switching", () => {
+        const player = makePlayer();
+        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
+        player.requestStyleSwitch(WeaponStyle.MAGIC, 0.1);
+        player.update(
+            { x: 0, y: 0, running: false },
+            Player.STYLE_SWITCH_SECONDS,
+            Player.STYLE_SWITCH_SECONDS,
+            seqTypeLoader,
+            {} as any,
+            {} as any,
+        );
+        expect(player.style).toBe(WeaponStyle.MELEE);
+    });
+
+    it("applies the new style once the switch completes, via update", () => {
+        const player = makePlayer();
+        player.requestStyleSwitch(WeaponStyle.MAGIC, 0);
+        player.update(
+            { x: 0, y: 0, running: false },
+            0.5,
+            0.5,
+            seqTypeLoader,
+            {} as any,
+            {} as any,
+        );
+        expect(player.style).toBe(WeaponStyle.RANGED);
+        player.update(
+            { x: 0, y: 0, running: false },
+            0.5,
+            Player.STYLE_SWITCH_SECONDS,
+            seqTypeLoader,
+            {} as any,
+            {} as any,
+        );
+        expect(player.style).toBe(WeaponStyle.MAGIC);
+    });
+
+    it("reports undefined progress once not switching", () => {
+        const player = makePlayer();
+        expect(player.styleSwitchProgress(0)).toBeUndefined();
+        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
+        expect(player.styleSwitchProgress(0)).toBeCloseTo(0);
+        expect(player.styleSwitchProgress(Player.STYLE_SWITCH_SECONDS / 2)).toBeCloseTo(0.5);
     });
 });
 
 describe("Player.getSlotReadiness", () => {
-    it("reports mana-blocked for the magic stance's attack when out of mana", () => {
+    it("reports mana-blocked for the magic style's attack when out of mana", () => {
         const player = makePlayer();
-        player.stance = Stance.MAGIC;
+        player.style = WeaponStyle.MAGIC;
         player.mana = 0;
         expect(player.getSlotReadiness(0, 0).manaBlocked).toBe(true);
         player.mana = player.maxMana;
         expect(player.getSlotReadiness(0, 0).manaBlocked).toBe(false);
-    });
-
-    it("marks a stance-switch slot as the active stance once selected", () => {
-        const player = makePlayer();
-        expect(player.getSlotReadiness(2, 0).isActiveStance).toBe(true);
-        expect(player.getSlotReadiness(3, 0).isActiveStance).toBe(false);
     });
 });

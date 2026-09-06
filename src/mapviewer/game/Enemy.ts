@@ -59,6 +59,7 @@ export class Enemy implements Combatant {
 
     state: EnemyState = EnemyState.IDLE;
     rotation = 0;
+    frozenUntil?: number;
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
 
@@ -76,14 +77,20 @@ export class Enemy implements Combatant {
         this.animation = new AnimationState(idleSeqId);
     }
 
+    isFrozen(timeSeconds: number): boolean {
+        return this.frozenUntil !== undefined && timeSeconds < this.frozenUntil;
+    }
+
     update(
         player: Combatant | undefined,
         deltaTimeSeconds: number,
+        timeSeconds: number,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
-        const distanceToPlayer = this.distanceTo(player);
+        const frozen = this.state !== EnemyState.DEAD && this.isFrozen(timeSeconds);
+        const distanceToPlayer = frozen ? Infinity : this.distanceTo(player);
         this.state = decideEnemyState(
             this.state,
             this.health,
@@ -99,6 +106,12 @@ export class Enemy implements Combatant {
                 seqFrameLoader,
                 AnimationPlayback.ONCE,
             );
+            return;
+        }
+
+        if (frozen) {
+            this.animation.setSequence(this.idleSeqId);
+            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
             return;
         }
 

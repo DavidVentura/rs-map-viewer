@@ -5,11 +5,14 @@ import {
     drawAbilityBar,
     drawBottomPanel,
     drawDamageSplat,
+    drawFrozenSplat,
     drawHealSplat,
     drawHealthGlobe,
     drawManaGlobe,
-    drawStanceLabel,
+    drawStyleRow,
+    drawStyleSwitchLabel,
     drawTargetPlate,
+    styleDisplayName,
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
@@ -32,8 +35,11 @@ export class Hud {
         const layout = computeHudLayout(width, height, frame.abilities.length);
         drawBottomPanel(ctx, layout);
         drawAbilityBar(ctx, layout, frame.abilities);
-        if (frame.stanceName) {
-            drawStanceLabel(ctx, layout, width, frame.stanceName);
+        if (frame.activeStyle !== undefined) {
+            drawStyleRow(ctx, layout, frame.activeStyle, frame.styleSwitch);
+        }
+        if (frame.styleSwitch) {
+            drawStyleSwitchLabel(ctx, layout, width, styleDisplayName(frame.styleSwitch.target));
         }
         if (frame.player) {
             drawHealthGlobe(ctx, layout, frame.player);
@@ -72,10 +78,16 @@ export class Hud {
                 continue;
             }
             const progress = splat.ageSeconds / SPLAT_LIFETIME_SECONDS;
-            if (splat.kind === SplatKind.HEAL) {
-                drawHealSplat(this.ctx, screen, splat.amount, progress);
-            } else {
-                drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
+            switch (splat.kind) {
+                case SplatKind.HEAL:
+                    drawHealSplat(this.ctx, screen, splat.amount, progress);
+                    break;
+                case SplatKind.FROZEN:
+                    drawFrozenSplat(this.ctx, screen, progress);
+                    break;
+                case SplatKind.DAMAGE:
+                    drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
+                    break;
             }
         }
     }

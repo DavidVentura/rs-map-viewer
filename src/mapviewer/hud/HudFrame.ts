@@ -1,5 +1,6 @@
 import { mat4 } from "gl-matrix";
 
+import { WeaponStyle } from "../game/Ability";
 import { Faction } from "../game/Combatant";
 
 export type ScreenSize = {
@@ -24,22 +25,36 @@ export type TargetHudInfo = {
 export enum SplatKind {
     DAMAGE = 0,
     HEAL = 1,
+    FROZEN = 2,
 }
 
-export type SplatEvent = {
-    kind: SplatKind;
-    amount: number;
-    factionHit: Faction;
+export type SplatPosition = {
     worldX: number;
     worldY: number;
     groundHeight: number;
 };
 
+export type DamageSplatEvent = SplatPosition & {
+    kind: SplatKind.DAMAGE;
+    amount: number;
+    factionHit: Faction;
+};
+
+export type HealSplatEvent = SplatPosition & {
+    kind: SplatKind.HEAL;
+    amount: number;
+};
+
+export type FrozenSplatEvent = SplatPosition & {
+    kind: SplatKind.FROZEN;
+};
+
+export type SplatEvent = DamageSplatEvent | HealSplatEvent | FrozenSplatEvent;
+
 export enum AbilitySlotBlockReason {
     NONE = 0,
     MANA = 1,
     COOLDOWN = 2,
-    ACTIVE = 3,
 }
 
 export type AbilityCharges = {
@@ -53,7 +68,11 @@ export type AbilitySlotHudInfo = {
     cooldownFraction: number;
     charges?: AbilityCharges;
     blocked: AbilitySlotBlockReason;
-    isActiveStance: boolean;
+};
+
+export type StyleSwitchHudInfo = {
+    readonly target: WeaponStyle;
+    readonly progress: number;
 };
 
 export type HudFrame = {
@@ -62,6 +81,7 @@ export type HudFrame = {
     player?: PlayerHudInfo;
     target?: TargetHudInfo;
     abilities: AbilitySlotHudInfo[];
-    stanceName?: string;
+    activeStyle?: WeaponStyle;
+    styleSwitch?: StyleSwitchHudInfo;
     splatEvents: SplatEvent[];
 };

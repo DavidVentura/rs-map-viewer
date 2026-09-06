@@ -1,11 +1,4 @@
-import {
-    AbilityDefinition,
-    AbilityEffect,
-    AbilityEffectKind,
-    CooldownGroup,
-    CooldownLock,
-    Stance,
-} from "./Ability";
+import { AbilityDefinition, CooldownGroup, CooldownLock } from "./Ability";
 
 export type GroupCooldowns = ReadonlyMap<CooldownGroup, number>;
 
@@ -108,10 +101,6 @@ export function rollDamage(min: number, max: number, random: RandomSource): numb
     return Math.round(min + random() * (max - min));
 }
 
-export function isStanceSwitchRedundant(effect: AbilityEffect, currentStance: Stance): boolean {
-    return effect.kind === AbilityEffectKind.STANCE && effect.stance === currentStance;
-}
-
 export function isWithinMeleeReach(
     distance: number,
     reach: number,
@@ -139,14 +128,12 @@ export type AbilitySlotReadiness = {
     readonly charges: number;
     readonly maxCharges: number;
     readonly manaBlocked: boolean;
-    readonly isActiveStance: boolean;
 };
 
 export function computeSlotReadiness(
     definition: AbilityDefinition,
     chargeState: ChargeState,
     mana: number,
-    currentStance: Stance,
     time: number,
 ): AbilitySlotReadiness {
     return {
@@ -164,6 +151,5 @@ export function computeSlotReadiness(
         ),
         maxCharges: definition.maxCharges,
         manaBlocked: mana < definition.manaCost,
-        isActiveStance: isStanceSwitchRedundant(definition.effect, currentStance),
     };
 }

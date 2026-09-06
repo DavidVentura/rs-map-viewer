@@ -4,7 +4,10 @@ import { AnimationPlayback, AnimationState } from "./Animation";
 
 export enum VisualEffectKind {
     MAGIC_HIT = 0,
+    ICE_BARRAGE_HIT = 1,
 }
+
+export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
 
 export class VisualEffect {
     readonly animation: AnimationState;
@@ -16,6 +19,7 @@ export class VisualEffect {
         readonly y: number,
         readonly height: number,
         seqId: number,
+        private readonly holdUntilSeconds?: number,
     ) {
         this.animation = new AnimationState(seqId);
     }
@@ -24,6 +28,7 @@ export class VisualEffect {
         deltaTimeSeconds: number,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
+        timeSeconds: number,
     ): boolean {
         const completed = this.animation.advance(
             deltaTimeSeconds,
@@ -31,6 +36,9 @@ export class VisualEffect {
             seqFrameLoader,
             AnimationPlayback.ONCE,
         );
-        return !completed;
+        if (this.holdUntilSeconds === undefined) {
+            return !completed;
+        }
+        return timeSeconds < this.holdUntilSeconds;
     }
 }

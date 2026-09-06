@@ -1,15 +1,31 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityEffect, AbilityEffectKind, AbilityTarget, MeleeEffect, Stance } from "./Ability";
-import { CombatEvent, applyDamage, applyHeal } from "./CombatEvent";
+import {
+    AbilityEffect,
+    AbilityEffectKind,
+    AbilityTarget,
+    AreaEffect,
+    ConeMeleeEffect,
+    MeleeEffect,
+    MultiProjectileEffect,
+    WeaponStyle,
+} from "./Ability";
+import { CombatEvent, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { Enemy, computeChaseMovement } from "./Enemy";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
-import { Projectile, ProjectileOutcome, ProjectileSpec } from "./Projectile";
+import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
 import { Terrain } from "./Terrain";
 import { VisualEffect } from "./VisualEffect";
-import { getStanceAttack } from "./abilities";
+import { getStyleAttack } from "./abilities";
 import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
+import {
+    directionToRotation,
+    generateSpreadDirections,
+    isPointInCone,
+    isWithinTileArea,
+    rotationToDirection,
+} from "./projectileMath";
 import { resolveSpawn } from "./spawn";
 
 export type AbilitySlotInput = {
@@ -22,6 +38,7 @@ export type AbilityInput = readonly AbilitySlotInput[];
 export type SimInput = {
     movement: PlayerInput;
     abilities: AbilityInput;
+    styleSwitch?: WeaponStyle;
 };
 
 export class GameWorld {
@@ -29,7 +46,7 @@ export class GameWorld {
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
     static readonly MAX_VISUAL_EFFECTS = 32;
-    static readonly MELEE_ATTACK_SLOT = 0;
+    static readonly BASIC_ATTACK_SLOT = 0;
 
     timeSeconds = 0;
     player?: Player;
@@ -48,9 +65,9 @@ export class GameWorld {
         private readonly random: RandomSource = Math.random,
     ) {}
 
-    spawnPlayer(x: number, y: number, level: number, stanceSeqIds: StanceSeqIdsByStance): void {
+    spawnPlayer(x: number, y: number, level: number, styleSeqIds: StanceSeqIdsByStance): void {
         const spawn = resolveSpawn(this.terrain, level, x, y);
-        this.player = new Player(spawn.x, spawn.y, level, stanceSeqIds);
+        this.player = new Player(spawn.x, spawn.y, level, styleSeqIds);
     }
 
     spawnEnemy(
@@ -106,6 +123,9 @@ export class GameWorld {
         this.timeSeconds += dtSeconds;
 
         if (this.player) {
+            if (input.styleSwitch !== undefined) {
+                this.player.requestStyleSwitch(input.styleSwitch, this.timeSeconds);
+            }
             this.processAbilityInput(this.player, input.abilities, this.timeSeconds);
             const movement = this.resolveMovementInput(this.player, input);
             this.player.update(
@@ -123,6 +143,7 @@ export class GameWorld {
             enemy.update(
                 this.player,
                 dtSeconds,
+                this.timeSeconds,
                 this.seqTypeLoader,
                 this.seqFrameLoader,
                 this.terrain,
@@ -142,13 +163,13 @@ export class GameWorld {
             if (outcome === ProjectileOutcome.ALIVE) {
                 survivingProjectiles.push(projectile);
             } else if (outcome === ProjectileOutcome.HIT) {
-                this.spawnVisualEffect(projectile);
+                this.spawnProjectileHitEffect(projectile);
             }
         }
         this.projectiles = survivingProjectiles;
 
         this.visualEffects = this.visualEffects.filter((effect) =>
-            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader),
+            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
         );
     }
 
@@ -163,10 +184,10 @@ export class GameWorld {
     }
 
     private computeMeleeChaseInput(player: Player, input: SimInput): PlayerInput | undefined {
-        if (player.stance !== Stance.MELEE) {
+        if (player.style !== WeaponStyle.MELEE) {
             return undefined;
         }
-        const slotInput = input.abilities[GameWorld.MELEE_ATTACK_SLOT];
+        const slotInput = input.abilities[GameWorld.BASIC_ATTACK_SLOT];
         if (!slotInput?.held || !slotInput.target) {
             return undefined;
         }
@@ -174,7 +195,7 @@ export class GameWorld {
         if (!enemy) {
             return undefined;
         }
-        const attack = getStanceAttack(Stance.MELEE);
+        const attack = getStyleAttack(WeaponStyle.MELEE);
         if (attack.effect.kind !== AbilityEffectKind.MELEE) {
             return undefined;
         }
@@ -246,8 +267,14 @@ export class GameWorld {
             case AbilityEffectKind.MELEE:
                 this.resolveMelee(caster, effect, target);
                 break;
-            case AbilityEffectKind.STANCE:
-                caster.stance = effect.stance;
+            case AbilityEffectKind.CONE_MELEE:
+                this.resolveConeMelee(caster, effect);
+                break;
+            case AbilityEffectKind.AREA:
+                this.resolveArea(caster, effect, target);
+                break;
+            case AbilityEffectKind.MULTI_PROJECTILE:
+                this.resolveMultiProjectile(caster, effect, target);
                 break;
         }
     }
@@ -276,20 +303,32 @@ export class GameWorld {
         );
     }
 
-    private spawnVisualEffect(projectile: Projectile): void {
+    private spawnProjectileHitEffect(projectile: Projectile): void {
         const hitEffect = projectile.spec.hitEffect;
         const target = projectile.hitTarget;
-        if (!hitEffect || !target || this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
+        if (!hitEffect || !target) {
+            return;
+        }
+        this.spawnVisualEffect(hitEffect, target);
+    }
+
+    private spawnVisualEffect(
+        hitEffect: ProjectileHitEffect,
+        target: Combatant,
+        holdSeconds?: number,
+    ): void {
+        if (this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
             return;
         }
         this.visualEffects.push(
             new VisualEffect(
                 hitEffect.kind,
-                projectile.level,
+                target.level,
                 target.x,
                 target.y,
                 hitEffect.height,
                 hitEffect.seqId,
+                holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
             ),
         );
     }
@@ -308,5 +347,95 @@ export class GameWorld {
             rollDamage(effect.minDamage, effect.maxDamage, this.random),
             this.events,
         );
+    }
+
+    private resolveConeMelee(caster: Player, effect: ConeMeleeEffect): void {
+        const basicAttack = getStyleAttack(caster.style);
+        if (basicAttack.effect.kind !== AbilityEffectKind.MELEE) {
+            return;
+        }
+        const minDamage = basicAttack.effect.minDamage * effect.damageMultiplier;
+        const maxDamage = basicAttack.effect.maxDamage * effect.damageMultiplier;
+        for (const enemy of this.enemies) {
+            if (enemy.level !== caster.level || enemy.health <= 0) {
+                continue;
+            }
+            const reach = effect.reach + caster.hitRadius + enemy.hitRadius;
+            if (
+                !isPointInCone(
+                    caster.x,
+                    caster.y,
+                    caster.rotation,
+                    effect.angleRadians,
+                    reach,
+                    enemy.x,
+                    enemy.y,
+                )
+            ) {
+                continue;
+            }
+            applyDamage(enemy, rollDamage(minDamage, maxDamage, this.random), this.events);
+        }
+    }
+
+    private resolveArea(caster: Player, effect: AreaEffect, target: AbilityTarget): void {
+        const centerEnemy = this.resolveEnemyTarget(target, caster.level);
+        const centerX = centerEnemy?.x ?? target.x;
+        const centerY = centerEnemy?.y ?? target.y;
+        for (const enemy of this.enemies) {
+            if (enemy.level !== caster.level || enemy.health <= 0) {
+                continue;
+            }
+            if (!isWithinTileArea(centerX, centerY, effect.radiusTiles, enemy.x, enemy.y)) {
+                continue;
+            }
+            applyDamage(
+                enemy,
+                rollDamage(effect.damageMin, effect.damageMax, this.random),
+                this.events,
+            );
+            if (enemy.health <= 0) {
+                continue;
+            }
+            applyFreeze(enemy, this.timeSeconds + effect.freezeSeconds, this.events);
+            this.spawnVisualEffect(effect.hitEffect, enemy, effect.freezeSeconds);
+        }
+    }
+
+    private resolveMultiProjectile(
+        caster: Player,
+        effect: MultiProjectileEffect,
+        target: AbilityTarget,
+    ): void {
+        const deltaX = target.x - caster.x;
+        const deltaY = target.y - caster.y;
+        if (deltaX === 0 && deltaY === 0) {
+            return;
+        }
+        const distance = Math.hypot(deltaX, deltaY);
+        const baseRotation = directionToRotation(deltaX, deltaY);
+        const directions = generateSpreadDirections(
+            baseRotation,
+            effect.spreadAngleRadians,
+            effect.count,
+        );
+        for (const rotation of directions) {
+            if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+                break;
+            }
+            const direction = rotationToDirection(rotation);
+            this.projectiles.push(
+                new Projectile(
+                    effect.spec,
+                    caster.faction,
+                    caster.level,
+                    caster.x + direction.x * 48,
+                    caster.y + direction.y * 48,
+                    direction.x,
+                    direction.y,
+                    distance,
+                ),
+            );
+        }
     }
 }

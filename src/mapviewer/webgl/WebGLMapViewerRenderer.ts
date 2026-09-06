@@ -26,7 +26,7 @@ import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceU
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
-import { AbilityEffectKind } from "../game/Ability";
+import { AbilityEffectKind, WeaponStyle } from "../game/Ability";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Enemy } from "../game/Enemy";
 import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
@@ -41,7 +41,7 @@ import {
     SplatEvent,
     SplatKind,
 } from "../hud/HudFrame";
-import { computeHudLayout, hitTestHud, stanceDisplayName } from "../hud/hudDraw";
+import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
 import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
 import { Interactions } from "./Interactions";
@@ -73,6 +73,22 @@ const EMPTY_VISUAL_EFFECTS: VisualEffect[] = [];
 
 function encodeNpcInfo(interactType: InteractType, rotation: number, level: number): number {
     return (interactType << 13) | (rotation << 2) | level;
+}
+
+function keyForAbilitySlot(index: number, barLength: number): string | undefined {
+    if (index === barLength - 1) {
+        return "Digit4";
+    }
+    switch (index) {
+        case 0:
+            return "Digit1";
+        case 1:
+            return "Digit2";
+        case 2:
+            return "Digit3";
+        default:
+            return undefined;
+    }
 }
 
 interface ColorRgb {
@@ -911,6 +927,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.mapViewer.world.advance(deltaTime / 1000, {
             movement: this.buildMovementInput(),
             abilities: this.buildAbilityInput(),
+            styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
         });
         this.pinCameraToPlayer();
 
@@ -1100,7 +1117,22 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.height,
             frame.abilities.length,
         );
-        return hitTestHud(layout, inputManager.mouseX, inputManager.mouseY);
+        return hitTestHud(layout, inputManager.mouseX, inputManager.mouseY) !== undefined;
+    }
+
+    private buildStyleSwitchInput(): WeaponStyle | undefined {
+        const frame = this.hudFrame;
+        const inputManager = this.mapViewer.inputManager;
+        if (!frame || !inputManager.isClick()) {
+            return undefined;
+        }
+        const layout = computeHudLayout(
+            frame.screenSize.width,
+            frame.screenSize.height,
+            frame.abilities.length,
+        );
+        const region = hitTestHud(layout, inputManager.clickX, inputManager.clickY);
+        return region?.kind === HudRegionKind.STYLE ? region.style : undefined;
     }
 
     private buildMovementInput(): PlayerInput {
@@ -1133,6 +1165,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return { x: deltaX / length, y: deltaY / length, running };
     }
 
+    private buildKeyStyleSwitchInput(): WeaponStyle | undefined {
+        const inputManager = this.mapViewer.inputManager;
+        if (inputManager.isKeyDownEvent("KeyQ")) {
+            return WeaponStyle.MELEE;
+        }
+        if (inputManager.isKeyDownEvent("KeyW")) {
+            return WeaponStyle.RANGED;
+        }
+        if (inputManager.isKeyDownEvent("KeyE")) {
+            return WeaponStyle.MAGIC;
+        }
+        return undefined;
+    }
+
     private buildAbilityInput(): AbilityInput {
         const player = this.mapViewer.world.player;
         if (!player) {
@@ -1146,13 +1192,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             ? { x: hoveredEnemy.x, y: hoveredEnemy.y, enemyId: hoveredEnemy.id }
             : undefined;
 
-        const attackSlot: AbilitySlotInput = {
-            held: !pointerOverHud && inputManager.isDragging() && enemyTarget !== undefined,
-            target: enemyTarget,
-        };
-
-        const keySlot = (key: string): AbilitySlotInput => {
-            if (!inputManager.isKeyDown(key)) {
+        const keySlot = (key: string | undefined, extraHeld: boolean): AbilitySlotInput => {
+            if (!extraHeld && (!key || !inputManager.isKeyDown(key))) {
                 return { held: false };
             }
             if (enemyTarget) {
@@ -1169,13 +1210,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return groundPoint ? { held: true, target: groundPoint } : { held: false };
         };
 
-        return [
-            attackSlot,
-            keySlot("Digit1"),
-            keySlot("Digit2"),
-            keySlot("Digit3"),
-            keySlot("Digit4"),
-        ];
+        const barLength = player.abilityBar.length;
+        return player.abilityBar.map((_, index) => {
+            const key = keyForAbilitySlot(index, barLength);
+            const mouseHeld =
+                index === 0 &&
+                !pointerOverHud &&
+                inputManager.isDragging() &&
+                enemyTarget !== undefined;
+            return keySlot(key, mouseHeld);
+        });
     }
 
     private screenToGround(
@@ -1229,27 +1273,29 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private buildAbilitySlots(player: Player): AbilitySlotHudInfo[] {
         const timeSeconds = this.mapViewer.world.timeSeconds;
-        return player.abilityBar.map((definition, index) => {
+        const bar = player.abilityBar;
+        return bar.map((definition, index) => {
             const readiness = player.getSlotReadiness(index, timeSeconds);
             let blocked = AbilitySlotBlockReason.NONE;
-            if (readiness.isActiveStance) {
-                blocked = AbilitySlotBlockReason.ACTIVE;
-            } else if (readiness.manaBlocked) {
+            if (readiness.manaBlocked) {
                 blocked = AbilitySlotBlockReason.MANA;
             } else if (readiness.cooldownFraction > 0) {
                 blocked = AbilitySlotBlockReason.COOLDOWN;
             }
 
+            const isBasicAttack = index === 0;
+            const isPotion = index === bar.length - 1;
+            const keyLabel = isBasicAttack ? "1 / LMB" : isPotion ? "4" : `${index + 1}`;
+
             return {
                 name: definition.name,
-                keyLabel: index === 0 ? "LMB" : `${index}`,
+                keyLabel,
                 cooldownFraction: readiness.cooldownFraction,
                 charges:
                     readiness.maxCharges > 1
                         ? { current: readiness.charges, max: readiness.maxCharges }
                         : undefined,
                 blocked,
-                isActiveStance: readiness.isActiveStance,
             };
         });
     }
@@ -1262,25 +1308,47 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const splatEvents: SplatEvent[] = [];
         for (const event of world.drainEvents()) {
-            if (event.kind !== CombatEventKind.DAMAGE && event.kind !== CombatEventKind.HEAL) {
-                continue;
+            const groundHeight = this.terrain.getHeight(
+                event.target.level,
+                event.target.x,
+                event.target.y,
+            );
+            switch (event.kind) {
+                case CombatEventKind.DAMAGE:
+                    splatEvents.push({
+                        kind: SplatKind.DAMAGE,
+                        amount: event.amount,
+                        factionHit: event.target.faction,
+                        worldX: event.target.x,
+                        worldY: event.target.y,
+                        groundHeight,
+                    });
+                    break;
+                case CombatEventKind.HEAL:
+                    splatEvents.push({
+                        kind: SplatKind.HEAL,
+                        amount: event.amount,
+                        worldX: event.target.x,
+                        worldY: event.target.y,
+                        groundHeight,
+                    });
+                    break;
+                case CombatEventKind.FREEZE:
+                    splatEvents.push({
+                        kind: SplatKind.FROZEN,
+                        worldX: event.target.x,
+                        worldY: event.target.y,
+                        groundHeight,
+                    });
+                    break;
             }
-            splatEvents.push({
-                kind: event.kind === CombatEventKind.HEAL ? SplatKind.HEAL : SplatKind.DAMAGE,
-                amount: event.amount,
-                factionHit: event.target.faction,
-                worldX: event.target.x,
-                worldY: event.target.y,
-                groundHeight: this.terrain.getHeight(
-                    event.target.level,
-                    event.target.x,
-                    event.target.y,
-                ),
-            });
         }
 
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
+
+        const switchProgress = player?.styleSwitchProgress(world.timeSeconds);
+        const switchTarget = player?.pendingStyle(world.timeSeconds);
 
         return {
             viewProjMatrix: camera.viewProjMatrix,
@@ -1299,7 +1367,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     maxHealth: targetEnemy.maxHealth,
                 },
             abilities: player ? this.buildAbilitySlots(player) : [],
-            stanceName: player && stanceDisplayName(player.stance),
+            activeStyle: player?.style,
+            styleSwitch:
+                switchTarget !== undefined && switchProgress !== undefined
+                    ? { target: switchTarget, progress: switchProgress }
+                    : undefined,
             splatEvents,
         };
     }
@@ -1580,7 +1652,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 const index = npcs.length;
                 const anim = getPlayerAnimationFrames(
                     map.playerRenderData!,
-                    player.stance,
+                    player.style,
                     player.animation.seqId,
                 );
                 const frame = anim.frames[player.animation.frame];
@@ -1774,7 +1846,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 const index = npcs.length;
                 const frames = getPlayerAnimationFrames(
                     map.playerRenderData!,
-                    player.stance,
+                    player.style,
                     player.animation.seqId,
                 ).framesAlpha;
                 const frame = frames ? frames[player.animation.frame] : NULL_DRAW_RANGE;

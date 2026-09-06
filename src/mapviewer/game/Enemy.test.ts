@@ -1,4 +1,6 @@
-import { EnemyState, computeChaseMovement, decideEnemyState } from "./Enemy";
+import { Combatant, Faction } from "./Combatant";
+import { Enemy, EnemyState, computeChaseMovement, decideEnemyState } from "./Enemy";
+import { Terrain } from "./Terrain";
 import { directionToRotation } from "./projectileMath";
 
 describe("decideEnemyState", () => {
@@ -47,5 +49,76 @@ describe("directionToRotation for facing", () => {
 
     it("faces south when the target is directly south", () => {
         expect(directionToRotation(0, -100)).toBe(0);
+    });
+});
+
+const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
+const seqFrameLoader = {} as any;
+const terrain: Terrain = {
+    canOccupy: () => true,
+    getWallFlag: () => 0,
+    getHeight: () => 0,
+};
+
+class FakePlayer implements Combatant {
+    readonly faction = Faction.PLAYER;
+    readonly hitRadius = 64;
+    readonly maxHealth = 100;
+    health = 100;
+
+    constructor(
+        public x: number,
+        public y: number,
+        readonly level: number,
+    ) {}
+}
+
+function makeEnemy(): Enemy {
+    return new Enemy(1, 0, 0, 0, 0, 0, 1, 2, 3);
+}
+
+describe("Enemy freezing", () => {
+    it("is not frozen until frozenUntil is set", () => {
+        const enemy = makeEnemy();
+        expect(enemy.isFrozen(0)).toBe(false);
+    });
+
+    it("is frozen strictly before frozenUntil", () => {
+        const enemy = makeEnemy();
+        enemy.frozenUntil = 5;
+        expect(enemy.isFrozen(4.999)).toBe(true);
+        expect(enemy.isFrozen(5)).toBe(false);
+    });
+
+    it("does not chase the player while frozen, even within aggro range", () => {
+        const enemy = makeEnemy();
+        enemy.frozenUntil = 10;
+        const player = new FakePlayer(100, 0, 0);
+
+        enemy.update(player, 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.IDLE);
+        expect(enemy.x).toBe(0);
+        expect(enemy.y).toBe(0);
+    });
+
+    it("resumes chasing once the freeze expires", () => {
+        const enemy = makeEnemy();
+        enemy.frozenUntil = 1;
+        const player = new FakePlayer(100, 0, 0);
+
+        enemy.update(player, 1, 2, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.CHASE);
+    });
+
+    it("still dies from damage taken while frozen", () => {
+        const enemy = makeEnemy();
+        enemy.frozenUntil = 10;
+        enemy.health = 0;
+
+        enemy.update(undefined, 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.DEAD);
     });
 });

@@ -35,9 +35,9 @@ const COSTLY_SPELL: AbilityDefinition = {
     locks: [],
 };
 
-const STANCE_CHANNEL: AbilityDefinition = {
-    id: "stance_channel",
-    name: "Stance Channel",
+const CHANNELED_ABILITY: AbilityDefinition = {
+    id: "channeled_ability",
+    name: "Channeled Ability",
     windupSeconds: 0,
     channelSeconds: 1,
     manaCost: 0,
@@ -45,7 +45,7 @@ const STANCE_CHANNEL: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [],
     locks: [],
-    effect: { kind: AbilityEffectKind.STANCE, stance: 0 },
+    effect: { kind: AbilityEffectKind.HEAL, amount: 0 },
 };
 
 describe("AbilityRuntime cooldown groups", () => {
@@ -109,7 +109,7 @@ describe("AbilityRuntime wind-up timing", () => {
 describe("AbilityRuntime channeling", () => {
     it("reports channeling only while a channel ability's commit window is active", () => {
         const runtime = new AbilityRuntime();
-        runtime.use(STANCE_CHANNEL, { x: 0, y: 0 }, 0);
+        runtime.use(CHANNELED_ABILITY, { x: 0, y: 0 }, 0);
         expect(runtime.isChanneling(0)).toBe(true);
         expect(runtime.isChanneling(0.999)).toBe(true);
         expect(runtime.isChanneling(1)).toBe(false);
@@ -117,7 +117,7 @@ describe("AbilityRuntime channeling", () => {
 
     it("blocks all other abilities while channeling", () => {
         const runtime = new AbilityRuntime();
-        runtime.use(STANCE_CHANNEL, { x: 0, y: 0 }, 0);
+        runtime.use(CHANNELED_ABILITY, { x: 0, y: 0 }, 0);
         expect(runtime.canUse(INSTANT_ATTACK, 0, 0.5)).toBe(false);
         expect(runtime.canUse(INSTANT_ATTACK, 0, 1)).toBe(true);
     });
