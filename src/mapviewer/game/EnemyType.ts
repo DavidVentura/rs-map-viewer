@@ -14,6 +14,8 @@ export enum EnemyTypeId {
     TOK_XIL = "tok_xil",
     YT_MEJKOT = "yt_mejkot",
     KET_ZEK = "ket_zek",
+    // Built at runtime by the animation viewer (see AnimPreview.ts), never present in ENEMY_TYPES.
+    PREVIEW = "preview",
 }
 
 export enum EnemyBehaviour {
@@ -183,7 +185,7 @@ const KET_ZEK: EnemyType = {
     abilities: [KET_ZEK_GROUND_STRIKE],
 };
 
-export const ENEMY_TYPES: Readonly<Record<EnemyTypeId, EnemyType>> = {
+export const ENEMY_TYPES: Readonly<Partial<Record<EnemyTypeId, EnemyType>>> = {
     [EnemyTypeId.GOBLIN]: GOBLIN,
     [EnemyTypeId.TZ_KIH]: TZ_KIH,
     [EnemyTypeId.TZ_KEK]: TZ_KEK,
@@ -193,5 +195,9 @@ export const ENEMY_TYPES: Readonly<Record<EnemyTypeId, EnemyType>> = {
 };
 
 export function getEnemyType(id: EnemyTypeId): EnemyType {
-    return ENEMY_TYPES[id];
+    const type = ENEMY_TYPES[id];
+    if (!type) {
+        throw new Error(`No static enemy type registered for ${id}`);
+    }
+    return type;
 }

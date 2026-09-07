@@ -1,6 +1,6 @@
 import Denque from "denque";
 import { vec2, vec4 } from "gl-matrix";
-import { folder } from "leva";
+import { button, folder } from "leva";
 import { Schema } from "leva/dist/declarations/src/types";
 import {
     DrawCall,
@@ -27,8 +27,10 @@ import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
 import { AbilityTarget, WeaponStyle } from "../game/Ability";
+import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
+import { AnimationPlayback, sequenceDurationSeconds } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
-import { Encounter } from "../game/Encounter";
+import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
 import { groundStrikeProgress } from "../game/GroundStrike";
@@ -651,7 +653,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     getControls(): Schema {
-        return {
+        const schema: Schema = {
             "Max Level": {
                 value: this.maxLevel,
                 min: 0,
@@ -762,6 +764,80 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 { collapsed: true },
             ),
         };
+        return schema;
+    }
+
+    override getToolControls(): Schema {
+        if (!this.mapViewer.animPreview) {
+            return {};
+        }
+        return { Animation: this.buildAnimationControls(this.mapViewer.animPreview) };
+    }
+
+    private buildAnimationControls(preview: AnimPreviewParams): ReturnType<typeof folder> {
+        const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
+        const seqId = enemy?.previewSeqId ?? preview.seqRange.from;
+        return folder(
+            {
+                "Seq Id": {
+                    value: seqId,
+                    min: preview.seqRange.from,
+                    max: preview.seqRange.to,
+                    step: 1,
+                    onChange: (v: number) => {
+                        if (enemy) {
+                            enemy.previewSeqId = v;
+                        }
+                    },
+                },
+                Prev: button(() => this.stepPreviewSeq(-1)),
+                Next: button(() => this.stepPreviewSeq(1)),
+                Playback: {
+                    value: enemy?.previewPlayback ?? AnimationPlayback.LOOP,
+                    options: { Loop: AnimationPlayback.LOOP, Once: AnimationPlayback.ONCE },
+                    onChange: (v: AnimationPlayback) => {
+                        if (!enemy) {
+                            return;
+                        }
+                        enemy.previewPlayback = v;
+                        this.restartPreviewAnimation();
+                        this.notifyControlsChanged?.();
+                    },
+                },
+                Restart: button(() => this.restartPreviewAnimation()),
+                Info: { value: this.previewSeqInfo(seqId), editable: false },
+            },
+            { collapsed: false },
+        );
+    }
+
+    private stepPreviewSeq(direction: -1 | 1): void {
+        const preview = this.mapViewer.animPreview;
+        const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
+        if (!preview || !enemy || enemy.previewSeqId === undefined) {
+            return;
+        }
+        enemy.previewSeqId = stepSeqId(enemy.previewSeqId, preview.seqRange, direction);
+        this.restartPreviewAnimation();
+        this.notifyControlsChanged?.();
+    }
+
+    private restartPreviewAnimation(): void {
+        const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
+        if (!enemy || enemy.previewSeqId === undefined) {
+            return;
+        }
+        enemy.animation.restart(enemy.previewSeqId);
+    }
+
+    private previewSeqInfo(seqId: number): string {
+        const seqTypeLoader = this.mapViewer.seqTypeLoader;
+        const seqFrameLoader = this.mapViewer.seqFrameLoader;
+        const frameCount = seqTypeLoader.load(seqId).frameIds?.length ?? 0;
+        const durationMs = Math.round(
+            sequenceDurationSeconds(seqId, seqTypeLoader, seqFrameLoader) * 1000,
+        );
+        return `${frameCount} frames, ${durationMs} ms`;
     }
 
     override async queueLoadMap(mapX: number, mapY: number): Promise<void> {
@@ -854,6 +930,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
         this.loadingActors = true;
         try {
+            const animPreview = this.mapViewer.animPreview;
             const data = await this.mapViewer.workerPool.queueLoad<
                 ActorLoaderInput,
                 ActorBufferData,
@@ -861,6 +938,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             >(this.actorLoader, {
                 encounterId: this.encounter.id,
                 loadedTextureIds: this.loadedTextureIds,
+                preview: animPreview && {
+                    npcTypeId: animPreview.npcTypeId,
+                    seqRange: animPreview.seqRange,
+                },
             });
             if (this.isValidActorBufferData(data)) {
                 this.actorBufferToLoad = data;
@@ -925,7 +1006,35 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             playerSpawn.level,
             getStanceSeqIds(this.actorBuffer.actorData.player),
         );
+        this.spawnPreviewEnemyIfNeeded();
         this.encounterSpawned = true;
+    }
+
+    // The animation viewer's one preview enemy: spawned directly (not via the wave/static roster)
+    // at enemySpawns[0], with previewSeqId pinned to the start of the requested range.
+    private spawnPreviewEnemyIfNeeded(): void {
+        const preview = this.mapViewer.animPreview;
+        if (!preview || this.encounter.spawnMode !== EncounterSpawnMode.PREVIEW) {
+            return;
+        }
+        const npcType = this.mapViewer.npcTypeLoader.load(preview.npcTypeId);
+        const enemyType = buildPreviewEnemyType({
+            npcTypeId: preview.npcTypeId,
+            idleSeqId: npcType.idleSeqId,
+            walkSeqId: npcType.walkSeqId,
+            size: npcType.size,
+        });
+        const spawnPoint = this.encounter.enemySpawns[0];
+        const enemyId = this.mapViewer.world.spawnEnemy(
+            spawnPoint.x,
+            spawnPoint.y,
+            spawnPoint.level,
+            enemyType,
+        );
+        const enemy = this.mapViewer.world.findEnemy(enemyId);
+        if (enemy) {
+            enemy.previewSeqId = preview.seqRange.from;
+        }
     }
 
     private resolveEnemyNpcType(enemy: Enemy): NpcType {
@@ -1687,6 +1796,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     }),
                 ),
             },
+            previewSeqId: this.mapViewer.animPreview ? world.enemies[0]?.previewSeqId : undefined,
         };
     }
 
@@ -1982,7 +2092,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 {
                     worldX: projectile.x,
                     worldY: projectile.y,
-                    groundHeight,
+                    groundHeight: groundHeight + projectile.height,
                     rotation: (projectile.rotation + rotationOffset) & 2047,
                     level: this.terrain.getRenderLevel(
                         projectile.level,
@@ -2005,7 +2115,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 {
                     worldX: effect.x,
                     worldY: effect.y,
-                    groundHeight,
+                    groundHeight: groundHeight + effect.height,
                     rotation: 0,
                     level: this.terrain.getRenderLevel(effect.level, effect.x, effect.y),
                     interactType: InteractType.NONE,
@@ -2183,7 +2293,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const { drawCall, drawRanges } = actorBuffer.drawCall;
 
         drawCall.texture("u_actorDataTexture", actorDataTexture);
-        drawCall.uniform("u_verticalOffset", 0);
         drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
 
         for (let i = 0; i < this.activeActors.length; i++) {
@@ -2199,25 +2308,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         this.draw(drawCall, drawRanges);
-
-        // Projectiles and visual effects need a per-instance vertical offset above the ground,
-        // which is a uniform rather than instance data, so redraw just those individually.
-        for (let i = 0; i < this.activeActors.length; i++) {
-            const actor = this.activeActors[i];
-            if (actor.kind !== "projectile" && actor.kind !== "effect") {
-                continue;
-            }
-            const frame = this.getActorFrame(actor, alpha);
-            if (frame === NULL_DRAW_RANGE) {
-                continue;
-            }
-            const height =
-                actor.kind === "projectile" ? actor.projectile.height : actor.effect.height;
-            drawCall.uniform("u_drawId", i);
-            drawCall.uniform("u_verticalOffset", height);
-            drawCall.drawRanges(frame);
-            drawCall.draw();
-        }
     }
 
     renderOpaqueActorPass(actorDataTexture: Texture | undefined): void {

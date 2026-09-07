@@ -228,7 +228,10 @@ export const YT_MEJKOT_MELEE: AbilityDefinition = {
 };
 
 // Uses the HEAL cooldown group (not ATTACK) so the pulse recurs on its own 6s timer independently
-// of Yt-MejKot's melee swings.
+// of Yt-MejKot's melee swings. castSeqId is provisional (2639, from the same animation block as
+// its idle/walk/death/melee seqs 2636-2638/2637) pending visual confirmation with the anim viewer.
+export const YT_MEJKOT_HEAL_SEQ_ID = 2639;
+
 export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
     id: "yt_mejkot_heal_pulse",
     name: "Yt-MejKot Heal Pulse",
@@ -239,6 +242,7 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.HEAL],
     locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
+    castSeqId: YT_MEJKOT_HEAL_SEQ_ID,
     effect: { kind: AbilityEffectKind.HEAL_ALLIES, radiusTiles: 4, amount: 15 },
 };
 

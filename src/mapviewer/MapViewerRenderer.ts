@@ -17,6 +17,11 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
 
     hudFrame?: HudFrame;
 
+    // Set by MapViewerControls so a renderer can ask for its leva schema (getControls()) to be
+    // recomputed after a control mutates state the panel itself doesn't own, e.g. a button that
+    // changes a value driven by the game/render loop rather than by leva's own store.
+    notifyControlsChanged?: () => void;
+
     constructor(public mapViewer: MapViewer) {
         super();
         this.mapManager = new MapManager(
@@ -49,6 +54,10 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
     abstract createTerrain(): Terrain;
 
     getControls(): Schema {
+        return {};
+    }
+
+    getToolControls(): Schema {
         return {};
     }
 

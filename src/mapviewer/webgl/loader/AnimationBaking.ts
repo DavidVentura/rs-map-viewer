@@ -163,3 +163,20 @@ export function addSpotAnimAnimationFrames(
         framesAlpha: alphaFrameCount > 0 ? framesAlpha : undefined,
     };
 }
+
+export function brightenModel(model: Model, lightnessBoost: number): void {
+    const boost = (colors: Int32Array) => {
+        for (let i = 0; i < colors.length; i++) {
+            const packed = colors[i];
+            if (packed === -1 || packed === -2) {
+                continue;
+            }
+            const hsl = packed & 0xffff;
+            const lightness = Math.min(126, (hsl & 0x7f) + lightnessBoost);
+            colors[i] = (packed & ~0xffff) | (hsl & 0xff80) | lightness;
+        }
+    };
+    boost(model.faceColors1);
+    boost(model.faceColors2);
+    boost(model.faceColors3);
+}

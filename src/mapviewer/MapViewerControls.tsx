@@ -63,6 +63,17 @@ export const MapViewerControls = memo(
         const [musicEnabled, setMusicEnabled] = useState(mapViewer.musicPlayer.isEnabled);
         const [musicVolume, setMusicVolume] = useState(mapViewer.musicPlayer.volume);
 
+        // The Animation folder's Seq Id field can change outside of leva's own store (the
+        // Prev/Next/Restart buttons mutate the enemy directly). renderer.getControls() is only
+        // re-run when useControls' deps change, so give the renderer a way to ask for that.
+        const [controlsRefreshTick, setControlsRefreshTick] = useState(0);
+        useEffect(() => {
+            renderer.notifyControlsChanged = () => setControlsRefreshTick((tick) => tick + 1);
+            return () => {
+                renderer.notifyControlsChanged = undefined;
+            };
+        }, [renderer]);
+
         const controlsSchema: Schema = {
             Position: { value: positionControls, editable: false },
             Direction: { value: directionControls, editable: false },
@@ -471,6 +482,7 @@ export const MapViewerControls = memo(
                     },
                     { collapsed: true },
                 ),
+                ...renderer.getToolControls(),
             },
             [
                 renderer,
@@ -484,6 +496,7 @@ export const MapViewerControls = memo(
                 isCameraRunning,
                 isExportingSprites,
                 isExportingTextures,
+                controlsRefreshTick,
             ],
         );
 

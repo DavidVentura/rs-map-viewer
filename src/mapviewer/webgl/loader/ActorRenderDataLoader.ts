@@ -25,12 +25,13 @@ import {
 } from "../actor/ActorRenderData";
 import { SceneBuffer } from "../buffer/SceneBuffer";
 import { ActorBufferData } from "./ActorBufferData";
-import { ActorLoaderInput } from "./ActorLoaderInput";
+import { ActorLoaderInput, PreviewAnimInput } from "./ActorLoaderInput";
 import {
     addNpcAnimationFrames,
     addPlayerAnimationFrames,
     addSpotAnimAnimationFrames,
     addStaticModelAnimationFrames,
+    brightenModel,
     buildSpotAnimModel,
 } from "./AnimationBaking";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
@@ -208,7 +209,31 @@ function createEnemyTypeAnimationSet(
         }
         animationsBySeqId.set(seqId, anim);
     }
-    return { idleSeqId: enemyType.idleSeqId, animationsBySeqId };
+    return { idleAnim: animationsBySeqId.get(enemyType.idleSeqId)!, animationsBySeqId };
+}
+
+// The animation viewer's preview enemy: bakes the npc's own idle/walk seqs plus every seq in the
+// requested range, so stepping through the range never needs a fresh actor buffer load.
+function createPreviewEnemyTypeAnimationSet(
+    npcModelLoader: NpcModelLoader,
+    npcTypeLoader: WorkerState["npcTypeLoader"],
+    sceneBuf: SceneBuffer,
+    preview: PreviewAnimInput,
+): EnemyTypeAnimationSet {
+    const npcType = npcTypeLoader.load(preview.npcTypeId);
+    const seqIds = new Set<number>([npcType.idleSeqId, npcType.walkSeqId]);
+    for (let seqId = preview.seqRange.from; seqId <= preview.seqRange.to; seqId++) {
+        seqIds.add(seqId);
+    }
+    const animationsBySeqId = new Map<number, AnimationFrames>();
+    for (const seqId of seqIds) {
+        const anim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, seqId);
+        if (!anim) {
+            throw new Error(`Failed baking seq ${seqId} for preview npc ${preview.npcTypeId}`);
+        }
+        animationsBySeqId.set(seqId, anim);
+    }
+    return { idleAnim: animationsBySeqId.get(npcType.idleSeqId)!, animationsBySeqId };
 }
 
 // Fire Bolt spell (SpotAnimType ids): 127 travels, 128 hits.
@@ -220,6 +245,9 @@ const ICE_BARRAGE_HIT_SPOTANIM_ID = 369;
 
 // A visually distinct, larger arrow model for the ranged Power Shot special.
 const POWER_SHOT_MODEL_SCALE = 200;
+const ARROW_LENGTH_SCALE = 160;
+const ARROW_THICKNESS_SCALE = 380;
+const ARROW_LIGHTNESS_BOOST = 45;
 
 function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): ProjectileActorData {
     const objModelLoader = state.objModelLoader;
@@ -236,10 +264,18 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
     if (!spotAnimTypeLoader) {
         throw new Error("Spot animations are not available in this cache");
     }
-    const arrowAnim = addStaticModelAnimationFrames(sceneBuf, arrowModel);
+    const visibleArrowModel = Model.copy(arrowModel);
+    visibleArrowModel.scale(ARROW_THICKNESS_SCALE, ARROW_THICKNESS_SCALE, ARROW_LENGTH_SCALE);
+    brightenModel(visibleArrowModel, ARROW_LIGHTNESS_BOOST);
+    const arrowAnim = addStaticModelAnimationFrames(sceneBuf, visibleArrowModel);
 
     const powerShotModel = Model.copy(arrowModel);
-    powerShotModel.scale(POWER_SHOT_MODEL_SCALE, POWER_SHOT_MODEL_SCALE, POWER_SHOT_MODEL_SCALE);
+    powerShotModel.scale(
+        ARROW_THICKNESS_SCALE * 2,
+        ARROW_THICKNESS_SCALE * 2,
+        POWER_SHOT_MODEL_SCALE,
+    );
+    brightenModel(powerShotModel, ARROW_LIGHTNESS_BOOST);
     const powerShotAnim = addStaticModelAnimationFrames(sceneBuf, powerShotModel);
 
     const boltSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_PROJECTILE_SPOTANIM_ID);
@@ -301,7 +337,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
 
     async load(
         state: WorkerState,
-        { encounterId, loadedTextureIds }: ActorLoaderInput,
+        { encounterId, loadedTextureIds, preview }: ActorLoaderInput,
     ): Promise<RenderDataResult<ActorBufferData>> {
         console.time(`load actors ${encounterId}`);
 
@@ -328,12 +364,23 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const encounter = getEncounter(encounterId);
         const enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>> = {};
         for (const enemyTypeId of encounter.enemyTypeIds) {
+            if (enemyTypeId === EnemyTypeId.PREVIEW) {
+                continue;
+            }
             const enemyType = getEnemyType(enemyTypeId);
             enemyTypes[enemyTypeId] = createEnemyTypeAnimationSet(
                 npcModelLoader,
                 npcTypeLoader,
                 sceneBuf,
                 enemyType,
+            );
+        }
+        if (preview) {
+            enemyTypes[EnemyTypeId.PREVIEW] = createPreviewEnemyTypeAnimationSet(
+                npcModelLoader,
+                npcTypeLoader,
+                sceneBuf,
+                preview,
             );
         }
 

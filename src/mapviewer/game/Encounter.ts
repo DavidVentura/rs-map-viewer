@@ -54,6 +54,9 @@ export enum EncounterSpawnMode {
     // WaveDirector-driven: enemySpawns is a location pool the director draws from, dead enemies
     // do not respawn, and the encounter ends once every wave is spawned and cleared.
     WAVES = "waves",
+    // The animation viewer's debug mode: no waves and no static roster, since its one enemy is
+    // spawned directly by the renderer with a previewSeqId set (see AnimPreview.ts).
+    PREVIEW = "preview",
 }
 
 export type Encounter = {
@@ -276,4 +279,27 @@ export function getEncounter(id: EncounterId): Encounter {
 export function parseEncounterId(value: string | null): EncounterId {
     const match = Object.values(EncounterId).find((id) => id === value);
     return match ?? EncounterId.LUMBRIDGE;
+}
+
+// 3 tiles north of the player spawn, the fixed offset the animation viewer uses for its one
+// preview enemy.
+const PREVIEW_ENEMY_TILE_OFFSET = 3;
+
+// Builds a debug overlay on top of a normal encounter (reusing its map squares, player spawn and
+// music) that spawns nothing on its own: the animation viewer spawns its one preview enemy
+// directly, using enemySpawns[0] below purely to size the actor buffer.
+export function buildPreviewEncounter(base: Encounter): Encounter {
+    const enemySpawn: EnemySpawnPoint = {
+        x: base.playerSpawn.x,
+        y: base.playerSpawn.y + PREVIEW_ENEMY_TILE_OFFSET * 128,
+        level: base.playerSpawn.level,
+    };
+    return {
+        ...base,
+        spawnMode: EncounterSpawnMode.PREVIEW,
+        ambientNpcs: false,
+        enemyTypeIds: [EnemyTypeId.PREVIEW],
+        enemySpawns: [enemySpawn],
+        waves: [],
+    };
 }

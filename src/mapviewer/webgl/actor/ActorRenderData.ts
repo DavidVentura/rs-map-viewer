@@ -3,7 +3,7 @@ import { EnemyTypeId } from "../../game/EnemyType";
 import { StanceSeqIds, StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
-import { AnimationFrames, resolveAnimationFrames } from "../AnimationFrames";
+import { AnimationFrames } from "../AnimationFrames";
 
 export type StanceAnimationSet = StanceSeqIds & {
     idleAnim: AnimationFrames;
@@ -28,7 +28,7 @@ export function getPlayerAnimationFrames(
 }
 
 export type EnemyTypeAnimationSet = {
-    idleSeqId: number;
+    idleAnim: AnimationFrames;
     animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
 };
 
@@ -36,11 +36,7 @@ export function getEnemyAnimationFrames(
     data: EnemyTypeAnimationSet,
     seqId: number,
 ): AnimationFrames {
-    const anim = data.animationsBySeqId.get(seqId);
-    if (anim) {
-        return anim;
-    }
-    return data.animationsBySeqId.get(data.idleSeqId)!;
+    return data.animationsBySeqId.get(seqId) ?? data.idleAnim;
 }
 
 export type ProjectileMesh = {

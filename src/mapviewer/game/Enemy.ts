@@ -132,6 +132,11 @@ export class Enemy implements Combatant, SteeringBody {
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
 
+    // Set by the animation viewer (see AnimPreview.ts) to pin this enemy to a single sequence,
+    // looped or played once, instead of running the normal AI/state machine.
+    previewSeqId?: number;
+    previewPlayback: AnimationPlayback = AnimationPlayback.LOOP;
+
     constructor(
         readonly id: number,
         public x: number,
@@ -188,6 +193,17 @@ export class Enemy implements Combatant, SteeringBody {
         seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
+        if (this.previewSeqId !== undefined) {
+            this.animation.setSequence(this.previewSeqId);
+            this.animation.advance(
+                deltaTimeSeconds,
+                seqTypeLoader,
+                seqFrameLoader,
+                this.previewPlayback,
+            );
+            return;
+        }
+
         const frozen = this.state !== EnemyState.DEAD && this.isFrozen(timeSeconds);
         const distanceToPlayer = frozen ? Infinity : this.distanceTo(player);
         const hasPlayer = !frozen && player !== undefined && player.level === this.level;

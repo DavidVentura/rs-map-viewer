@@ -1,4 +1,5 @@
 import { AbilityDefinition, AbilityEffectKind, CooldownGroup } from "./Ability";
+import { AnimationPlayback } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import {
     Enemy,
@@ -293,6 +294,68 @@ const TEST_TANK_TYPE: EnemyType = {
 function makeEnemy(): Enemy {
     return new Enemy(1, 0, 0, 0, 0, 0, TEST_ENEMY_TYPE);
 }
+
+describe("Enemy.castSeqId preference order", () => {
+    it("falls back to the type's attackSeqId when nothing more specific is set", () => {
+        const enemy = makeEnemy();
+        expect(enemy.castSeqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+    });
+
+    it("prefers the type's castSeqId over attackSeqId", () => {
+        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type);
+        expect(enemy.castSeqId).toBe(999);
+    });
+
+    it("prefers the pending ability's castSeqId over the type's castSeqId and attackSeqId", () => {
+        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
+        const ability: AbilityDefinition = { ...ENEMY_MELEE, castSeqId: 1234 };
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type, [ability]);
+
+        enemy.abilityRuntime.use(ability, { x: 0, y: 0 }, 0);
+
+        expect(enemy.castSeqId).toBe(1234);
+    });
+
+    it("falls through to the type's castSeqId once the pending ability has no castSeqId", () => {
+        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type, [ENEMY_MELEE]);
+
+        enemy.abilityRuntime.use(ENEMY_MELEE, { x: 0, y: 0 }, 0);
+
+        expect(enemy.castSeqId).toBe(999);
+    });
+});
+
+describe("Enemy preview mode", () => {
+    it("plays the pinned previewSeqId instead of running the AI state machine", () => {
+        const enemy = makeEnemy();
+        enemy.previewSeqId = 2639;
+        const player = new FakePlayer(100, 0, 0);
+
+        enemy.update(player, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.animation.seqId).toBe(2639);
+        expect(enemy.state).toBe(EnemyState.IDLE);
+        expect(enemy.x).toBe(0);
+        expect(enemy.y).toBe(0);
+    });
+
+    it("never enters the DEAD state even at zero health", () => {
+        const enemy = makeEnemy();
+        enemy.previewSeqId = 2639;
+        enemy.health = 0;
+
+        enemy.update(undefined, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).not.toBe(EnemyState.DEAD);
+    });
+
+    it("defaults previewPlayback to LOOP", () => {
+        const enemy = makeEnemy();
+        expect(enemy.previewPlayback).toBe(AnimationPlayback.LOOP);
+    });
+});
 
 describe("Enemy freezing", () => {
     it("is not frozen until frozenUntil is set", () => {

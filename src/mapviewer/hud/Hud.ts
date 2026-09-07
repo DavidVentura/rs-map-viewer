@@ -10,6 +10,7 @@ import {
     drawHealSplat,
     drawHealthGlobe,
     drawManaGlobe,
+    drawPreviewSeqLabel,
     drawStyleRow,
     drawStyleSwitchLabel,
     drawTargetPlate,
@@ -71,6 +72,9 @@ export class Hud {
         this.drawSplats(frame);
         if (frame.upgradeOffer) {
             drawUpgradeOverlay(ctx, width, height, layout, frame.upgradeOffer.cards);
+        }
+        if (frame.previewSeqId !== undefined) {
+            drawPreviewSeqLabel(ctx, width, frame.previewSeqId);
         }
     }
 

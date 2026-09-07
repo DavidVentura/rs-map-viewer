@@ -23,7 +23,6 @@ uniform highp isampler2D u_textureMaterials;
 
 uniform float u_timeLoaded;
 
-uniform float u_verticalOffset;
 uniform int u_highlightId;
 
 uniform highp usampler2D u_actorDataTexture;
@@ -110,7 +109,6 @@ void main() {
     vec4 localPos = vec4(vertex.pos, 1.0) * rotationY(float(actorInfo.rotation) * RS_TO_RADIANS) + vec4(actorInfo.worldPos.x, 0, actorInfo.worldPos.y, 0.0);
 
     localPos.y -= actorInfo.groundHeight;
-    localPos.y += u_verticalOffset;
 
     localPos /= vec4(vec3(128.0), 1.0);
 

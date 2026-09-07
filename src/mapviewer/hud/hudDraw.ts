@@ -694,6 +694,26 @@ export function drawWaveCounter(
     ctx.restore();
 }
 
+const PREVIEW_SEQ_LABEL_MARGIN_TOP = 12;
+
+export function drawPreviewSeqLabel(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    seqId: number,
+): void {
+    ctx.save();
+    ctx.font = "700 40px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = "#e8e0d0";
+    const text = `Seq ${seqId}`;
+    ctx.strokeText(text, width / 2, PREVIEW_SEQ_LABEL_MARGIN_TOP);
+    ctx.fillText(text, width / 2, PREVIEW_SEQ_LABEL_MARGIN_TOP);
+    ctx.restore();
+}
+
 const UPGRADE_OVERLAY_DIM_COLOR = "rgba(0, 0, 0, 0.6)";
 
 function drawUpgradeCard(

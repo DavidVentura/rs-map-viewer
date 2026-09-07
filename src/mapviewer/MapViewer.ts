@@ -25,7 +25,8 @@ import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
-import { Encounter, EncounterId, getEncounter } from "./game/Encounter";
+import { AnimPreviewParams } from "./game/AnimPreview";
+import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
 import { GameWorld } from "./game/GameWorld";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -105,13 +106,15 @@ export class MapViewer {
         readonly encounterId: EncounterId,
         rendererType: MapViewerRendererType,
         cache: LoadedCache,
+        readonly animPreview?: AnimPreviewParams,
     ) {
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
     }
 
     get encounter(): Encounter {
-        return getEncounter(this.encounterId);
+        const encounter = getEncounter(this.encounterId);
+        return this.animPreview ? buildPreviewEncounter(encounter) : encounter;
     }
 
     getSearchParams(): URLSearchParamsInit {
@@ -145,6 +148,11 @@ export class MapViewer {
 
         if (this.encounterId !== EncounterId.LUMBRIDGE) {
             params["enc"] = this.encounterId;
+        }
+
+        if (this.animPreview) {
+            params["anim"] = this.animPreview.npcTypeId.toString();
+            params["seqs"] = `${this.animPreview.seqRange.from}-${this.animPreview.seqRange.to}`;
         }
 
         params["v"] = 1;

@@ -14,6 +14,7 @@ import { MapViewerContainer } from "./MapViewerContainer";
 import { WEBGL, getAvailableRenderers } from "./MapViewerRenderers";
 import { fetchNpcSpawns, getNpcSpawnsUrl } from "./data/npc/NpcSpawn";
 import { fetchObjSpawns } from "./data/obj/ObjSpawn";
+import { parseAnimPreviewParams } from "./game/AnimPreview";
 import { getEncounter, parseEncounterId } from "./game/Encounter";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
@@ -76,6 +77,7 @@ function MapViewerApp() {
             const rendererType = availableRenderers[0];
 
             const encounterId = parseEncounterId(searchParams.get("enc"));
+            const animPreview = parseAnimPreviewParams(searchParams);
 
             const mapViewer = new MapViewer(
                 workerPool,
@@ -86,6 +88,7 @@ function MapViewerApp() {
                 encounterId,
                 rendererType,
                 cache,
+                animPreview,
             );
             (window as any).mapViewer = mapViewer;
 

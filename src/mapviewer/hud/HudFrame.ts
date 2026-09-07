@@ -119,4 +119,5 @@ export type HudFrame = {
     groundShadows: GroundShadowHudInfo[];
     wave?: WaveHudInfo;
     upgradeOffer?: UpgradeOfferHudInfo;
+    previewSeqId?: number;
 };
