@@ -41,7 +41,7 @@ import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
-import { EnemyScreenCandidate, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
+import { EnemyScreenCandidate, ScreenPoint, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
 import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
 import { summarizeModifiers } from "../game/upgrades";
 import {
@@ -63,7 +63,11 @@ import { InteractType } from "./InteractType";
 import { Interactions } from "./Interactions";
 import { WebGLMapSquare } from "./WebGLMapSquare";
 import { WebGLTerrain } from "./WebGLTerrain";
-import { ActorInstance, writeActorInstance } from "./actor/ActorInstanceData";
+import {
+    ACTOR_INSTANCE_TEXELS,
+    ActorInstance,
+    writeActorInstance,
+} from "./actor/ActorInstanceData";
 import {
     EnemyTypeAnimationSet,
     getEnemyAnimationFrames,
@@ -96,8 +100,8 @@ const INTERACTION_RADIUS = 5;
 
 // When the cursor isn't exactly over an enemy's pixels, pick the nearest enemy whose projected
 // screen rect is within this radius, so aiming stays forgiving without becoming auto-aim.
-const ENEMY_HOVER_PICK_RADIUS_PX = 40;
-const ENEMY_BODY_HEIGHT_SCALE = 4;
+const ENEMY_HOVER_PICK_RADIUS_PX = 20;
+const ENEMY_BODY_HEIGHT_SCALE = 3;
 
 // Generous click target for a ground item: covers its floor label above the point, plus a radius
 // around the item's own projected screen point.
@@ -282,7 +286,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // buffer's own vertex/index data has finished its chunked upload (see uploadPendingActorData).
     private pendingActorTextures?: Map<number, Int32Array>;
     actorInstanceCount: number = 0;
-    actorInstanceData: Uint32Array = new Uint32Array(16 * 4);
+    actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
     actorDataTextureBuffer: (Texture | undefined)[] = new Array(5);
     activeActors: ActiveActor[] = [];
 
@@ -795,10 +799,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     override getToolControls(): Schema {
+        const gameControls: Schema = {
+            Game: folder({
+                Invulnerable: {
+                    value: this.mapViewer.world.invulnerable,
+                    onChange: (v: boolean) => {
+                        this.mapViewer.world.setInvulnerable(v);
+                    },
+                },
+            }),
+        };
         if (!this.mapViewer.animPreview) {
-            return {};
+            return gameControls;
         }
-        return { Animation: this.buildAnimationControls(this.mapViewer.animPreview) };
+        return {
+            ...gameControls,
+            Animation: this.buildAnimationControls(this.mapViewer.animPreview),
+        };
     }
 
     private buildAnimationControls(preview: AnimPreviewParams): ReturnType<typeof folder> {
@@ -1659,43 +1676,36 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const width = this.canvas.clientWidth;
         const height = this.canvas.clientHeight;
         const groundHeight = this.terrain.getHeight(enemy.level, enemy.x, enemy.y);
-        const feet = worldToScreen(viewProjMatrix, enemy.x, enemy.y, groundHeight, width, height);
-        if (!feet) {
-            return undefined;
-        }
         const bodyHeight = enemy.hitRadius * ENEMY_BODY_HEIGHT_SCALE;
-        const top =
-            worldToScreen(
+        const corners = [
+            [enemy.x - enemy.hitRadius, enemy.y - enemy.hitRadius],
+            [enemy.x + enemy.hitRadius, enemy.y - enemy.hitRadius],
+            [enemy.x - enemy.hitRadius, enemy.y + enemy.hitRadius],
+            [enemy.x + enemy.hitRadius, enemy.y + enemy.hitRadius],
+        ];
+        const points: ScreenPoint[] = [];
+        for (const [x, y] of corners) {
+            const foot = worldToScreen(viewProjMatrix, x, y, groundHeight, width, height);
+            const head = worldToScreen(
                 viewProjMatrix,
-                enemy.x,
-                enemy.y,
-                groundHeight - bodyHeight,
+                x,
+                y,
+                groundHeight + bodyHeight,
                 width,
                 height,
-            ) ?? feet;
-        const left =
-            worldToScreen(
-                viewProjMatrix,
-                enemy.x - enemy.hitRadius,
-                enemy.y,
-                groundHeight,
-                width,
-                height,
-            ) ?? feet;
-        const right =
-            worldToScreen(
-                viewProjMatrix,
-                enemy.x + enemy.hitRadius,
-                enemy.y,
-                groundHeight,
-                width,
-                height,
-            ) ?? feet;
+            );
+            if (!foot || !head) {
+                return undefined;
+            }
+            points.push(foot, head);
+        }
+        const xs = points.map((point) => point.x);
+        const ys = points.map((point) => point.y);
         return {
-            left: Math.min(left.x, right.x),
-            right: Math.max(left.x, right.x),
-            top: Math.min(top.y, feet.y),
-            bottom: Math.max(top.y, feet.y),
+            left: Math.min(...xs),
+            right: Math.max(...xs),
+            top: Math.min(...ys),
+            bottom: Math.max(...ys),
         };
     }
 
@@ -1911,9 +1921,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
 
-        const switchProgress = player?.styleSwitchProgress(world.timeSeconds);
-        const switchTarget = player?.pendingStyle(world.timeSeconds);
-
         const bossEnemy = world.enemies.find(
             (enemy) =>
                 enemy.type.behaviour === EnemyBehaviour.BOSS && enemy.state !== EnemyState.DEAD,
@@ -1945,10 +1952,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 },
             abilities: player ? this.buildAbilitySlots(player) : [],
             activeStyle: player?.style,
-            styleSwitch:
-                switchTarget !== undefined && switchProgress !== undefined
-                    ? { target: switchTarget, progress: switchProgress }
-                    : undefined,
+            invulnerable: world.invulnerable,
             splatEvents,
             groundShadows,
             groundItems,
@@ -2208,8 +2212,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             world.visualEffects.length +
             world.groundItems.length;
 
-        if (this.actorInstanceData.length / 4 < maxCount) {
-            const newData = new Uint32Array(Math.ceil((maxCount * 2) / 16) * 16 * 4);
+        if (this.actorInstanceData.length / (4 * ACTOR_INSTANCE_TEXELS) < maxCount) {
+            const newData = new Uint32Array(
+                Math.ceil((maxCount * 2 * ACTOR_INSTANCE_TEXELS) / 16) * 16 * 4,
+            );
             newData.set(this.actorInstanceData);
             this.actorInstanceData = newData;
         }
@@ -2239,6 +2245,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     level: this.terrain.getRenderLevel(player.level, player.x, player.y),
                     interactType: InteractType.NONE,
                     interactId: 0,
+                    pitch: 0,
                 };
                 push({ kind: "playerBody", player }, instance);
                 for (const itemId of equippedVisualItemIds(
@@ -2270,6 +2277,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     level: this.terrain.getRenderLevel(enemy.level, enemy.x, enemy.y),
                     interactType: InteractType.ENEMY,
                     interactId: enemy.id,
+                    pitch: 0,
                 },
             );
         }
@@ -2279,15 +2287,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             if (groundHeight === undefined) {
                 continue;
             }
-            const rotationOffset =
-                actorData.projectiles.projectileMeshes[projectile.spec.kind].rotationOffset;
             push(
                 { kind: "projectile", projectile },
                 {
                     worldX: projectile.x,
                     worldY: projectile.y,
                     groundHeight: groundHeight + projectile.height,
-                    rotation: (projectile.rotation + rotationOffset) & 2047,
+                    rotation: projectile.rotation,
                     level: this.terrain.getRenderLevel(
                         projectile.level,
                         projectile.x,
@@ -2295,6 +2301,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     ),
                     interactType: InteractType.NONE,
                     interactId: 0,
+                    pitch: projectile.pitch,
                 },
             );
         }
@@ -2314,6 +2321,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     level: this.terrain.getRenderLevel(effect.level, effect.x, effect.y),
                     interactType: InteractType.NONE,
                     interactId: 0,
+                    pitch: 0,
                 },
             );
         }
@@ -2333,6 +2341,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     level: this.terrain.getRenderLevel(item.level, item.x, item.y),
                     interactType: InteractType.NONE,
                     interactId: 0,
+                    pitch: 0,
                 },
             );
         }
@@ -2346,7 +2355,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.actorDataTextureBuffer[newIndex] = this.app.createTexture2D(
             this.actorInstanceData,
             16,
-            Math.max(Math.ceil(this.actorInstanceCount / 16), 1),
+            Math.max(Math.ceil((this.actorInstanceCount * ACTOR_INSTANCE_TEXELS) / 16), 1),
             {
                 internalFormat: PicoGL.RGBA32UI,
                 minFilter: PicoGL.NEAREST,
@@ -2494,7 +2503,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
             case "projectile": {
                 const { projectile } = actor;
-                const { anim } = actorData.projectiles.projectileMeshes[projectile.spec.kind];
+                const anim = actorData.projectiles.projectileMeshes[projectile.spec.kind];
                 const frames = alpha ? anim.framesAlpha : anim.frames;
                 return frames?.[projectile.animation.frame] ?? NULL_DRAW_RANGE;
             }

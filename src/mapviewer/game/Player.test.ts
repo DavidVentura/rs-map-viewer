@@ -112,65 +112,30 @@ describe("Player.requestStyleSwitch", () => {
 
     it("is a no-op when requesting the currently active style", () => {
         const player = makePlayer();
-        player.requestStyleSwitch(WeaponStyle.RANGED, 0);
-        expect(player.isSwitchingStyle(0)).toBe(false);
-    });
-
-    it("channels for STYLE_SWITCH_SECONDS, blocking further ability use until it completes", () => {
-        const player = makePlayer();
-        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
-        expect(player.isSwitchingStyle(0)).toBe(true);
-        expect(player.canUseSlotIgnoringTarget(0, 0)).toBe(false);
+        player.requestStyleSwitch(WeaponStyle.RANGED);
         expect(player.style).toBe(WeaponStyle.RANGED);
-
-        expect(player.isSwitchingStyle(Player.STYLE_SWITCH_SECONDS - 0.001)).toBe(true);
-        expect(player.isSwitchingStyle(Player.STYLE_SWITCH_SECONDS)).toBe(false);
     });
 
-    it("does not start a new switch while already busy switching", () => {
+    it("switches immediately, with no delay or busy lock", () => {
         const player = makePlayer();
-        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
-        player.requestStyleSwitch(WeaponStyle.MAGIC, 0.1);
-        player.update(
-            { x: 0, y: 0, running: false },
-            Player.STYLE_SWITCH_SECONDS,
-            Player.STYLE_SWITCH_SECONDS,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
+        player.requestStyleSwitch(WeaponStyle.MELEE);
         expect(player.style).toBe(WeaponStyle.MELEE);
+        expect(player.isBusy(0)).toBe(false);
+        expect(player.canUseSlotIgnoringTarget(0, 0)).toBe(true);
     });
 
-    it("applies the new style once the switch completes, via update", () => {
+    it("lets a second switch immediately override the first", () => {
         const player = makePlayer();
-        player.requestStyleSwitch(WeaponStyle.MAGIC, 0);
-        player.update(
-            { x: 0, y: 0, running: false },
-            0.5,
-            0.5,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
-        expect(player.style).toBe(WeaponStyle.RANGED);
-        player.update(
-            { x: 0, y: 0, running: false },
-            0.5,
-            Player.STYLE_SWITCH_SECONDS,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
+        player.requestStyleSwitch(WeaponStyle.MELEE);
+        player.requestStyleSwitch(WeaponStyle.MAGIC);
         expect(player.style).toBe(WeaponStyle.MAGIC);
     });
 
-    it("reports undefined progress once not switching", () => {
+    it("does not touch the animation state: an immediate switch has no flourish to play", () => {
         const player = makePlayer();
-        expect(player.styleSwitchProgress(0)).toBeUndefined();
-        player.requestStyleSwitch(WeaponStyle.MELEE, 0);
-        expect(player.styleSwitchProgress(0)).toBeCloseTo(0);
-        expect(player.styleSwitchProgress(Player.STYLE_SWITCH_SECONDS / 2)).toBeCloseTo(0.5);
+        const seqIdBeforeSwitch = player.animation.seqId;
+        player.requestStyleSwitch(WeaponStyle.MELEE);
+        expect(player.animation.seqId).toBe(seqIdBeforeSwitch);
     });
 });
 

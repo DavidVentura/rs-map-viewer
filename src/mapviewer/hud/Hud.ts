@@ -11,15 +11,14 @@ import {
     drawGroundShadow,
     drawHealSplat,
     drawHealthGlobe,
+    drawInvulnerableLabel,
     drawManaGlobe,
     drawPickupFlash,
     drawPreviewSeqLabel,
     drawStyleRow,
-    drawStyleSwitchLabel,
     drawTargetPlate,
     drawUpgradeOverlay,
     drawWaveCounter,
-    styleDisplayName,
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
@@ -63,10 +62,7 @@ export class Hud {
         drawBottomPanel(ctx, layout);
         drawAbilityBar(ctx, layout, frame.abilities);
         if (frame.activeStyle !== undefined) {
-            drawStyleRow(ctx, layout, frame.activeStyle, frame.styleSwitch);
-        }
-        if (frame.styleSwitch) {
-            drawStyleSwitchLabel(ctx, layout, width, styleDisplayName(frame.styleSwitch.target));
+            drawStyleRow(ctx, layout, frame.activeStyle);
         }
         if (frame.player) {
             drawHealthGlobe(ctx, layout, frame.player);
@@ -77,6 +73,9 @@ export class Hud {
         }
         if (frame.wave) {
             drawWaveCounter(ctx, width, frame.wave);
+        }
+        if (frame.invulnerable) {
+            drawInvulnerableLabel(ctx, width);
         }
         if (frame.boss) {
             drawBossBar(ctx, width, frame.boss);

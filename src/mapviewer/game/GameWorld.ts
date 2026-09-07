@@ -120,6 +120,7 @@ export class GameWorld {
     private waveClearedNotified: boolean[] = [];
     private triggeredBossPhases = new Map<number, Set<number>>();
     pendingUpgradeOffer?: readonly Upgrade[];
+    invulnerable = false;
 
     constructor(
         private readonly terrain: Terrain,
@@ -128,9 +129,19 @@ export class GameWorld {
         private readonly random: RandomSource = Math.random,
     ) {}
 
+    // The debug invulnerability toggle (see MapViewerControls) survives across spawnPlayer calls,
+    // unlike the Player instance itself, which is recreated on every startEncounter.
+    setInvulnerable(invulnerable: boolean): void {
+        this.invulnerable = invulnerable;
+        if (this.player) {
+            this.player.invulnerable = invulnerable;
+        }
+    }
+
     spawnPlayer(x: number, y: number, level: number, styleSeqIds: StanceSeqIdsByStance): void {
         const spawn = resolveSpawn(this.terrain, level, x, y);
         this.player = new Player(spawn.x, spawn.y, level, styleSeqIds);
+        this.player.invulnerable = this.invulnerable;
     }
 
     // Spawns the player and populates the encounter's initial enemies (its static roster for a
@@ -314,7 +325,7 @@ export class GameWorld {
         }
 
         if (input.styleSwitch !== undefined) {
-            player.requestStyleSwitch(input.styleSwitch, this.timeSeconds);
+            player.requestStyleSwitch(input.styleSwitch);
         }
         this.processAbilityInput(player, input.abilities, this.timeSeconds);
         const movement = this.resolveMovementInput(player, input);
@@ -625,6 +636,7 @@ export class GameWorld {
                 continue;
             }
             applyHeal(ally, effect.amount, this.events);
+            this.spawnVisualEffect(effect.hitEffect, ally);
         }
     }
 
@@ -822,6 +834,10 @@ export class GameWorld {
     }
 
     private spawnProjectile(caster: Combatant, spec: ProjectileSpec, target: AbilityTarget): void {
+        if (spec.flight.kind === "DROP") {
+            this.spawnDropProjectile(caster, spec, target);
+            return;
+        }
         const deltaX = target.x - caster.x;
         const deltaY = target.y - caster.y;
         const distance = Math.hypot(deltaX, deltaY);
@@ -842,6 +858,22 @@ export class GameWorld {
                 distance,
                 homingTarget,
             ),
+        );
+    }
+
+    // A DROP projectile spawns directly above the target rather than offset from the caster (it has
+    // no horizontal travel to aim), so it gets its own spawn path instead of sharing spawnProjectile's
+    // caster-relative placement.
+    private spawnDropProjectile(
+        caster: Combatant,
+        spec: ProjectileSpec,
+        target: AbilityTarget,
+    ): void {
+        if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+            return;
+        }
+        this.projectiles.push(
+            new Projectile(spec, caster.faction, caster.level, target.x, target.y, 0, 1, 0),
         );
     }
 

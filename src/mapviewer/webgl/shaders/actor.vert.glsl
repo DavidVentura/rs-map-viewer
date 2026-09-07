@@ -46,6 +46,12 @@ out float v_highlight;
 
 #include "./includes/vertex.glsl";
 
+// Keep in sync with ACTOR_INSTANCE_TEXELS in ActorInstanceData.ts: each instance occupies this
+// many consecutive RGBA32UI texels (a plain rotation/level/interactId/interactType texel, plus a
+// second texel whose r-channel carries pitch - the first texel's packed component has no bits
+// left to spare).
+#define ACTOR_INSTANCE_TEXELS 2
+
 struct ActorInfo {
     vec2 worldPos;
     float groundHeight;
@@ -53,6 +59,7 @@ struct ActorInfo {
     uint rotation;
     uint interactId;
     uint interactType;
+    uint pitch;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -60,7 +67,17 @@ ivec2 getDataTexCoordFromIndex(int index) {
 }
 
 ActorInfo decodeActorInfo(int index) {
-    uvec4 data = texelFetch(u_actorDataTexture, getDataTexCoordFromIndex(index + gl_InstanceID), 0);
+    int instanceIndex = index + gl_InstanceID;
+    uvec4 data = texelFetch(
+        u_actorDataTexture,
+        getDataTexCoordFromIndex(instanceIndex * ACTOR_INSTANCE_TEXELS),
+        0
+    );
+    uvec4 data2 = texelFetch(
+        u_actorDataTexture,
+        getDataTexCoordFromIndex(instanceIndex * ACTOR_INSTANCE_TEXELS + 1),
+        0
+    );
 
     ActorInfo info;
 
@@ -72,6 +89,8 @@ ActorInfo decodeActorInfo(int index) {
     info.rotation = (data.a >> 5) & 0x7FFu;
     info.interactId = data.a >> 16;
 
+    info.pitch = data2.r & 0x7FFu;
+
     return info;
 }
 
@@ -80,6 +99,16 @@ mat4 rotationY( in float angle ) {
                          0,		1.0,			 0,	0,
                 -sin(angle),	0,		cos(angle),	0,
                         0, 		0,				0,	1);
+}
+
+// Pitches the model about its local left/right axis (perpendicular to its forward/heading axis),
+// applied before rotationY so a projectile's nose tilts in its own flight plane before that plane
+// is yawed to face its world-space heading.
+mat4 rotationX( in float angle ) {
+    return mat4(1.0,		0,				0,			0,
+                0,		cos(angle),		sin(angle),	0,
+                0,		-sin(angle),	cos(angle),	0,
+                0,		0,				0,			1);
 }
 
 void main() {
@@ -106,7 +135,10 @@ void main() {
         int(actorInfo.interactId) == u_highlightId
     );
 
-    vec4 localPos = vec4(vertex.pos, 1.0) * rotationY(float(actorInfo.rotation) * RS_TO_RADIANS) + vec4(actorInfo.worldPos.x, 0, actorInfo.worldPos.y, 0.0);
+    vec4 localPos = vec4(vertex.pos, 1.0)
+        * rotationX(float(actorInfo.pitch) * RS_TO_RADIANS)
+        * rotationY(float(actorInfo.rotation) * RS_TO_RADIANS)
+        + vec4(actorInfo.worldPos.x, 0, actorInfo.worldPos.y, 0.0);
 
     localPos.y -= actorInfo.groundHeight;
 

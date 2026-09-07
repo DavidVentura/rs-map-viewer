@@ -78,11 +78,6 @@ export type AbilitySlotHudInfo = {
     blocked: AbilitySlotBlockReason;
 };
 
-export type StyleSwitchHudInfo = {
-    readonly target: WeaponStyle;
-    readonly progress: number;
-};
-
 export enum WaveStatus {
     ACTIVE = 0,
     AWAITING_UPGRADE = 1,
@@ -137,7 +132,7 @@ export type HudFrame = {
     target?: TargetHudInfo;
     abilities: AbilitySlotHudInfo[];
     activeStyle?: WeaponStyle;
-    styleSwitch?: StyleSwitchHudInfo;
+    invulnerable: boolean;
     splatEvents: SplatEvent[];
     groundShadows: GroundShadowHudInfo[];
     wave?: WaveHudInfo;

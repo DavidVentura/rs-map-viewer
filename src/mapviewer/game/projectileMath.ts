@@ -28,20 +28,57 @@ export function reaimTowardTarget(
     return { x: deltaX / length, y: deltaY / length };
 }
 
+// SYMMETRIC climbs out of the start and lands at the same baseline, apex at the midpoint (a shot
+// fired from ground/body height, like an arrow). DESCENDING starts already at the apex and falls
+// from there to the baseline, apex at launch (a shot lobbed from something already elevated, like a
+// fireball leaving a boss's raised mouth) — physically the back half of the same parabola, launched
+// with zero vertical velocity.
+export type ProjectileArcShape = "SYMMETRIC" | "DESCENDING";
+
+function computeArcPeakHeight(referenceDistance: number, arc: ProjectileArcProfile): number {
+    return Math.min(arc.baseHeight + referenceDistance * arc.heightPerDistance, arc.maxHeight);
+}
+
 export function computeArcOffset(
     distanceTraveled: number,
     referenceDistance: number,
     arc: ProjectileArcProfile,
+    shape: ProjectileArcShape,
 ): number {
     if (referenceDistance <= 0) {
         return 0;
     }
     const progress = Math.min(distanceTraveled / referenceDistance, 1);
-    const peakHeight = Math.min(
-        arc.baseHeight + referenceDistance * arc.heightPerDistance,
-        arc.maxHeight,
-    );
-    return peakHeight * 4 * progress * (1 - progress);
+    const peakHeight = computeArcPeakHeight(referenceDistance, arc);
+    return shape === "SYMMETRIC"
+        ? peakHeight * 4 * progress * (1 - progress)
+        : peakHeight * (1 - progress * progress);
+}
+
+// Tangent angle of the arc's height-over-distance curve, in radians: positive (nose up), negative
+// (nose down). For SYMMETRIC that's nose up climbing out of the start, zero at the apex, nose down
+// diving into the landing point; for DESCENDING it starts at zero (level, leaving the apex flat) and
+// goes increasingly nose down toward the landing point.
+export function computeProjectilePitch(
+    distanceTraveled: number,
+    referenceDistance: number,
+    arc: ProjectileArcProfile,
+    shape: ProjectileArcShape,
+): number {
+    if (referenceDistance <= 0) {
+        return 0;
+    }
+    const progress = Math.min(distanceTraveled / referenceDistance, 1);
+    const peakHeight = computeArcPeakHeight(referenceDistance, arc);
+    const slope =
+        shape === "SYMMETRIC"
+            ? (peakHeight * 4 * (1 - 2 * progress)) / referenceDistance
+            : (-2 * peakHeight * progress) / referenceDistance;
+    return Math.atan(slope);
+}
+
+export function pitchRadiansToRotationUnits(pitchRadians: number): number {
+    return Math.round(pitchRadians / RS_TO_RADIANS) & 2047;
 }
 
 export function sweepCircleHitFraction(
@@ -115,6 +152,39 @@ export function findSweepHit<T extends Combatant>(
         }
     }
     return closest;
+}
+
+// Point-radius hit test for a projectile that lands at a fixed point rather than sweeping its
+// path, e.g. an arcing arrow that only checks for a target once it reaches its aimed landing spot.
+export function findLandingHit<T extends Combatant>(
+    landingX: number,
+    landingY: number,
+    hitRadius: number,
+    level: number,
+    sourceFaction: Faction,
+    combatants: readonly T[],
+): T | undefined {
+    let closest: { combatant: T; distanceSquared: number } | undefined;
+    for (const combatant of combatants) {
+        if (
+            combatant.level !== level ||
+            combatant.faction === sourceFaction ||
+            combatant.health <= 0
+        ) {
+            continue;
+        }
+        const deltaX = combatant.x - landingX;
+        const deltaY = combatant.y - landingY;
+        const radius = hitRadius + combatant.hitRadius;
+        const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+        if (distanceSquared > radius * radius) {
+            continue;
+        }
+        if (!closest || distanceSquared < closest.distanceSquared) {
+            closest = { combatant, distanceSquared };
+        }
+    }
+    return closest?.combatant;
 }
 
 export function rotationToDirection(rotation: number): { x: number; y: number } {

@@ -7,7 +7,6 @@ import {
     BossHudInfo,
     GroundItemHudInfo,
     PlayerHudInfo,
-    StyleSwitchHudInfo,
     TargetHudInfo,
     UpgradeCardHudInfo,
     WaveHudInfo,
@@ -26,7 +25,6 @@ const ABILITY_SLOT_GAP = 8;
 const TARGET_PLATE_WIDTH = 300;
 const TARGET_PLATE_HEIGHT = 56;
 const TARGET_PLATE_MARGIN_TOP = 16;
-const SWITCH_LABEL_MARGIN_TOP = 4;
 const STYLE_ICON_SIZE = 26;
 const STYLE_ICON_GAP = 6;
 const STYLE_ROW_MARGIN_BOTTOM = 6;
@@ -40,21 +38,11 @@ const STYLE_ORDER: readonly WeaponStyle[] = [
     WeaponStyle.MAGIC,
 ];
 
-const STYLE_NAMES: Record<WeaponStyle, string> = {
-    [WeaponStyle.MELEE]: "Melee",
-    [WeaponStyle.RANGED]: "Ranged",
-    [WeaponStyle.MAGIC]: "Magic",
-};
-
 const STYLE_KEY_LABELS: Record<WeaponStyle, string> = {
     [WeaponStyle.MELEE]: "Q",
     [WeaponStyle.RANGED]: "W",
     [WeaponStyle.MAGIC]: "E",
 };
-
-export function styleDisplayName(style: WeaponStyle): string {
-    return STYLE_NAMES[style];
-}
 
 export type HudLayout = {
     panelX: number;
@@ -65,7 +53,6 @@ export type HudLayout = {
     manaGlobe: { x: number; y: number; radius: number };
     slots: { x: number; y: number; size: number }[];
     styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
-    switchLabelY: number;
     upgradeCards: { x: number; y: number; width: number; height: number }[];
 };
 
@@ -110,7 +97,6 @@ export function computeHudLayout(
             size: STYLE_ICON_SIZE,
             style,
         })),
-        switchLabelY: slotsY + ABILITY_SLOT_SIZE + SWITCH_LABEL_MARGIN_TOP,
         upgradeCards: Array.from({ length: upgradeCardCount }, (_, i) => ({
             x: upgradeCardsX + i * (UPGRADE_CARD_WIDTH + UPGRADE_CARD_GAP),
             y: upgradeCardsY,
@@ -327,7 +313,6 @@ export function drawManaGlobe(
 const ABILITY_NAME_MAX_LENGTH = 10;
 const MANA_BLOCK_TINT = "rgba(20, 30, 90, 0.55)";
 const COOLDOWN_SWEEP_COLOR = "rgba(0, 0, 0, 0.72)";
-const STYLE_SWITCH_SWEEP_COLOR = "rgba(255, 210, 77, 0.55)";
 const STYLE_ACTIVE_BORDER_COLOR = "#ffd24d";
 const STYLE_INACTIVE_BORDER_COLOR = "rgba(120, 96, 60, 0.6)";
 const STYLE_GLYPH_COLOR = "#e8e0d0";
@@ -500,7 +485,6 @@ function drawStyleIcon(
     ctx: CanvasRenderingContext2D,
     icon: { x: number; y: number; size: number; style: WeaponStyle },
     active: boolean,
-    switchProgress: number | undefined,
 ): void {
     const { x, y, size, style } = icon;
 
@@ -508,10 +492,6 @@ function drawStyleIcon(
     ctx.fillRect(x, y, size, size);
 
     drawStyleGlyph(ctx, style, x + size / 2, y + size / 2, size);
-
-    if (switchProgress !== undefined) {
-        drawRadialSweep(ctx, icon, switchProgress, STYLE_SWITCH_SWEEP_COLOR);
-    }
 
     ctx.save();
     ctx.font = "700 10px sans-serif";
@@ -534,34 +514,10 @@ export function drawStyleRow(
     ctx: CanvasRenderingContext2D,
     layout: HudLayout,
     activeStyle: WeaponStyle,
-    styleSwitch: StyleSwitchHudInfo | undefined,
 ): void {
     for (const icon of layout.styleIcons) {
-        const switchProgress =
-            styleSwitch !== undefined && styleSwitch.target === icon.style
-                ? styleSwitch.progress
-                : undefined;
-        drawStyleIcon(ctx, icon, icon.style === activeStyle, switchProgress);
+        drawStyleIcon(ctx, icon, icon.style === activeStyle);
     }
-}
-
-export function drawStyleSwitchLabel(
-    ctx: CanvasRenderingContext2D,
-    layout: HudLayout,
-    width: number,
-    targetStyleName: string,
-): void {
-    ctx.save();
-    ctx.font = "600 13px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillStyle = "#ffd24d";
-    const text = `Switching to ${targetStyleName}`;
-    ctx.strokeText(text, width / 2, layout.switchLabelY);
-    ctx.fillText(text, width / 2, layout.switchLabelY);
-    ctx.restore();
 }
 
 export function drawTargetPlate(
@@ -693,6 +649,21 @@ export function drawWaveCounter(
         ctx.strokeText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
         ctx.fillText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
     }
+    ctx.restore();
+}
+
+const INVULNERABLE_LABEL_MARGIN_TOP = WAVE_COUNTER_SUMMARY_MARGIN_TOP + 20;
+
+export function drawInvulnerableLabel(ctx: CanvasRenderingContext2D, width: number): void {
+    ctx.save();
+    ctx.font = "700 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = "#4dc8ff";
+    ctx.strokeText("INVULNERABLE", width / 2, INVULNERABLE_LABEL_MARGIN_TOP);
+    ctx.fillText("INVULNERABLE", width / 2, INVULNERABLE_LABEL_MARGIN_TOP);
     ctx.restore();
 }
 

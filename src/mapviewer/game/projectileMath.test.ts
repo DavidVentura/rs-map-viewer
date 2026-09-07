@@ -1,11 +1,14 @@
 import { Faction } from "./Combatant";
 import {
     computeArcOffset,
+    computeProjectilePitch,
     directionToRotation,
+    findLandingHit,
     findSweepHit,
     generateSpreadDirections,
     isPointInCone,
     isWithinTileArea,
+    pitchRadiansToRotationUnits,
     reaimTowardTarget,
     rotationAngleDifference,
     rotationToDirection,
@@ -49,32 +52,130 @@ describe("reaimTowardTarget", () => {
     });
 });
 
-describe("computeArcOffset", () => {
+describe("computeArcOffset (SYMMETRIC)", () => {
     const arrowArc = { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 };
 
     it("is zero at the start and end of the reference distance", () => {
-        expect(computeArcOffset(0, 1000, arrowArc)).toBe(0);
-        expect(computeArcOffset(1000, 1000, arrowArc)).toBe(0);
+        expect(computeArcOffset(0, 1000, arrowArc, "SYMMETRIC")).toBe(0);
+        expect(computeArcOffset(1000, 1000, arrowArc, "SYMMETRIC")).toBe(0);
     });
 
     it("peaks above zero at the midpoint", () => {
-        expect(computeArcOffset(500, 1000, arrowArc)).toBeGreaterThan(0);
+        expect(computeArcOffset(500, 1000, arrowArc, "SYMMETRIC")).toBeGreaterThan(0);
     });
 
     it("clamps the peak height to the arc profile maximum", () => {
-        const offset = computeArcOffset(5000, 10000, arrowArc);
+        const offset = computeArcOffset(5000, 10000, arrowArc, "SYMMETRIC");
         expect(offset).toBeCloseTo(arrowArc.maxHeight);
     });
 
     it("stays flat for a zero-height arc profile", () => {
         const flatArc = { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 };
-        expect(computeArcOffset(500, 1000, flatArc)).toBe(0);
+        expect(computeArcOffset(500, 1000, flatArc, "SYMMETRIC")).toBe(0);
     });
 
     it("does not travel past full progress once the reference distance is exceeded", () => {
-        const atReference = computeArcOffset(1000, 1000, arrowArc);
-        const pastReference = computeArcOffset(2000, 1000, arrowArc);
+        const atReference = computeArcOffset(1000, 1000, arrowArc, "SYMMETRIC");
+        const pastReference = computeArcOffset(2000, 1000, arrowArc, "SYMMETRIC");
         expect(pastReference).toBe(atReference);
+    });
+});
+
+describe("computeArcOffset (DESCENDING)", () => {
+    const jadArc = { baseHeight: 400, heightPerDistance: 0.3, maxHeight: 900 };
+
+    it("is at its peak at the start (the launch point is the apex)", () => {
+        const peak = computeArcOffset(0, 1000, jadArc, "DESCENDING");
+        expect(peak).toBeGreaterThan(0);
+        expect(peak).toBeGreaterThan(computeArcOffset(1, 1000, jadArc, "DESCENDING"));
+    });
+
+    it("is zero at the end of the reference distance", () => {
+        expect(computeArcOffset(1000, 1000, jadArc, "DESCENDING")).toBeCloseTo(0);
+    });
+
+    it("decreases monotonically from start to end", () => {
+        const early = computeArcOffset(200, 1000, jadArc, "DESCENDING");
+        const late = computeArcOffset(800, 1000, jadArc, "DESCENDING");
+        expect(early).toBeGreaterThan(late);
+    });
+});
+
+describe("computeProjectilePitch (SYMMETRIC)", () => {
+    const arrowArc = { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 };
+
+    it("is zero at the apex", () => {
+        expect(computeProjectilePitch(500, 1000, arrowArc, "SYMMETRIC")).toBeCloseTo(0);
+    });
+
+    it("is positive (nose up) at the start", () => {
+        expect(computeProjectilePitch(0, 1000, arrowArc, "SYMMETRIC")).toBeGreaterThan(0);
+    });
+
+    it("is negative (nose down) at the end", () => {
+        expect(computeProjectilePitch(1000, 1000, arrowArc, "SYMMETRIC")).toBeLessThan(0);
+    });
+
+    it("is zero throughout for a flat (zero-height) arc profile", () => {
+        const flatArc = { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 };
+        expect(computeProjectilePitch(0, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
+        expect(computeProjectilePitch(500, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
+        expect(computeProjectilePitch(1000, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
+    });
+});
+
+describe("computeProjectilePitch (DESCENDING)", () => {
+    const jadArc = { baseHeight: 400, heightPerDistance: 0.3, maxHeight: 900 };
+
+    it("is level (zero) leaving the apex at the start", () => {
+        expect(computeProjectilePitch(0, 1000, jadArc, "DESCENDING")).toBeCloseTo(0);
+    });
+
+    it("is negative (nose down) partway through, and more so near the end", () => {
+        const early = computeProjectilePitch(200, 1000, jadArc, "DESCENDING");
+        const late = computeProjectilePitch(800, 1000, jadArc, "DESCENDING");
+        expect(early).toBeLessThan(0);
+        expect(late).toBeLessThan(early);
+    });
+});
+
+describe("pitchRadiansToRotationUnits", () => {
+    it("maps zero radians to zero units", () => {
+        expect(pitchRadiansToRotationUnits(0)).toBe(0);
+    });
+
+    it("wraps a negative angle into the upper half of the unit circle", () => {
+        expect(pitchRadiansToRotationUnits(-Math.PI / 2)).toBe(1536);
+    });
+});
+
+describe("findLandingHit", () => {
+    it("finds the closest hostile combatant within radius of the landing point", () => {
+        const far = new FakeCombatant(0, 40, 0, Faction.ENEMY);
+        const near = new FakeCombatant(10, 0, 0, Faction.ENEMY);
+        const hit = findLandingHit(0, 0, 16, 0, Faction.PLAYER, [far, near]);
+        expect(hit).toBe(near);
+    });
+
+    it("returns undefined when nothing is within radius", () => {
+        const enemy = new FakeCombatant(1000, 1000, 0, Faction.ENEMY);
+        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [enemy])).toBeUndefined();
+    });
+
+    it("ignores combatants sharing the projectile's faction", () => {
+        const ally = new FakeCombatant(0, 0, 0, Faction.PLAYER);
+        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [ally])).toBeUndefined();
+    });
+
+    it("ignores combatants on a different level", () => {
+        const other = new FakeCombatant(0, 0, 1, Faction.ENEMY);
+        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [other])).toBeUndefined();
+    });
+
+    it("ignores combatants that are already dead", () => {
+        const dead = new FakeCombatant(0, 0, 0, Faction.ENEMY);
+        dead.health = 0;
+        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [dead])).toBeUndefined();
     });
 });
 

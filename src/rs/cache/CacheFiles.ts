@@ -201,15 +201,6 @@ export type DownloadProgress = {
 
 export type ProgressListener = (progress: DownloadProgress) => void;
 
-function ReadableBufferStream(ab: ArrayBuffer): ReadableStream<Uint8Array> {
-    return new ReadableStream({
-        start(controller) {
-            controller.enqueue(new Uint8Array(ab));
-            controller.close();
-        },
-    });
-}
-
 async function toBufferParts(
     response: Response,
     offset: number,
@@ -340,17 +331,14 @@ async function fetchCachedFile(
             if (partCacheLength > partCacheThreshold) {
                 const partUrl = path + "/part/?p=" + partCount;
                 partUrls.push(partUrl);
-                const partResp = new Response(
-                    ReadableBufferStream(partsToBuffer(partCache, false)),
-                    {
-                        status: 200,
-                        headers: {
-                            "Content-Type": "application/octet-stream",
-                            "Content-Length": partCacheLength.toString(),
-                            "Cache-Part": partCount.toString(),
-                        },
+                const partResp = new Response(new Uint8Array(partsToBuffer(partCache, false)), {
+                    status: 200,
+                    headers: {
+                        "Content-Type": "application/octet-stream",
+                        "Content-Length": partCacheLength.toString(),
+                        "Cache-Part": partCount.toString(),
                     },
-                );
+                });
                 Object.defineProperty(partResp, "url", { value: partUrl });
                 const update = cache.put(partUrl, partResp);
                 cacheUpdates.push(update);
@@ -371,9 +359,11 @@ async function fetchCachedFile(
 
     const buffer = partsToBuffer(parts, shared);
 
-    cache.put(
+    // A SharedArrayBuffer passed directly as a Response body is silently truncated by Chrome's
+    // Cache Storage implementation; a view over it stores correctly.
+    await cache.put(
         path,
-        new Response(ReadableBufferStream(buffer), {
+        new Response(new Uint8Array(buffer), {
             status: 200,
             headers: {
                 "Content-Type": "application/octet-stream",

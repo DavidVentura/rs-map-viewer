@@ -5,9 +5,12 @@ import { AnimationPlayback, AnimationState } from "./Animation";
 export enum VisualEffectKind {
     MAGIC_HIT = 0,
     ICE_BARRAGE_HIT = 1,
+    JAD_FIRE_HIT = 2,
+    TZHAAR_HEAL = 3,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
+export const TZHAAR_HEAL_SEQ_ID = 2640;
 
 export class VisualEffect {
     readonly animation: AnimationState;

@@ -30,6 +30,12 @@ const cachesPromise = fetchCacheList();
 
 const workerPool = RenderDataWorkerPool.create(isWallpaperEngine ? 1 : 4);
 
+// Debug flag that disables player damage entirely (see GameWorld.setInvulnerable); parsed here,
+// at the edge, alongside parseEncounterId and parseAnimPreviewParams.
+function parseInvulnerable(searchParams: URLSearchParams): boolean {
+    return searchParams.get("invuln") === "1";
+}
+
 function MapViewerApp() {
     const [searchParams, setSearchParams] = useSearchParams();
 
@@ -60,6 +66,7 @@ function MapViewerApp() {
 
             const encounterId = parseEncounterId(searchParams.get("enc"));
             const animPreview = parseAnimPreviewParams(searchParams);
+            const invulnerable = parseInvulnerable(searchParams);
             // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs
             // that an encounter bundle was never built to contain. Bundles are build artifacts,
             // so development uses the full cache unless explicitly asked, to avoid stale bundles
@@ -103,6 +110,7 @@ function MapViewerApp() {
                 rendererType,
                 cache,
                 animPreview,
+                invulnerable,
             );
             (window as any).mapViewer = mapViewer;
 

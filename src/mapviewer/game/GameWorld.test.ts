@@ -115,7 +115,9 @@ describe("GameWorld ability wiring", () => {
     it("re-fires the bow on cooldown while the slot stays held", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        const target = { x: 500, y: 0 };
+        // Far enough that neither arrow reaches its aimed landing point (and disappears) within
+        // this test's short window, so both fired arrows are still in flight to be counted.
+        const target = { x: 100000, y: 0 };
 
         const cooldownTotal = BOW_SHOT.windupSeconds + BOW_SHOT.locks[0].seconds;
         advanceSeconds(world, holdSlot(0, target), cooldownTotal * 2 + 0.1);
@@ -169,7 +171,7 @@ describe("GameWorld ability wiring", () => {
         );
     });
 
-    it("channels a style switch requested through SimInput, blocking movement until it completes", () => {
+    it("switches instantly through SimInput, with no delay before the player can move", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
@@ -181,19 +183,14 @@ describe("GameWorld ability wiring", () => {
             styleSwitch: WeaponStyle.MELEE,
         };
         advanceSeconds(world, switchInput, 1 / 120);
-        expect(player.isSwitchingStyle(world.timeSeconds)).toBe(true);
+        expect(player.style).toBe(WeaponStyle.MELEE);
 
         const movingWhileIdle: SimInput = {
             movement: { x: 1, y: 0, running: false },
             abilities: idleAbilities(),
         };
-
-        advanceSeconds(world, movingWhileIdle, Player.STYLE_SWITCH_SECONDS / 2);
-        expect(player.x).toBe(0);
-        expect(player.style).toBe(WeaponStyle.RANGED);
-
-        advanceSeconds(world, movingWhileIdle, Player.STYLE_SWITCH_SECONDS / 2 + 0.1);
-        expect(player.style).toBe(WeaponStyle.MELEE);
+        advanceSeconds(world, movingWhileIdle, 1 / 60);
+        expect(player.x).toBeGreaterThan(0);
     });
 });
 
@@ -351,6 +348,18 @@ describe("Enemy attack cycle", () => {
         expect(meleeEffect).toBeDefined();
         expect(player.health).toBe(player.maxHealth - meleeEffect!.minDamage);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
+    });
+
+    it("leaves the player's health unchanged while invulnerable", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
+        world.setInvulnerable(true);
+        const player = world.player!;
+
+        advanceSeconds(world, idleInput(), ENEMY_MELEE.windupSeconds + 0.05);
+
+        expect(player.health).toBe(player.maxHealth);
     });
 
     it("misses the melee hit if the player retreats out of reach during the wind-up (dodge by distance)", () => {

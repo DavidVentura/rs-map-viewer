@@ -107,6 +107,7 @@ export class MapViewer {
         rendererType: MapViewerRendererType,
         cache: LoadedCache,
         readonly animPreview?: AnimPreviewParams,
+        readonly invulnerable: boolean = false,
     ) {
         // Starting the camera at this encounter's spawn (rather than a fixed literal) matters for
         // more than convenience: initCache() below queues loads for the squares around the
@@ -265,6 +266,7 @@ export class MapViewer {
             this.seqTypeLoader,
             this.seqFrameLoader,
         );
+        this.world.setInvulnerable(this.invulnerable);
     }
 
     /**

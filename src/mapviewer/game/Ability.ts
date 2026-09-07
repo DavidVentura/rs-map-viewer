@@ -78,6 +78,7 @@ export type HealAlliesEffect = {
     readonly kind: AbilityEffectKind.HEAL_ALLIES;
     readonly radiusTiles: number;
     readonly amount: number;
+    readonly hitEffect: ProjectileHitEffect;
 };
 
 export type MultiProjectileEffect = {

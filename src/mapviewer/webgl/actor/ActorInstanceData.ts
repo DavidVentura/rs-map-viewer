@@ -8,12 +8,20 @@ export type ActorInstance = {
     level: number;
     interactType: InteractType;
     interactId: number;
+    // Local-axis tilt applied before yaw, in the same 11-bit RS rotation units as `rotation`. Only
+    // arcing projectiles ever set this away from 0; every other actor renders pitch-level.
+    pitch: number;
 };
 
-export const ACTOR_INSTANCE_TEXELS = 1;
-export const ACTOR_INSTANCE_COMPONENTS = 4;
+// The first texel's 4 components (worldX, worldY, groundHeight, packed level/rotation/interactId/
+// interactType) already use all 32 bits of their packed component, so pitch spills into a second
+// texel rather than stealing bits from an already-full field.
+export const ACTOR_INSTANCE_TEXELS = 2;
+export const ACTOR_INSTANCE_COMPONENTS = ACTOR_INSTANCE_TEXELS * 4;
 
-export function encodeActorInfo(instance: ActorInstance): [number, number, number, number] {
+export function encodeActorInfo(
+    instance: ActorInstance,
+): [number, number, number, number, number, number, number, number] {
     const packed =
         ((instance.interactId & 0xffff) << 16) |
         ((instance.rotation & 0x7ff) << 5) |
@@ -24,10 +32,20 @@ export function encodeActorInfo(instance: ActorInstance): [number, number, numbe
         instance.worldY >>> 0,
         instance.groundHeight >>> 0,
         packed >>> 0,
+        (Math.round(instance.pitch) & 0x7ff) >>> 0,
+        0,
+        0,
+        0,
     ];
 }
 
-export function decodeActorInfo(r: number, g: number, b: number, a: number): ActorInstance {
+export function decodeActorInfo(
+    r: number,
+    g: number,
+    b: number,
+    a: number,
+    pitchR: number,
+): ActorInstance {
     return {
         worldX: r >>> 0,
         worldY: g >>> 0,
@@ -36,6 +54,7 @@ export function decodeActorInfo(r: number, g: number, b: number, a: number): Act
         level: (a >> 3) & 0x3,
         rotation: (a >> 5) & 0x7ff,
         interactId: a >>> 16,
+        pitch: pitchR & 0x7ff,
     };
 }
 
@@ -45,9 +64,8 @@ export function writeActorInstance(
     instance: ActorInstance,
 ): void {
     const offset = instanceIndex * ACTOR_INSTANCE_COMPONENTS;
-    const [r, g, b, a] = encodeActorInfo(instance);
-    data[offset] = r;
-    data[offset + 1] = g;
-    data[offset + 2] = b;
-    data[offset + 3] = a;
+    const encoded = encodeActorInfo(instance);
+    for (let i = 0; i < encoded.length; i++) {
+        data[offset + i] = encoded[i];
+    }
 }

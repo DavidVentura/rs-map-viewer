@@ -1,17 +1,17 @@
 import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from "./Ability";
-import { ARROW_SPEC, JAD_MAGE_BLAST_SPEC, MAGIC_SPEC, POWER_SHOT_SPEC } from "./Projectile";
-import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "./VisualEffect";
+import {
+    ARROW_SPEC,
+    JAD_MAGE_BLAST_SPEC,
+    JAD_RANGED_ROCK_SPEC,
+    MAGIC_SPEC,
+    POWER_SHOT_SPEC,
+    VOLLEY_ARROW_SPEC,
+} from "./Projectile";
+import { ICE_BARRAGE_HIT_SEQ_ID, TZHAAR_HEAL_SEQ_ID, VisualEffectKind } from "./VisualEffect";
 
 export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
 export const CLEAVE_CAST_SEQ_ID = 1203;
 export const HEALING_POTION_CAST_SEQ_ID = 829;
-export const IMBUED_HEART_SWITCH_SEQ_ID = 7660;
-export const DRAGON_BATTLEAXE_SWITCH_SEQ_ID = 1056;
-
-export const STYLE_SWITCH_SEQ_IDS: Partial<Record<WeaponStyle, number>> = {
-    [WeaponStyle.MAGIC]: IMBUED_HEART_SWITCH_SEQ_ID,
-    [WeaponStyle.MELEE]: DRAGON_BATTLEAXE_SWITCH_SEQ_ID,
-};
 
 export const BOW_SHOT: AbilityDefinition = {
     id: "bow_shot",
@@ -121,7 +121,7 @@ export const VOLLEY: AbilityDefinition = {
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.2 }],
     effect: {
         kind: AbilityEffectKind.MULTI_PROJECTILE,
-        spec: ARROW_SPEC,
+        spec: VOLLEY_ARROW_SPEC,
         count: 8,
         spreadAngleRadians: Math.PI / 3,
     },
@@ -243,7 +243,12 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
     requires: [CooldownGroup.HEAL],
     locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
     castSeqId: YT_MEJKOT_HEAL_SEQ_ID,
-    effect: { kind: AbilityEffectKind.HEAL_ALLIES, radiusTiles: 4, amount: 15 },
+    effect: {
+        kind: AbilityEffectKind.HEAL_ALLIES,
+        radiusTiles: 4,
+        amount: 15,
+        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
+    },
 };
 
 // Elder maul special attack (obj 21003): a wide overhead smash in front of the caster, verified
@@ -307,12 +312,10 @@ export const JAD_RANGED_STOMP: AbilityDefinition = {
     locks: [{ group: CooldownGroup.ATTACK, seconds: JAD_ATTACK_RECHARGE_SECONDS }],
     castSeqId: JAD_RANGED_STOMP_CAST_SEQ_ID,
     effect: {
-        kind: AbilityEffectKind.GROUND_STRIKE,
-        radiusTiles: 1.5,
-        telegraphSeconds: 1.6,
+        kind: AbilityEffectKind.PROJECTILE,
+        spec: JAD_RANGED_ROCK_SPEC,
         damageMin: 30,
         damageMax: 45,
-        range: 10 * 128,
     },
 };
 
@@ -350,7 +353,12 @@ export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
     requires: [CooldownGroup.HEAL],
     locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
     castSeqId: YT_MEJKOT_HEAL_SEQ_ID,
-    effect: { kind: AbilityEffectKind.HEAL_ALLIES, radiusTiles: 4, amount: 30 },
+    effect: {
+        kind: AbilityEffectKind.HEAL_ALLIES,
+        radiusTiles: 4,
+        amount: 30,
+        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
+    },
 };
 
 export function buildPlayerAbilityBar(style: WeaponStyle): readonly AbilityDefinition[] {

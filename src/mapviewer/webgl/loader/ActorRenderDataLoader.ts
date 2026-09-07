@@ -17,9 +17,15 @@ import { StanceSeqIds } from "../../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
+    JAD_FIRE_SEQ_ID,
+    JAD_RANGED_ROCK_SEQ_ID,
     ProjectileKind,
 } from "../../game/Projectile";
-import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "../../game/VisualEffect";
+import {
+    ICE_BARRAGE_HIT_SEQ_ID,
+    TZHAAR_HEAL_SEQ_ID,
+    VisualEffectKind,
+} from "../../game/VisualEffect";
 import { ICE_BARRAGE_CAST_SEQ_ID, MAUL_SMASH_CAST_SEQ_ID } from "../../game/abilities";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
@@ -366,14 +372,25 @@ const FIRE_BOLT_HIT_SPOTANIM_ID = 128;
 // Ice Barrage hit graphic (SpotAnimType id): 369.
 const ICE_BARRAGE_HIT_SPOTANIM_ID = 369;
 
+// TzTok-Jad's own fire graphic (SpotAnimType ids): 449 travels, 450 hits, both driven by the same
+// sequence (JAD_FIRE_SEQ_ID) rather than the player's fire bolt spell graphic (127/128).
+const JAD_FIRE_PROJECTILE_SPOTANIM_ID = 449;
+const JAD_FIRE_HIT_SPOTANIM_ID = 450;
+
+// TzTok-Jad's ranged attack graphic (SpotAnimType id): 451, a falling boulder.
+const JAD_RANGED_ROCK_SPOTANIM_ID = 451;
+
+// TzHaar healer heal graphic (SpotAnimType id): 444.
+const TZHAAR_HEAL_SPOTANIM_ID = 444;
+
 // A visually distinct, larger arrow model for the ranged Power Shot special.
 const POWER_SHOT_MODEL_SCALE = 200;
 const ARROW_LENGTH_SCALE = 160;
 const ARROW_THICKNESS_SCALE = 380;
 const ARROW_LIGHTNESS_BOOST = 45;
 
-// TzTok-Jad's mage blast reuses the fire bolt spot animation, scaled up (Model.scale divides by
-// 128, so this is 3x) so the slow-moving projectile reads as a bigger, boss-scale attack.
+// TzTok-Jad's mage blast graphic is scaled up (Model.scale divides by 128, so this is 3x) so the
+// slow-moving projectile reads as a bigger, boss-scale attack.
 const JAD_MAGE_BLAST_MODEL_SCALE = 128 * 3;
 
 function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): ProjectileActorData {
@@ -391,12 +408,17 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
     if (!spotAnimTypeLoader) {
         throw new Error("Spot animations are not available in this cache");
     }
+    // The arrow model's tip points down -Z; projectiles fly along +Z before yaw, and pitch is a
+    // rotation in that heading frame, so the model is turned to face +Z here rather than with a
+    // yaw offset at draw time (which would invert the pitch).
     const visibleArrowModel = Model.copy(arrowModel);
+    visibleArrowModel.rotate180();
     visibleArrowModel.scale(ARROW_THICKNESS_SCALE, ARROW_THICKNESS_SCALE, ARROW_LENGTH_SCALE);
     brightenModel(visibleArrowModel, ARROW_LIGHTNESS_BOOST);
     const arrowAnim = addStaticModelAnimationFrames(sceneBuf, visibleArrowModel);
 
     const powerShotModel = Model.copy(arrowModel);
+    powerShotModel.rotate180();
     powerShotModel.scale(
         ARROW_THICKNESS_SCALE * 2,
         ARROW_THICKNESS_SCALE * 2,
@@ -418,21 +440,65 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         FIRE_BOLT_TRAVEL_SEQ_ID,
     );
 
-    const jadBoltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
-    if (!jadBoltModel) {
-        throw new Error("Fire bolt projectile spot animation does not match the expected sequence");
+    const jadFireSpotAnim = spotAnimTypeLoader.load(JAD_FIRE_PROJECTILE_SPOTANIM_ID);
+    const jadFireModel = buildSpotAnimModel(modelLoader, textureLoader, jadFireSpotAnim);
+    if (!jadFireModel || jadFireSpotAnim.sequenceId !== JAD_FIRE_SEQ_ID) {
+        throw new Error(
+            "TzTok-Jad fire projectile spot animation does not match the expected sequence",
+        );
     }
-    jadBoltModel.scale(
+    jadFireModel.scale(
         JAD_MAGE_BLAST_MODEL_SCALE,
         JAD_MAGE_BLAST_MODEL_SCALE,
         JAD_MAGE_BLAST_MODEL_SCALE,
     );
-    const jadBoltAnim = addSpotAnimAnimationFrames(
+    const jadFireAnim = addSpotAnimAnimationFrames(
         sceneBuf,
         seqTypeLoader,
         seqFrameLoader,
-        jadBoltModel,
-        FIRE_BOLT_TRAVEL_SEQ_ID,
+        jadFireModel,
+        JAD_FIRE_SEQ_ID,
+    );
+
+    const jadFireHitSpotAnim = spotAnimTypeLoader.load(JAD_FIRE_HIT_SPOTANIM_ID);
+    const jadFireHitModel = buildSpotAnimModel(modelLoader, textureLoader, jadFireHitSpotAnim);
+    if (!jadFireHitModel || jadFireHitSpotAnim.sequenceId !== JAD_FIRE_SEQ_ID) {
+        throw new Error("TzTok-Jad fire hit spot animation does not match the expected sequence");
+    }
+    const jadFireHitAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        jadFireHitModel,
+        JAD_FIRE_SEQ_ID,
+    );
+
+    const jadRockSpotAnim = spotAnimTypeLoader.load(JAD_RANGED_ROCK_SPOTANIM_ID);
+    const jadRockModel = buildSpotAnimModel(modelLoader, textureLoader, jadRockSpotAnim);
+    if (!jadRockModel || jadRockSpotAnim.sequenceId !== JAD_RANGED_ROCK_SEQ_ID) {
+        throw new Error(
+            "TzTok-Jad ranged attack spot animation does not match the expected sequence",
+        );
+    }
+    const jadRockAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        jadRockModel,
+        JAD_RANGED_ROCK_SEQ_ID,
+    );
+
+    const tzhaarHealSpotAnim = spotAnimTypeLoader.load(TZHAAR_HEAL_SPOTANIM_ID);
+    const tzhaarHealModel = buildSpotAnimModel(modelLoader, textureLoader, tzhaarHealSpotAnim);
+    if (!tzhaarHealModel || tzhaarHealSpotAnim.sequenceId !== TZHAAR_HEAL_SEQ_ID) {
+        throw new Error("TzHaar heal spot animation does not match the expected sequence");
+    }
+    const tzhaarHealAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        tzhaarHealModel,
+        TZHAAR_HEAL_SEQ_ID,
     );
 
     const boltHitSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_HIT_SPOTANIM_ID);
@@ -463,14 +529,17 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
 
     return {
         projectileMeshes: {
-            [ProjectileKind.ARROW]: { anim: arrowAnim, rotationOffset: 1024 },
-            [ProjectileKind.MAGIC]: { anim: boltAnim, rotationOffset: 0 },
-            [ProjectileKind.POWER_SHOT]: { anim: powerShotAnim, rotationOffset: 1024 },
-            [ProjectileKind.JAD_MAGE_BLAST]: { anim: jadBoltAnim, rotationOffset: 0 },
+            [ProjectileKind.ARROW]: arrowAnim,
+            [ProjectileKind.MAGIC]: boltAnim,
+            [ProjectileKind.POWER_SHOT]: powerShotAnim,
+            [ProjectileKind.JAD_MAGE_BLAST]: jadFireAnim,
+            [ProjectileKind.JAD_RANGED_ROCK]: jadRockAnim,
         },
         effectAnimations: {
             [VisualEffectKind.MAGIC_HIT]: boltHitAnim,
             [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
+            [VisualEffectKind.JAD_FIRE_HIT]: jadFireHitAnim,
+            [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
         },
     };
 }

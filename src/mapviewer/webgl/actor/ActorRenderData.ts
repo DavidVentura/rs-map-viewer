@@ -74,13 +74,8 @@ export function getEnemyAnimationFrames(
     return data.animationsBySeqId.get(seqId) ?? data.idleAnim;
 }
 
-export type ProjectileMesh = {
-    anim: AnimationFrames;
-    rotationOffset: number;
-};
-
 export type ProjectileActorData = {
-    projectileMeshes: Record<ProjectileKind, ProjectileMesh>;
+    projectileMeshes: Record<ProjectileKind, AnimationFrames>;
     effectAnimations: Record<VisualEffectKind, AnimationFrames>;
 };
 

@@ -17,9 +17,10 @@ describe("actor instance encoding", () => {
             level: 2,
             interactType: InteractType.ENEMY,
             interactId: 4242,
+            pitch: 0,
         };
-        const [r, g, b, a] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a)).toEqual(instance);
+        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
     });
 
     it("round-trips zero and max field values", () => {
@@ -31,9 +32,10 @@ describe("actor instance encoding", () => {
             level: 0,
             interactType: InteractType.NONE,
             interactId: 0,
+            pitch: 0,
         };
-        const [r, g, b, a] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a)).toEqual(instance);
+        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
 
         const maxInstance: ActorInstance = {
             worldX: 0x7fffffff,
@@ -43,9 +45,10 @@ describe("actor instance encoding", () => {
             level: 3,
             interactType: InteractType.ENEMY,
             interactId: 65535,
+            pitch: 2047,
         };
-        const [r2, g2, b2, a2] = encodeActorInfo(maxInstance);
-        expect(decodeActorInfo(r2, g2, b2, a2)).toEqual(maxInstance);
+        const [r2, g2, b2, a2, pitchR2] = encodeActorInfo(maxInstance);
+        expect(decodeActorInfo(r2, g2, b2, a2, pitchR2)).toEqual(maxInstance);
     });
 
     it("round-trips a negative ground height", () => {
@@ -57,9 +60,25 @@ describe("actor instance encoding", () => {
             level: 1,
             interactType: InteractType.LOC,
             interactId: 12,
+            pitch: 0,
         };
-        const [r, g, b, a] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a)).toEqual(instance);
+        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
+    });
+
+    it("wraps a pitch already outside the 11-bit range rather than throwing", () => {
+        const instance: ActorInstance = {
+            worldX: 0,
+            worldY: 0,
+            groundHeight: 0,
+            rotation: 0,
+            level: 0,
+            interactType: InteractType.NONE,
+            interactId: 0,
+            pitch: -300,
+        };
+        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR).pitch).toBe(2048 - 300);
     });
 
     it("writeActorInstance writes at the correct offset into a shared buffer", () => {
@@ -72,11 +91,16 @@ describe("actor instance encoding", () => {
             level: 1,
             interactType: InteractType.NPC,
             interactId: 7,
+            pitch: 42,
         };
         writeActorInstance(data, 1, instance);
-        expect(data.slice(0, ACTOR_INSTANCE_COMPONENTS)).toEqual(new Uint32Array(4));
-        const [r, g, b, a] = data.slice(ACTOR_INSTANCE_COMPONENTS, ACTOR_INSTANCE_COMPONENTS * 2);
-        expect(decodeActorInfo(r, g, b, a)).toEqual(instance);
-        expect(data.slice(ACTOR_INSTANCE_COMPONENTS * 2)).toEqual(new Uint32Array(4));
+        expect(data.slice(0, ACTOR_INSTANCE_COMPONENTS)).toEqual(
+            new Uint32Array(ACTOR_INSTANCE_COMPONENTS),
+        );
+        const texel = data.slice(ACTOR_INSTANCE_COMPONENTS, ACTOR_INSTANCE_COMPONENTS * 2);
+        expect(decodeActorInfo(texel[0], texel[1], texel[2], texel[3], texel[4])).toEqual(instance);
+        expect(data.slice(ACTOR_INSTANCE_COMPONENTS * 2)).toEqual(
+            new Uint32Array(ACTOR_INSTANCE_COMPONENTS),
+        );
     });
 });

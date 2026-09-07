@@ -114,7 +114,22 @@ function hasDamageTakenMultiplier(target: Combatant): target is DamageTakenModif
     return typeof (target as Partial<DamageTakenModifiable>).damageTakenMultiplier === "number";
 }
 
+// A target that is temporarily immune (currently only the player, via the debug invulnerability
+// toggle) takes no damage at all, the same duck-typed pattern DamageTakenModifiable above uses for
+// its multiplier; this covers every applyDamage caller, including Projectile.ts, with no changes
+// needed at any of those call sites.
+export interface Invulnerable extends Combatant {
+    readonly invulnerable: boolean;
+}
+
+function isInvulnerable(target: Combatant): target is Invulnerable {
+    return typeof (target as Partial<Invulnerable>).invulnerable === "boolean";
+}
+
 export function applyDamage(target: Combatant, amount: number, events: CombatEvent[]): void {
+    if (isInvulnerable(target) && target.invulnerable) {
+        return;
+    }
     const effectiveAmount = hasDamageTakenMultiplier(target)
         ? amount * target.damageTakenMultiplier
         : amount;

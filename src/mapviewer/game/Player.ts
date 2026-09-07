@@ -14,7 +14,7 @@ import {
     equipmentMaxHealthBonus,
 } from "./Equipment";
 import { Terrain } from "./Terrain";
-import { STYLE_SWITCH_SEQ_IDS, buildPlayerAbilityBar } from "./abilities";
+import { buildPlayerAbilityBar } from "./abilities";
 import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -41,17 +41,11 @@ export type StanceSeqIds = {
 
 export type StanceSeqIdsByStance = Record<WeaponStyle, StanceSeqIds>;
 
-type PendingStyleSwitch = {
-    readonly style: WeaponStyle;
-    readonly readyAt: number;
-};
-
 export class Player implements Combatant, ManaPool {
     static readonly HIT_RADIUS = 64;
     static readonly MAX_HEALTH = 100;
     static readonly MAX_MANA = 100;
     static readonly MANA_REGEN_PER_SECOND = 4;
-    static readonly STYLE_SWITCH_SECONDS = 1;
     static readonly DEATH_SEQ_ID = 836;
     static readonly DEATH_SECONDS = 2;
 
@@ -59,6 +53,7 @@ export class Player implements Combatant, ManaPool {
     readonly hitRadius = Player.HIT_RADIUS;
     health = Player.MAX_HEALTH;
     mana = Player.MAX_MANA;
+    invulnerable = false;
 
     private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
     equipment: EquipmentState = DEFAULT_EQUIPMENT;
@@ -91,9 +86,6 @@ export class Player implements Combatant, ManaPool {
 
     private castAnimationEndsAt?: number;
     private castAnimationSpeed = 1;
-    private switchAnimationEndsAt?: number;
-    private switchAnimationSpeed = 1;
-    private pendingStyleSwitch?: PendingStyleSwitch;
     private deadUntil?: number;
     style: WeaponStyle = WeaponStyle.RANGED;
     readonly animation: AnimationState;
@@ -178,42 +170,16 @@ export class Player implements Combatant, ManaPool {
     }
 
     canUseSlotIgnoringTarget(slot: number, timeSeconds: number): boolean {
-        if (this.isSwitchingStyle(timeSeconds)) {
-            return false;
-        }
         return this.abilityRuntime.canUse(this.abilityBar[slot], this.mana, timeSeconds);
     }
 
     isBusy(timeSeconds: number): boolean {
-        return this.abilityRuntime.isBusy(timeSeconds) || this.isSwitchingStyle(timeSeconds);
+        return this.abilityRuntime.isBusy(timeSeconds);
     }
 
-    isSwitchingStyle(timeSeconds: number): boolean {
-        return (
-            this.pendingStyleSwitch !== undefined && timeSeconds < this.pendingStyleSwitch.readyAt
-        );
-    }
-
-    styleSwitchProgress(timeSeconds: number): number | undefined {
-        if (!this.isSwitchingStyle(timeSeconds)) {
-            return undefined;
-        }
-        const remaining = this.pendingStyleSwitch!.readyAt - timeSeconds;
-        return 1 - remaining / Player.STYLE_SWITCH_SECONDS;
-    }
-
-    pendingStyle(timeSeconds: number): WeaponStyle | undefined {
-        if (!this.pendingStyleSwitch || timeSeconds >= this.pendingStyleSwitch.readyAt) {
-            return undefined;
-        }
-        return this.pendingStyleSwitch.style;
-    }
-
-    requestStyleSwitch(style: WeaponStyle, timeSeconds: number): void {
-        if (style === this.style || this.isBusy(timeSeconds)) {
-            return;
-        }
-        this.pendingStyleSwitch = { style, readyAt: timeSeconds + Player.STYLE_SWITCH_SECONDS };
+    // Style switches are instant: no cooldown lock, no busy state, no animation, always allowed.
+    requestStyleSwitch(style: WeaponStyle): void {
+        this.style = style;
     }
 
     isDead(timeSeconds: number): boolean {
@@ -240,9 +206,7 @@ export class Player implements Combatant, ManaPool {
         this.health = this.maxHealth;
         this.mana = this.maxMana;
         this.deadUntil = undefined;
-        this.pendingStyleSwitch = undefined;
         this.castAnimationEndsAt = undefined;
-        this.switchAnimationEndsAt = undefined;
         this.abilityRuntime.reset();
         this.animation.restart(this.idleSeqId);
     }
@@ -269,21 +233,6 @@ export class Player implements Combatant, ManaPool {
             this.maxMana,
             this.mana + Player.MANA_REGEN_PER_SECOND * deltaTimeSeconds,
         );
-
-        if (this.pendingStyleSwitch) {
-            if (timeSeconds >= this.pendingStyleSwitch.readyAt) {
-                this.style = this.pendingStyleSwitch.style;
-                this.pendingStyleSwitch = undefined;
-            } else {
-                this.advanceStyleSwitchAnimation(
-                    deltaTimeSeconds,
-                    timeSeconds,
-                    seqTypeLoader,
-                    seqFrameLoader,
-                );
-                return;
-            }
-        }
 
         const castEndsAt = this.abilityRuntime.castEndsAt();
         if (castEndsAt !== undefined && timeSeconds < castEndsAt) {
@@ -330,36 +279,6 @@ export class Player implements Combatant, ManaPool {
         this.rotation = directionToRotation(input.x, input.y);
         this.animation.setSequence(input.running ? this.runSeqId : this.walkSeqId);
         this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
-    }
-
-    private advanceStyleSwitchAnimation(
-        deltaTimeSeconds: number,
-        timeSeconds: number,
-        seqTypeLoader: SeqTypeLoader,
-        seqFrameLoader: SeqFrameLoader,
-    ): void {
-        const pendingStyleSwitch = this.pendingStyleSwitch!;
-        const switchSeqId = STYLE_SWITCH_SEQ_IDS[pendingStyleSwitch.style];
-        if (switchSeqId === undefined) {
-            this.animation.setSequence(this.idleSeqId);
-            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
-            return;
-        }
-
-        if (this.switchAnimationEndsAt !== pendingStyleSwitch.readyAt) {
-            this.switchAnimationEndsAt = pendingStyleSwitch.readyAt;
-            this.animation.restart(switchSeqId);
-            this.switchAnimationSpeed =
-                sequenceDurationSeconds(switchSeqId, seqTypeLoader, seqFrameLoader) /
-                (pendingStyleSwitch.readyAt - timeSeconds);
-        }
-        this.animation.advance(
-            deltaTimeSeconds,
-            seqTypeLoader,
-            seqFrameLoader,
-            AnimationPlayback.ONCE,
-            this.switchAnimationSpeed,
-        );
     }
 
     beginCast(definition: AbilityDefinition, target: AbilityTarget, timeSeconds: number): void {
