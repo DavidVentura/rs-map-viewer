@@ -2,18 +2,24 @@ import { WeaponStyle } from "./Ability";
 import {
     ALL_EQUIPMENT_PATHS,
     DEFAULT_EQUIPMENT,
+    ELDER_MAUL_ITEM_ID,
     EQUIPMENT_PATHS,
     EquipmentPath,
     equipAtTier,
     equipmentAbilityModifiers,
     equipmentDamageTakenMultiplier,
     equipmentMaxHealthBonus,
+    equippedVisualItemIds,
     isAtMaxTier,
     itemIdForTier,
     maxTierIndex,
-    stanceVisualKey,
-    stanceVisualVariants,
+    secondaryPathForStyle,
+    visualGroupItemId,
+    visualGroupItemIds,
+    weaponItemId,
+    weaponVisualItemIds,
 } from "./Equipment";
+import { MAUL_SMASH_CAST_SEQ_ID } from "./abilities";
 import { DEFAULT_ABILITY_MODIFIERS, composeModifiers } from "./upgrades";
 
 describe("equipment tier ladders", () => {
@@ -134,46 +140,88 @@ describe("equipmentMaxHealthBonus", () => {
     });
 });
 
-describe("stanceVisualKey / stanceVisualVariants", () => {
+describe("visualGroupItemId / visualGroupItemIds", () => {
     it("only changes when a tier crosses into a different visual group", () => {
-        const base = stanceVisualKey(WeaponStyle.MELEE, DEFAULT_EQUIPMENT);
+        const base = visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.DEFENDER);
         const midDefender = equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.DEFENDER, 3);
-        expect(stanceVisualKey(WeaponStyle.MELEE, midDefender)).toBe(base);
+        expect(visualGroupItemId(midDefender, EquipmentPath.DEFENDER)).toBe(base);
 
         const maxDefender = equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.DEFENDER, 5);
-        expect(stanceVisualKey(WeaponStyle.MELEE, maxDefender)).not.toBe(base);
+        expect(visualGroupItemId(maxDefender, EquipmentPath.DEFENDER)).not.toBe(base);
     });
 
-    it("bow and scimitar each weapon tier introduces its own visual group", () => {
+    it("resolves to exactly one of the (at most 2) representative item ids visualGroupItemIds bakes", () => {
+        for (const path of [EquipmentPath.DEFENDER, EquipmentPath.OFFHAND, EquipmentPath.AMULET]) {
+            const representatives = visualGroupItemIds(path);
+            expect(representatives.length).toBeLessThanOrEqual(2);
+            for (let tier = 0; tier <= maxTierIndex(path); tier++) {
+                const equipment = equipAtTier(DEFAULT_EQUIPMENT, path, tier);
+                expect(representatives).toContain(visualGroupItemId(equipment, path));
+            }
+        }
+    });
+});
+
+describe("weaponItemId / weaponVisualItemIds", () => {
+    it("bow and scimitar each weapon tier introduces its own item id", () => {
         const styleAndPath = [
             { style: WeaponStyle.RANGED, path: EquipmentPath.BOW },
             { style: WeaponStyle.MELEE, path: EquipmentPath.SCIMITAR },
         ];
         for (const { style, path } of styleAndPath) {
-            const keys = new Set<string>();
+            const ids = new Set<number>();
             for (let tier = 0; tier <= maxTierIndex(path); tier++) {
-                keys.add(stanceVisualKey(style, equipAtTier(DEFAULT_EQUIPMENT, path, tier)));
+                ids.add(weaponItemId(style, equipAtTier(DEFAULT_EQUIPMENT, path, tier)));
             }
-            expect(keys.size).toBe(maxTierIndex(path) + 1);
+            expect(ids.size).toBe(maxTierIndex(path) + 1);
+            expect(new Set(weaponVisualItemIds(style))).toEqual(ids);
         }
     });
 
-    it("the staff's max tier introduces a new visual group", () => {
-        const base = stanceVisualKey(WeaponStyle.MAGIC, DEFAULT_EQUIPMENT);
+    it("the staff's max tier introduces a new item id", () => {
+        const base = weaponItemId(WeaponStyle.MAGIC, DEFAULT_EQUIPMENT);
         const maxStaff = equipAtTier(
             DEFAULT_EQUIPMENT,
             EquipmentPath.STAFF,
             maxTierIndex(EquipmentPath.STAFF),
         );
-        expect(stanceVisualKey(WeaponStyle.MAGIC, maxStaff)).not.toBe(base);
+        expect(weaponItemId(WeaponStyle.MAGIC, maxStaff)).not.toBe(base);
+    });
+});
+
+describe("equippedVisualItemIds", () => {
+    it("wears the weapon and amulet, but no secondary, for ranged", () => {
+        expect(secondaryPathForStyle(WeaponStyle.RANGED)).toBeUndefined();
+        const ids = equippedVisualItemIds(WeaponStyle.RANGED, DEFAULT_EQUIPMENT, 808);
+        expect(ids).toEqual([
+            weaponItemId(WeaponStyle.RANGED, DEFAULT_EQUIPMENT),
+            visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.AMULET),
+        ]);
     });
 
-    it("enumerates every variant with a distinct key, and every current-equipment key resolves to one of them", () => {
-        for (const style of [WeaponStyle.RANGED, WeaponStyle.MELEE, WeaponStyle.MAGIC]) {
-            const variants = stanceVisualVariants(style);
-            const keys = new Set(variants.map((variant) => variant.key));
-            expect(keys.size).toBe(variants.length);
-            expect(keys.has(stanceVisualKey(style, DEFAULT_EQUIPMENT))).toBe(true);
+    it("wears the weapon, secondary offhand and amulet for melee and magic", () => {
+        for (const { style, secondaryPath } of [
+            { style: WeaponStyle.MELEE, secondaryPath: EquipmentPath.DEFENDER },
+            { style: WeaponStyle.MAGIC, secondaryPath: EquipmentPath.OFFHAND },
+        ]) {
+            expect(secondaryPathForStyle(style)).toBe(secondaryPath);
+            const ids = equippedVisualItemIds(style, DEFAULT_EQUIPMENT, 808);
+            expect(ids).toEqual([
+                weaponItemId(style, DEFAULT_EQUIPMENT),
+                visualGroupItemId(DEFAULT_EQUIPMENT, secondaryPath),
+                visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.AMULET),
+            ]);
         }
+    });
+
+    it("swaps to only the elder maul during the maul-smash special, regardless of equipment", () => {
+        const equipment = equipAtTier(
+            equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.SCIMITAR, 3),
+            EquipmentPath.AMULET,
+            5,
+        );
+        expect(equippedVisualItemIds(WeaponStyle.MELEE, equipment, MAUL_SMASH_CAST_SEQ_ID)).toEqual(
+            [ELDER_MAUL_ITEM_ID],
+        );
     });
 });

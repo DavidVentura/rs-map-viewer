@@ -1,4 +1,5 @@
 import { WeaponStyle } from "./Ability";
+import { MAUL_SMASH_CAST_SEQ_ID } from "./abilities";
 import { AbilityModifiers, DEFAULT_ABILITY_MODIFIERS } from "./upgrades";
 
 // One upgrade path per weapon slot, plus a shared neck slot. Adding a slot later is data only:
@@ -229,88 +230,94 @@ export function equipmentDamageTakenMultiplier(equipment: EquipmentState): numbe
     return DEFENDER_DAMAGE_TAKEN_MULTIPLIER[equipment[EquipmentPath.DEFENDER]];
 }
 
-// --- Appearance baking -----------------------------------------------------------------------
+// --- Appearance (player attachments) ----------------------------------------------------------
+//
+// The player's body model never changes with equipment (no armour slots in this project, only
+// weapon/offhand/neck), so it is baked once per style, unposed by any item. Each equipped item is
+// baked separately as its own worn-model attachment and drawn as its own actor instance next to
+// the body (see ActorRenderDataLoader.createPlayerActorData / WebGLMapViewerRenderer.
+// buildActorInstanceData) rather than merged into one huge per-combination mesh.
 //
 // With item recolor/retexture applied (PlayerModelLoader), each of the six tiers of a weapon
-// ladder renders as its own distinct color even where the underlying mesh is shared, so a
-// player's weapon must be baked once per raw tier index rather than collapsed to a shared group.
+// ladder renders as its own distinct color even where the underlying mesh is shared, so a weapon
+// must be baked once per raw tier index rather than collapsed to a shared group.
 //
 // The secondary paths (defender/offhand/amulet) still collapse to exactly 2 groups: tier 0's
 // starting look, and the top tier's look. Verified with scripts/cache/verify-final-ladders-
 // throwaway.ts, only the top tier of each of those three ladders carries a genuinely different
 // model; every tier in between renders identically to tier 0 (an iron/steel/mithril/adamant
 // defender all look like the bronze one, only the numeric bonus differs, until the dragon
-// defender at tier 5). Baking those at every tier would be pure waste, so a style's full stance
-// set is baked once per combination of its own weapon tier and its secondary paths' groups.
+// defender at tier 5). Baking those at every tier would be pure waste, so only 2 representative
+// item ids are baked per secondary path.
 export function secondaryVisualGroup(equipment: EquipmentState, path: EquipmentPath): 0 | 1 {
     return isAtMaxTier(equipment, path) ? 1 : 0;
 }
 
-// The weapon paths (bow/scimitar/staff) bake one visual variant per raw tier index.
-export function weaponVisualGroup(equipment: EquipmentState, style: WeaponStyle): number {
+// The item id currently worn on a style's weapon slot (one distinct bake per raw tier index).
+export function weaponItemId(style: WeaponStyle, equipment: EquipmentState): number {
     const path = weaponPathForStyle(style);
-    return equipment[path];
+    return itemIdForTier(path, equipment[path]);
 }
 
-export type StanceVisualKey = string;
-
-// The key a player's current equipment resolves to for stance lookup; also used at bake time (see
-// ActorRenderDataLoader) to enumerate every key worth baking.
-export function stanceVisualKey(style: WeaponStyle, equipment: EquipmentState): StanceVisualKey {
-    const weaponGroup = weaponVisualGroup(equipment, style);
-    const amuletGroup = secondaryVisualGroup(equipment, EquipmentPath.AMULET);
-    const secondaryPath = secondaryOffhandPathForStyle(style);
-    const secondaryGroup = secondaryPath ? secondaryVisualGroup(equipment, secondaryPath) : 0;
-    return `${style}:${weaponGroup}:${secondaryGroup}:${amuletGroup}`;
+// The item id currently worn for a secondary/amulet-style path, collapsed to whichever of the 2
+// baked representative ids (tier 0's or the max tier's) that equipment state visually resolves to.
+export function visualGroupItemId(equipment: EquipmentState, path: EquipmentPath): number {
+    return itemIdForTier(
+        path,
+        secondaryVisualGroup(equipment, path) === 1 ? maxTierIndex(path) : 0,
+    );
 }
 
-// Every (weaponTier, secondaryGroup, amuletGroup) combination worth baking for a style, as the
-// representative equipment state to bake it with (weapon group -> that raw tier's item, secondary/
-// amulet group 0 -> tier 0 item, group 1 -> the path's max tier item).
-export function stanceVisualVariants(
+// Every raw tier's item id for a style's weapon path - the full set worth baking as an attachment.
+export function weaponVisualItemIds(style: WeaponStyle): readonly number[] {
+    return EQUIPMENT_PATHS[weaponPathForStyle(style)].itemIds;
+}
+
+// The (at most 2) visually distinct representative item ids for a secondary/amulet-style path.
+export function visualGroupItemIds(path: EquipmentPath): readonly number[] {
+    const tier0 = itemIdForTier(path, 0);
+    const maxTier = itemIdForTier(path, maxTierIndex(path));
+    return tier0 === maxTier ? [tier0] : [tier0, maxTier];
+}
+
+// The melee maul-smash special swaps the equipped weapon for a fixed, more dramatic-looking item
+// for that one cast animation regardless of the player's actual scimitar tier, and drops the
+// secondary/amulet attachments entirely for it.
+export const ELDER_MAUL_ITEM_ID = 21003;
+const WEAPON_OVERRIDE_SEQ_ID = MAUL_SMASH_CAST_SEQ_ID;
+
+// Every item id worn as a player attachment for the given style/equipment while seqId is playing:
+// the equipped weapon, that style's secondary offhand if it has one, and the shared amulet - or
+// just the maul-smash override item alone when that special applies. The single source of truth
+// for which attachment instances WebGLMapViewerRenderer.buildActorInstanceData pushes each frame,
+// and (via the seq sets each item needs) for what ActorRenderDataLoader bakes up front.
+export function equippedVisualItemIds(
     style: WeaponStyle,
-): readonly { readonly key: StanceVisualKey; readonly equipment: EquipmentState }[] {
-    const weaponPath = weaponPathForStyle(style);
-    const weaponGroups = EQUIPMENT_PATHS[weaponPath].itemIds.map((_, tier) => tier);
-    const secondaryPath = secondaryOffhandPathForStyle(style);
-    const secondaryGroups = secondaryPath ? [0, 1] : [0];
-    const amuletGroups = [0, 1];
-
-    const variants: { key: StanceVisualKey; equipment: EquipmentState }[] = [];
-    for (const weaponGroup of weaponGroups) {
-        for (const secondaryGroup of secondaryGroups) {
-            for (const amuletGroup of amuletGroups) {
-                const equipment: EquipmentState = {
-                    ...DEFAULT_EQUIPMENT,
-                    [weaponPath]: weaponGroup,
-                    ...(secondaryPath
-                        ? {
-                              [secondaryPath]:
-                                  secondaryGroup === 1 ? maxTierIndex(secondaryPath) : 0,
-                          }
-                        : {}),
-                    [EquipmentPath.AMULET]:
-                        amuletGroup === 1 ? maxTierIndex(EquipmentPath.AMULET) : 0,
-                };
-                variants.push({ key: stanceVisualKey(style, equipment), equipment });
-            }
-        }
+    equipment: EquipmentState,
+    seqId: number,
+): readonly number[] {
+    if (seqId === WEAPON_OVERRIDE_SEQ_ID) {
+        return [ELDER_MAUL_ITEM_ID];
     }
-    return variants;
+    const secondaryPath = secondaryOffhandPathForStyle(style);
+    return [
+        weaponItemId(style, equipment),
+        ...(secondaryPath ? [visualGroupItemId(equipment, secondaryPath)] : []),
+        visualGroupItemId(equipment, EquipmentPath.AMULET),
+    ];
 }
 
-// Item ids equipped in the appearance for baking a given style's stance, folding in whichever
-// secondary path that style wears alongside its weapon (defender for melee, offhand book for
-// magic, none for ranged) and the shared amulet.
-export function stanceAppearanceItemIds(style: WeaponStyle, equipment: EquipmentState): number[] {
-    const weaponPath = weaponPathForStyle(style);
-    const itemIds = [itemIdForTier(weaponPath, equipment[weaponPath])];
-    const secondaryPath = secondaryOffhandPathForStyle(style);
-    if (secondaryPath) {
-        itemIds.push(itemIdForTier(secondaryPath, equipment[secondaryPath]));
-    }
-    itemIds.push(itemIdForTier(EquipmentPath.AMULET, equipment[EquipmentPath.AMULET]));
-    return itemIds;
+// A style's secondary offhand path (defender for melee, offhand book for magic), or undefined for
+// ranged (its secondary path, arrows, has no offhand model). Exposed for the bake-time item/seq
+// enumeration in ActorRenderDataLoader; equippedVisualItemIds is the runtime-facing equivalent.
+export function secondaryPathForStyle(style: WeaponStyle): EquipmentPath | undefined {
+    return secondaryOffhandPathForStyle(style);
+}
+
+// Every seq id at which a weapon/secondary attachment is actually shown (excludes the maul-smash
+// special, which swaps the weapon slot for ELDER_MAUL_ITEM_ID and hides the secondary entirely).
+export function attachmentVisibleSeqIds(styleSeqIds: readonly number[]): readonly number[] {
+    return styleSeqIds.filter((seqId) => seqId !== WEAPON_OVERRIDE_SEQ_ID);
 }
 
 // Every item id that can ever appear as a ground drop (every tier above tier 0, since tier 0 is

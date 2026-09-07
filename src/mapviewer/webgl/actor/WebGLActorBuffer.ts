@@ -31,7 +31,14 @@ export class WebGLActorBuffer {
         time: number,
     ): WebGLActorBuffer {
         const interleavedBuffer = app.createInterleavedBuffer(12, data.vertices.byteLength);
-        const indexBuffer = app.createIndexBuffer(PicoGL.UNSIGNED_INT, 3, data.indices.length);
+        // picogl's own type declarations only accept an ArrayBufferView here, but the
+        // implementation also accepts an element count to allocate an empty (zero-filled) buffer
+        // without copying any data - the fast path uploadNextChunk then fills incrementally.
+        const indexBuffer = (app.createIndexBuffer as any)(
+            PicoGL.UNSIGNED_INT,
+            3,
+            data.indices.length,
+        );
 
         const vertexArray = app
             .createVertexArray()
@@ -64,7 +71,11 @@ export class WebGLActorBuffer {
             vertexArray,
             { drawCall, drawRanges },
             capacity,
-            new Uint8Array(data.vertices.buffer, data.vertices.byteOffset, data.vertices.byteLength),
+            new Uint8Array(
+                data.vertices.buffer,
+                data.vertices.byteOffset,
+                data.vertices.byteLength,
+            ),
             new Uint8Array(data.indices.buffer, data.indices.byteOffset, data.indices.byteLength),
         );
     }

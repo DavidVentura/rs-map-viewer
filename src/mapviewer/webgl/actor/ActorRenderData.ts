@@ -1,12 +1,19 @@
 import { WeaponStyle } from "../../game/Ability";
 import { EnemyTypeId } from "../../game/EnemyType";
-import { EquipmentState, StanceVisualKey, stanceVisualKey } from "../../game/Equipment";
 import { StanceSeqIds, StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
 import { AnimationFrames } from "../AnimationFrames";
 
 export type StanceAnimationSet = StanceSeqIds & {
+    idleAnim: AnimationFrames;
+    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
+};
+
+// One item's own worn-model animation set, posed by the same skeleton frames as the body (see
+// ActorRenderDataLoader.createItemAnimationSet). Drawn as its own actor instance next to the body.
+export type ItemAnimationSet = {
+    idleSeqId: number;
     idleAnim: AnimationFrames;
     animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
 };
@@ -18,33 +25,40 @@ const ALL_WEAPON_STYLES: readonly WeaponStyle[] = [
 ];
 
 export type PlayerActorData = {
-    // Keyed by Equipment.stanceVisualKey(style, equipment); holds one baked stance per distinct
-    // visual combination (see Equipment.stanceVisualVariants for which ones exist), not one per
-    // raw tier index.
-    stanceVariants: ReadonlyMap<StanceVisualKey, StanceAnimationSet>;
-    // The default (tier 0 everywhere) variant's key per style. Seq ids never vary across a style's
-    // variants (only the baked mesh does), so any variant would do for getStanceSeqIds.
-    defaultStanceKeyByStyle: Record<WeaponStyle, StanceVisualKey>;
+    // The body model never changes with equipment, so it is baked once per style.
+    bodyByStyle: Record<WeaponStyle, StanceAnimationSet>;
+    // Every equipped item worth baking as an attachment (see Equipment.equippedVisualItemIds for
+    // which item ids are worn at a given moment), keyed by item id rather than by style/tier so a
+    // representative item shared across tiers (or across styles, like the amulet) is baked once.
+    itemsByItemId: ReadonlyMap<number, ItemAnimationSet>;
 };
 
 export function getStanceSeqIds(data: PlayerActorData): StanceSeqIdsByStance {
     const result = {} as StanceSeqIdsByStance;
     for (const style of ALL_WEAPON_STYLES) {
-        result[style] = data.stanceVariants.get(data.defaultStanceKeyByStyle[style])!;
+        result[style] = data.bodyByStyle[style];
     }
     return result;
 }
 
-export function getPlayerAnimationFrames(
+export function getPlayerBodyAnimationFrames(
     data: PlayerActorData,
     style: WeaponStyle,
-    equipment: EquipmentState,
     seqId: number,
 ): AnimationFrames {
-    const key = stanceVisualKey(style, equipment);
-    const set =
-        data.stanceVariants.get(key) ??
-        data.stanceVariants.get(data.defaultStanceKeyByStyle[style])!;
+    const set = data.bodyByStyle[style];
+    return set.animationsBySeqId.get(seqId) ?? set.idleAnim;
+}
+
+export function getPlayerItemAnimationFrames(
+    data: PlayerActorData,
+    itemId: number,
+    seqId: number,
+): AnimationFrames {
+    const set = data.itemsByItemId.get(itemId);
+    if (!set) {
+        throw new Error(`No baked player attachment animation set for item ${itemId}`);
+    }
     return set.animationsBySeqId.get(seqId) ?? set.idleAnim;
 }
 

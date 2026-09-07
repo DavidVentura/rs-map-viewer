@@ -7,6 +7,16 @@
     background: rgba(0, 0, 0, 0.5);
 }
 
+/* Fully opaque, on top of everything: covers the canvas/HUD until the encounter has spawned so no
+   pre-spawn frame (default camera, no actors, the camera-pin jump) is ever visible. */
+.loading-gate-overlay {
+    top: 0;
+    left: 0;
+    height: 100%;
+    z-index: 10;
+    background: black;
+}
+
 .hud.left-top {
     position: absolute;
     padding: 10px;

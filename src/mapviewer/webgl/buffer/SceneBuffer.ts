@@ -165,9 +165,14 @@ export class SceneBuffer {
         return this.vertexCount() - terrainStartVertexCount;
     }
 
-    addModelAnimFrame(model: Model, transparent: boolean): DrawRange {
+    // minFaceIndex excludes faces before that index, e.g. to bake only a player item's own faces
+    // out of a model merged with the body for correct posing (see AnimationBaking.
+    // addPlayerAnimationFrames).
+    addModelAnimFrame(model: Model, transparent: boolean, minFaceIndex: number = 0): DrawRange {
         const faces = getModelFaces(model).filter(
-            (face) => isModelFaceTransparent(this.textureLoader, face) === transparent,
+            (face) =>
+                face.index >= minFaceIndex &&
+                isModelFaceTransparent(this.textureLoader, face) === transparent,
         );
 
         const offset = this.indexByteOffset();

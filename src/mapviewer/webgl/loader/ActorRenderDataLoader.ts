@@ -5,10 +5,13 @@ import { WeaponStyle } from "../../game/Ability";
 import { getEncounter } from "../../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../../game/EnemyType";
 import {
-    StanceVisualKey,
+    ELDER_MAUL_ITEM_ID,
+    EquipmentPath,
     allDroppableItemIds,
-    stanceAppearanceItemIds,
-    stanceVisualVariants,
+    attachmentVisibleSeqIds,
+    secondaryPathForStyle,
+    visualGroupItemIds,
+    weaponVisualItemIds,
 } from "../../game/Equipment";
 import { StanceSeqIds } from "../../game/Player";
 import {
@@ -26,6 +29,7 @@ import { AnimationFrames } from "../AnimationFrames";
 import {
     EnemyTypeAnimationSet,
     GroundItemActorData,
+    ItemAnimationSet,
     PlayerActorData,
     ProjectileActorData,
     StanceAnimationSet,
@@ -51,11 +55,8 @@ const MAGIC_SWITCH_SEQ_ID = 7660; // imbued heart
 const MELEE_SWITCH_SEQ_ID = 1056; // dragon battleaxe special
 const CLEAVE_SEQ_ID = 1203; // crystal halberd special, melee only
 const PLAYER_DEATH_SEQ_ID = 836;
-const ELDER_MAUL_ITEM_ID = 21003; // maul smash special, baked with the elder maul instead of the scimitar
 
-// A stance's extra (non-movement) animations are baked with the stance's own weapon equipped by
-// default; itemId overrides that for a single seq, e.g. a special attack that needs its own weapon.
-type ExtraSeq = { readonly seqId: number; readonly itemId?: number };
+type ExtraSeq = { readonly seqId: number };
 
 const COMMON_EXTRA_SEQS: readonly ExtraSeq[] = [
     { seqId: POTION_DRINK_SEQ_ID },
@@ -69,9 +70,10 @@ type StanceSeqConfig = StanceSeqIds & { extraSeqs: readonly ExtraSeq[] };
 // bow: unarmed idle/walk/run, bow attack
 // staff: standard spellcast idle/walk/run/attack, plus the ice barrage cast
 // scimitar: unarmed idle/walk/run, slash attack
-// Seq ids are fixed per style regardless of equipped tier; the equipped item ids used to build the
-// PlayerAppearance for a given bake now come from Equipment.stanceAppearanceItemIds instead of a
-// single hardcoded itemId here (see createStanceAnimationSet / createPlayerActorData below).
+// Seq ids are fixed per style regardless of equipped tier; which item ids are actually worn for a
+// given style/equipment/seq now comes from Equipment.equippedVisualItemIds, resolved separately
+// per attachment instance rather than folded into one PlayerAppearance here (see
+// createBodyAnimationSet / createItemAnimationSet / createPlayerActorData below).
 const STANCE_SEQ_CONFIG: Record<WeaponStyle, StanceSeqConfig> = {
     [WeaponStyle.RANGED]: {
         idleSeqId: 808,
@@ -95,74 +97,49 @@ const STANCE_SEQ_CONFIG: Record<WeaponStyle, StanceSeqConfig> = {
         extraSeqs: [
             ...COMMON_EXTRA_SEQS,
             { seqId: CLEAVE_SEQ_ID },
-            { seqId: MAUL_SMASH_CAST_SEQ_ID, itemId: ELDER_MAUL_ITEM_ID },
+            { seqId: MAUL_SMASH_CAST_SEQ_ID },
         ],
     },
 };
 
-// Bakes one full stance (idle/walk/run/attack/specials) for one equipment combination. Called once
-// per visual variant a style has (see Equipment.stanceVisualVariants): the weapon path bakes one
-// variant per raw tier (recolored per tier), while the secondary paths (defender/offhand/amulet)
-// still collapse to 2 groups each since only their top tier's model actually differs (see the
-// comment on Equipment.secondaryVisualGroup).
-function createStanceAnimationSet(
+const ALL_STYLES = [WeaponStyle.RANGED, WeaponStyle.MAGIC, WeaponStyle.MELEE] as const;
+
+function allStanceSeqIds(seqConfig: StanceSeqConfig): number[] {
+    return [
+        ...new Set([
+            seqConfig.idleSeqId,
+            seqConfig.walkSeqId,
+            seqConfig.runSeqId,
+            seqConfig.attackSeqId,
+            ...seqConfig.extraSeqs.map((extra) => extra.seqId),
+        ]),
+    ];
+}
+
+// Bakes one style's body (idle/walk/run/attack/specials), with no equipment: the body model never
+// changes with what's equipped, so it only needs baking once per style rather than once per
+// equipment combination.
+function createBodyAnimationSet(
     playerModelLoader: PlayerModelLoader,
     sceneBuf: SceneBuffer,
     baseNpc: NpcType,
     seqConfig: StanceSeqConfig,
-    appearanceItemIds: readonly number[],
 ): StanceAnimationSet | undefined {
     const appearance = new PlayerAppearance(
         baseNpc.modelIds,
-        appearanceItemIds,
+        [],
         PlayerGender.MALE,
         baseNpc.ambient,
         baseNpc.contrast,
     );
 
-    const seqIds = [
-        seqConfig.idleSeqId,
-        seqConfig.walkSeqId,
-        seqConfig.runSeqId,
-        seqConfig.attackSeqId,
-    ];
-
     const animationsBySeqId = new Map<number, AnimationFrames>();
-    for (const seqId of seqIds) {
-        if (animationsBySeqId.has(seqId)) {
-            continue;
-        }
+    for (const seqId of allStanceSeqIds(seqConfig)) {
         const anim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, seqId);
         if (!anim) {
             return undefined;
         }
         animationsBySeqId.set(seqId, anim);
-    }
-
-    for (const extra of seqConfig.extraSeqs) {
-        if (animationsBySeqId.has(extra.seqId)) {
-            continue;
-        }
-        const extraAppearance =
-            extra.itemId === undefined
-                ? appearance
-                : new PlayerAppearance(
-                      baseNpc.modelIds,
-                      [extra.itemId],
-                      PlayerGender.MALE,
-                      baseNpc.ambient,
-                      baseNpc.contrast,
-                  );
-        const anim = addPlayerAnimationFrames(
-            playerModelLoader,
-            sceneBuf,
-            extraAppearance,
-            extra.seqId,
-        );
-        if (!anim) {
-            return undefined;
-        }
-        animationsBySeqId.set(extra.seqId, anim);
     }
 
     return {
@@ -175,6 +152,55 @@ function createStanceAnimationSet(
     };
 }
 
+// Bakes one equipped item's own worn model, posed at every requested seq id. The item is merged
+// with the body (baseNpc.modelIds) before posing - a lone item model's vertex labels don't include
+// the parent bone groups the body carries, so animating it alone yields the wrong pose (verified
+// with scripts/cache/verify-item-attach-throwaway.ts: worst-case vertex delta of ~400 units on a
+// scimitar's attack swing). Only the item's own faces (everything from bodyFaceCount onward, since
+// ModelData.merge appends faces in source-model order) are written to the scene buffer, so the
+// body geometry itself is never duplicated into an item's baked mesh.
+function createItemAnimationSet(
+    playerModelLoader: PlayerModelLoader,
+    sceneBuf: SceneBuffer,
+    baseNpc: NpcType,
+    bodyFaceCount: number,
+    itemId: number,
+    seqIds: readonly number[],
+): ItemAnimationSet | undefined {
+    const appearance = new PlayerAppearance(
+        baseNpc.modelIds,
+        [itemId],
+        PlayerGender.MALE,
+        baseNpc.ambient,
+        baseNpc.contrast,
+    );
+
+    const animationsBySeqId = new Map<number, AnimationFrames>();
+    for (const seqId of seqIds) {
+        if (animationsBySeqId.has(seqId)) {
+            continue;
+        }
+        const anim = addPlayerAnimationFrames(
+            playerModelLoader,
+            sceneBuf,
+            appearance,
+            seqId,
+            bodyFaceCount,
+        );
+        if (!anim) {
+            return undefined;
+        }
+        animationsBySeqId.set(seqId, anim);
+    }
+
+    const idleSeqId = seqIds[0];
+    return {
+        idleSeqId,
+        idleAnim: animationsBySeqId.get(idleSeqId)!,
+        animationsBySeqId,
+    };
+}
+
 function createPlayerActorData(
     playerModelLoader: PlayerModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
@@ -182,32 +208,82 @@ function createPlayerActorData(
 ): PlayerActorData | undefined {
     const baseNpc = npcTypeLoader.load(3105);
 
-    const stanceVariants = new Map<StanceVisualKey, StanceAnimationSet>();
-    const defaultStanceKeyByStyle = {} as Record<WeaponStyle, StanceVisualKey>;
-    for (const style of [WeaponStyle.RANGED, WeaponStyle.MAGIC, WeaponStyle.MELEE] as const) {
+    const bodyByStyle = {} as Record<WeaponStyle, StanceAnimationSet>;
+    const seqIdsByStyle = {} as Record<WeaponStyle, readonly number[]>;
+    for (const style of ALL_STYLES) {
         const seqConfig = STANCE_SEQ_CONFIG[style];
-        const variants = stanceVisualVariants(style);
-        defaultStanceKeyByStyle[style] = variants[0].key;
-        for (const variant of variants) {
-            if (stanceVariants.has(variant.key)) {
-                continue;
-            }
-            const appearanceItemIds = stanceAppearanceItemIds(style, variant.equipment);
-            const set = createStanceAnimationSet(
-                playerModelLoader,
-                sceneBuf,
-                baseNpc,
-                seqConfig,
-                appearanceItemIds,
-            );
-            if (!set) {
+        const body = createBodyAnimationSet(playerModelLoader, sceneBuf, baseNpc, seqConfig);
+        if (!body) {
+            return undefined;
+        }
+        bodyByStyle[style] = body;
+        seqIdsByStyle[style] = allStanceSeqIds(seqConfig);
+    }
+
+    const bodyOnlyAppearance = new PlayerAppearance(
+        baseNpc.modelIds,
+        [],
+        PlayerGender.MALE,
+        baseNpc.ambient,
+        baseNpc.contrast,
+    );
+    const bodyOnlyModel = playerModelLoader.getModel(bodyOnlyAppearance, -1, -1);
+    if (!bodyOnlyModel) {
+        return undefined;
+    }
+    const bodyFaceCount = bodyOnlyModel.faceCount;
+
+    const itemsByItemId = new Map<number, ItemAnimationSet>();
+    const ensureItem = (itemId: number, seqIds: readonly number[]): boolean => {
+        if (itemsByItemId.has(itemId)) {
+            return true;
+        }
+        const set = createItemAnimationSet(
+            playerModelLoader,
+            sceneBuf,
+            baseNpc,
+            bodyFaceCount,
+            itemId,
+            seqIds,
+        );
+        if (!set) {
+            return false;
+        }
+        itemsByItemId.set(itemId, set);
+        return true;
+    };
+
+    for (const style of ALL_STYLES) {
+        const visibleSeqIds = attachmentVisibleSeqIds(seqIdsByStyle[style]);
+        for (const itemId of weaponVisualItemIds(style)) {
+            if (!ensureItem(itemId, visibleSeqIds)) {
                 return undefined;
             }
-            stanceVariants.set(variant.key, set);
+        }
+        const secondaryPath = secondaryPathForStyle(style);
+        if (secondaryPath) {
+            for (const itemId of visualGroupItemIds(secondaryPath)) {
+                if (!ensureItem(itemId, visibleSeqIds)) {
+                    return undefined;
+                }
+            }
         }
     }
 
-    return { stanceVariants, defaultStanceKeyByStyle };
+    const amuletSeqIds = attachmentVisibleSeqIds([
+        ...new Set(ALL_STYLES.flatMap((style) => seqIdsByStyle[style])),
+    ]);
+    for (const itemId of visualGroupItemIds(EquipmentPath.AMULET)) {
+        if (!ensureItem(itemId, amuletSeqIds)) {
+            return undefined;
+        }
+    }
+
+    if (!ensureItem(ELDER_MAUL_ITEM_ID, [MAUL_SMASH_CAST_SEQ_ID])) {
+        return undefined;
+    }
+
+    return { bodyByStyle, itemsByItemId };
 }
 
 // Bakes every OSRS item that can ever appear as a ground drop (every tier above tier 0 across

@@ -30,6 +30,18 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     const [downloadProgress, setDownloadProgress] = useState<DownloadProgress>();
 
+    // Gates the canvas/HUD/minimap reveal until the renderer has loaded the encounter's map
+    // squares, baked and uploaded its actors, spawned the encounter and pinned the camera to the
+    // player - so the user never sees a frame from before the spawn (default camera framing, no
+    // actors, or the jump when the camera first pins). The renderer keeps rendering underneath
+    // while this is false; only the loading screen covers it.
+    const [revealed, setRevealed] = useState(false);
+    const [loadingPhaseLabel, setLoadingPhaseLabel] = useState("Loading map");
+
+    useEffect(() => {
+        setRevealed(false);
+    }, [renderer]);
+
     const [hideUi, setHideUi] = useState(false);
     const [fps, setFps] = useState(0);
     const lastFpsUpdateRef = useRef(0);
@@ -86,6 +98,20 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     const animate = (time: DOMHighResTimeStamp) => {
         mapViewer.syncMusicTrack();
 
+        const ready = renderer.isReadyToReveal;
+        if (ready !== revealed) {
+            console.log(
+                `[startup] ${ready ? "revealed" : "gated"} at ${performance.now().toFixed(0)}ms`,
+            );
+            setRevealed(ready);
+        }
+        if (!ready) {
+            const label = renderer.isEncounterMapLoaded ? "Baking actors" : "Loading map";
+            if (label !== loadingPhaseLabel) {
+                setLoadingPhaseLabel(label);
+            }
+        }
+
         // Wait for 200ms before updating search params
         if (
             mapViewer.needsSearchParamUpdate &&
@@ -124,7 +150,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     useEffect(() => {
         requestRef.current = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(requestRef.current!);
-    }, [searchParams, hideUi]);
+    }, [searchParams, hideUi, renderer, revealed, loadingPhaseLabel]);
 
     useEffect(() => {
         const canvas = renderer.canvas;
@@ -196,13 +222,17 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                 />
             </div>
         );
+    } else if (!revealed) {
+        loadingBarOverlay = (
+            <div className="overlay-container loading-gate-overlay max-height">
+                <OsrsLoadingBar text={loadingPhaseLabel} />
+            </div>
+        );
     }
 
     return (
         <div className="max-height">
-            {loadingBarOverlay}
-
-            {menuProps && <OsrsMenu {...menuProps} />}
+            {revealed && menuProps && <OsrsMenu {...menuProps} />}
 
             <MapViewerControls
                 renderer={renderer}
@@ -212,7 +242,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                 setDownloadProgress={setDownloadProgress}
             />
 
-            {!hideUi && (
+            {revealed && !hideUi && (
                 <span>
                     <div className="hud left-top">
                         <MinimapContainer
@@ -236,7 +266,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                 </span>
             )}
 
-            {!hideUi && isTouchDevice && (
+            {revealed && !hideUi && isTouchDevice && (
                 <div className="joystick-container left">
                     <Joystick
                         size={75}
@@ -248,7 +278,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                     ></Joystick>
                 </div>
             )}
-            {!hideUi && isTouchDevice && (
+            {revealed && !hideUi && isTouchDevice && (
                 <div className="joystick-container right">
                     <Joystick
                         size={75}
@@ -265,8 +295,10 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
             <canvas
                 ref={hudCanvasRef}
                 className="hud-overlay-canvas"
-                style={{ display: hideUi ? "none" : "block" }}
+                style={{ display: hideUi || !revealed ? "none" : "block" }}
             />
+
+            {loadingBarOverlay}
         </div>
     );
 }

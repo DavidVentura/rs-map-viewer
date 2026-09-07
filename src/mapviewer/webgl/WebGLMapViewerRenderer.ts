@@ -33,7 +33,7 @@ import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour } from "../game/EnemyType";
-import { EQUIPMENT_PATH_LABELS, itemIdForTier } from "../game/Equipment";
+import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import { AbilityInput, AbilitySlotInput, PickupTarget } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
 import { groundStrikeProgress } from "../game/GroundStrike";
@@ -68,7 +68,8 @@ import {
     EnemyTypeAnimationSet,
     getEnemyAnimationFrames,
     getGroundItemAnimationFrames,
-    getPlayerAnimationFrames,
+    getPlayerBodyAnimationFrames,
+    getPlayerItemAnimationFrames,
     getStanceSeqIds,
 } from "./actor/ActorRenderData";
 import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
@@ -136,7 +137,8 @@ interface ColorRgb {
 }
 
 type ActiveActor =
-    | { kind: "player"; player: Player }
+    | { kind: "playerBody"; player: Player }
+    | { kind: "playerItem"; player: Player; itemId: number }
     | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
     | { kind: "projectile"; projectile: Projectile }
     | { kind: "effect"; effect: VisualEffect }
@@ -276,6 +278,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     // Actors: player, enemies, projectiles and visual effects, decoupled from any map square.
     actorBuffer?: WebGLActorBuffer;
+    // Textures the current actor bake needs that haven't been uploaded yet; set once the actor
+    // buffer's own vertex/index data has finished its chunked upload (see uploadPendingActorData).
+    private pendingActorTextures?: Map<number, Int32Array>;
     actorInstanceCount: number = 0;
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4);
     actorDataTextureBuffer: (Texture | undefined)[] = new Array(5);
@@ -283,6 +288,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     encounter: Encounter;
     encounterSpawned: boolean = false;
+    // Flips true the first time pinCameraToPlayer() actually repositions the camera after a spawn,
+    // i.e. once the camera has settled on its real third-person framing instead of the raw spawn
+    // coordinates. Used to gate the startup loading screen so the reveal never shows that jump.
+    private hasPinnedCameraSinceSpawn: boolean = false;
     private encounterCleared: boolean = false;
     private bossPhaseLabel?: string;
 
@@ -472,10 +481,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         super.initCache();
 
         this.encounter = this.mapViewer.encounter;
+        this.queueLoadActors();
         for (const { mapX, mapY } of this.encounter.mapSquares) {
             this.mapManager.loadMap(mapX, mapY);
         }
-        this.queueLoadActors();
 
         if (this.app) {
             this.initTextures();
@@ -968,14 +977,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
+    // Only allocates the actor buffer and starts its chunked upload (see uploadPendingActorData,
+    // driven from render()); the world/encounter reset happens immediately so a stale encounter
+    // can't spawn while the new one is still uploading.
     loadActors(data: ActorBufferData, time: number): void {
-        const perfStart = performance.now();
+        console.log(`[startup] actor bake received at ${performance.now().toFixed(0)}ms`);
         this.actorBuffer?.delete();
 
         const capacity =
             1 + this.encounter.enemySpawns.length + MAX_PROJECTILES + MAX_VISUAL_EFFECTS;
 
-        this.actorBuffer = WebGLActorBuffer.load(
+        this.actorBuffer = WebGLActorBuffer.create(
             this.app,
             this.actorProgram!,
             this.textureArray!,
@@ -985,14 +997,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             capacity,
             time,
         );
-        const afterBufferLoad = performance.now();
-        console.log(`[perf] loadActors buffer load: ${(afterBufferLoad - perfStart).toFixed(2)}ms`);
-
-        this.updateTextureArray(data.loadedTextures);
-        const afterTextureUpdate = performance.now();
-        console.log(
-            `[perf] loadActors updateTextureArray (${data.loadedTextures.size} textures): ${(afterTextureUpdate - afterBufferLoad).toFixed(2)}ms`,
-        );
+        this.pendingActorTextures = data.loadedTextures;
 
         const world = this.mapViewer.world;
         world.player = undefined;
@@ -1002,7 +1007,24 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.encounterSpawned = false;
         this.encounterCleared = false;
         this.bossPhaseLabel = undefined;
-        console.log(`[perf] loadActors total: ${(performance.now() - perfStart).toFixed(2)}ms`);
+        this.hasPinnedCameraSinceSpawn = false;
+    }
+
+    // Uploads one chunk of the pending actor buffer's vertex/index data (bufferSubData, a few MB
+    // at a time), then the bake's textures once the buffer itself is fully uploaded. Called once
+    // per frame from render() so a multi-megabyte actor bake never blocks the main thread in one go.
+    private uploadPendingActorData(): void {
+        if (!this.actorBuffer) {
+            return;
+        }
+        if (!this.actorBuffer.isFullyUploaded) {
+            this.actorBuffer.uploadNextChunk(WebGLActorBuffer.UPLOAD_CHUNK_BYTES);
+            return;
+        }
+        if (this.pendingActorTextures) {
+            this.updateTextureArray(this.pendingActorTextures);
+            this.pendingActorTextures = undefined;
+        }
     }
 
     isValidActorBufferData(data: ActorBufferData): boolean {
@@ -1012,8 +1034,25 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
     }
 
+    override get isEncounterMapLoaded(): boolean {
+        const { playerSpawn } = this.encounter;
+        return this.terrain.isLoaded(playerSpawn.level, playerSpawn.x, playerSpawn.y);
+    }
+
+    // True once the encounter has spawned and the camera has settled onto its real third-person
+    // framing: the earliest point at which a frame is safe to show the user (see MapViewerContainer,
+    // which keeps the loading screen up until this flips true).
+    override get isReadyToReveal(): boolean {
+        return this.encounterSpawned && this.hasPinnedCameraSinceSpawn;
+    }
+
     trySpawnEncounter(): void {
-        if (this.encounterSpawned || !this.actorBuffer) {
+        if (
+            this.encounterSpawned ||
+            !this.actorBuffer ||
+            !this.actorBuffer.isFullyUploaded ||
+            this.pendingActorTextures
+        ) {
             return;
         }
 
@@ -1023,7 +1062,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
-        const perfStart = performance.now();
         world.startEncounter(
             this.encounter,
             playerSpawn.x,
@@ -1033,7 +1071,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
         this.spawnPreviewEnemyIfNeeded();
         this.encounterSpawned = true;
-        console.log(`[perf] trySpawnEncounter (spawn only): ${(performance.now() - perfStart).toFixed(2)}ms`);
+        console.log(`[startup] encounter spawned at ${performance.now().toFixed(0)}ms`);
     }
 
     // The animation viewer's one preview enemy: spawned directly (not via the wave/static roster)
@@ -1359,6 +1397,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.loadActors(actorBufferData, timeSec);
             }
         }
+        this.uploadPendingActorData();
 
         if (showDebugTimer) {
             this.timer.end();
@@ -1957,6 +1996,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         camera.pos[2] = playerZ - distance * Math.cos(yaw) * Math.cos(pitch);
         camera.updated = true;
         camera.updatedPosition = true;
+        if (!this.hasPinnedCameraSinceSpawn) {
+            console.log(`[startup] camera pinned at ${performance.now().toFixed(0)}ms`);
+        }
+        this.hasPinnedCameraSinceSpawn = true;
     }
 
     private getTileFlagsForRoof(level: number, tileX: number, tileY: number): number | undefined {
@@ -2153,8 +2196,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const world = this.mapViewer.world;
         const actorData = actorBuffer.actorData;
 
+        // A player is drawn as several instances: the body plus one per currently equipped visible
+        // item (weapon + secondary offhand + amulet, or just the maul-smash override item) - see
+        // Equipment.equippedVisualItemIds. 4 is the most any of those combinations ever produces.
+        const PLAYER_MAX_INSTANCES = 4;
+
         const maxCount =
-            Number(world.player !== undefined) +
+            (world.player !== undefined ? PLAYER_MAX_INSTANCES : 0) +
             world.enemies.length +
             world.projectiles.length +
             world.visualEffects.length +
@@ -2183,18 +2231,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (player) {
             const groundHeight = this.tryGetHeight(player.level, player.x, player.y);
             if (groundHeight !== undefined) {
-                push(
-                    { kind: "player", player },
-                    {
-                        worldX: player.x,
-                        worldY: player.y,
-                        groundHeight,
-                        rotation: player.rotation,
-                        level: this.terrain.getRenderLevel(player.level, player.x, player.y),
-                        interactType: InteractType.NONE,
-                        interactId: 0,
-                    },
-                );
+                const instance: ActorInstance = {
+                    worldX: player.x,
+                    worldY: player.y,
+                    groundHeight,
+                    rotation: player.rotation,
+                    level: this.terrain.getRenderLevel(player.level, player.x, player.y),
+                    interactType: InteractType.NONE,
+                    interactId: 0,
+                };
+                push({ kind: "playerBody", player }, instance);
+                for (const itemId of equippedVisualItemIds(
+                    player.style,
+                    player.equipment,
+                    player.animation.seqId,
+                )) {
+                    push({ kind: "playerItem", player, itemId }, instance);
+                }
             }
         }
 
@@ -2413,12 +2466,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
         const actorData = this.actorBuffer.actorData;
         switch (actor.kind) {
-            case "player": {
+            case "playerBody": {
                 const { player } = actor;
-                const anim = getPlayerAnimationFrames(
+                const anim = getPlayerBodyAnimationFrames(
                     actorData.player,
                     player.style,
-                    player.equipment,
+                    player.animation.seqId,
+                );
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[player.animation.frame] ?? NULL_DRAW_RANGE;
+            }
+            case "playerItem": {
+                const { player, itemId } = actor;
+                const anim = getPlayerItemAnimationFrames(
+                    actorData.player,
+                    itemId,
                     player.animation.seqId,
                 );
                 const frames = alpha ? anim.framesAlpha : anim.frames;

@@ -58,11 +58,16 @@ export function addNpcAnimationFrames(
     };
 }
 
+// minFaceIndex restricts what gets written to the scene buffer to faces at or past that index,
+// e.g. an item baked merged with the body (for correct posing, see ActorRenderDataLoader.
+// createItemAnimationSet) but written as only its own attachment mesh, discarding the body's faces
+// that precede it in the merged model.
 export function addPlayerAnimationFrames(
     playerModelLoader: PlayerModelLoader,
     sceneBuf: SceneBuffer,
     appearance: PlayerAppearance,
     seqId: number,
+    minFaceIndex: number = 0,
 ): AnimationFrames | undefined {
     const seqType = playerModelLoader.seqTypeLoader.load(seqId);
     if (!seqType.frameIds || seqType.frameIds.length === 0) {
@@ -77,8 +82,8 @@ export function addPlayerAnimationFrames(
         if (!model) {
             return undefined;
         }
-        frames[i] = sceneBuf.addModelAnimFrame(model, false);
-        framesAlpha[i] = sceneBuf.addModelAnimFrame(model, true);
+        frames[i] = sceneBuf.addModelAnimFrame(model, false, minFaceIndex);
+        framesAlpha[i] = sceneBuf.addModelAnimFrame(model, true, minFaceIndex);
         if (framesAlpha[i][1] > 0) {
             alphaFrameCount++;
         }

@@ -30,6 +30,19 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
         );
     }
 
+    // Whether the map squares around the encounter's spawn point have loaded. Renderers without an
+    // encounter/spawn concept (e.g. WebGPU today) have nothing to wait for, so this defaults to true.
+    get isEncounterMapLoaded(): boolean {
+        return true;
+    }
+
+    // Whether the current frame is safe to show the user: the loading screen (see
+    // MapViewerContainer) stays up until this is true, so a renderer that never spawns anything
+    // reveals immediately.
+    get isReadyToReveal(): boolean {
+        return true;
+    }
+
     override async init() {
         this.mapViewer.inputManager.init(this.canvas);
     }
