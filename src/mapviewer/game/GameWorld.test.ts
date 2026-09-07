@@ -1,8 +1,9 @@
 import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
 import { Faction } from "./Combatant";
+import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
-import { EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 import { AbilitySlotInput, GameWorld, SimInput } from "./GameWorld";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { ARROW_SPEC } from "./Projectile";
@@ -64,6 +65,7 @@ function makeEnemyType(
         walkSpeed: 288 * 1.6,
         behaviour: EnemyBehaviour.RUSHER,
         abilities: [ENEMY_MELEE],
+        dropTier: DropTier.NONE,
     };
 }
 
@@ -89,6 +91,12 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 
 function idleInput(): SimInput {
     return { movement: { x: 0, y: 0, running: false }, abilities: idleAbilities() };
+}
+
+// Auto-picks the first upgrade offer whenever one is pending (a no-op otherwise), so a wave-clear
+// upgrade pause between waves doesn't stall a test that isn't exercising the upgrade flow itself.
+function autoUpgradeInput(): SimInput {
+    return { ...idleInput(), chooseUpgrade: 0 };
 }
 
 describe("GameWorld ability wiring", () => {
@@ -596,5 +604,93 @@ describe("Ground strike", () => {
         advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
 
         expect(player.health).toBe(player.maxHealth - 10);
+    });
+});
+
+function bossTestEncounter(): Encounter {
+    return {
+        id: EncounterId.QUICK_CAVE,
+        mapSquares: [],
+        playerSpawn: { x: 0, y: 0, level: 0 },
+        enemySpawns: [
+            { x: 5000, y: 0, level: 0 },
+            { x: -5000, y: 0, level: 0 },
+        ],
+        enemyTypeIds: [EnemyTypeId.TZ_KIH, EnemyTypeId.TZTOK_JAD, EnemyTypeId.YT_HURKOT],
+        spawnMode: EncounterSpawnMode.WAVES,
+        waves: [
+            {
+                groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
+                startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+            },
+            {
+                groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
+                startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
+                boss: true,
+            },
+        ],
+        ambientNpcs: false,
+        musicFile: "audio/test.opus",
+    };
+}
+
+describe("TzTok-Jad boss wave (integration)", () => {
+    it("only spawns Jad once the previous wave is fully dead, then clears the encounter once Jad dies", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+
+        world.advance(1 / 120, autoUpgradeInput());
+        expect(world.enemies.length).toBe(1);
+        expect(world.enemies[0].type.id).toBe(EnemyTypeId.TZ_KIH);
+        world.drainEvents();
+
+        advanceSeconds(world, autoUpgradeInput(), 1);
+        expect(world.enemies.some((enemy) => enemy.type.id === EnemyTypeId.TZTOK_JAD)).toBe(false);
+        expect(world.getWaveProgress()?.cleared).toBe(false);
+
+        world.enemies[0].health = 0;
+        advanceSeconds(world, autoUpgradeInput(), 0.1);
+
+        const jad = world.enemies.find((enemy) => enemy.type.id === EnemyTypeId.TZTOK_JAD);
+        expect(jad).toBeDefined();
+        expect(world.getWaveProgress()?.cleared).toBe(false);
+        world.drainEvents();
+
+        jad!.health = 0;
+        advanceSeconds(world, autoUpgradeInput(), 0.1);
+        const events = world.drainEvents();
+
+        expect(events.some((event) => event.kind === CombatEventKind.ENCOUNTER_CLEARED)).toBe(true);
+        expect(world.getWaveProgress()?.cleared).toBe(true);
+    });
+
+    it("spawns two Yt-HurKot healers and emits BOSS_PHASE once, when Jad's health first crosses 50%", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+
+        world.advance(1 / 120, autoUpgradeInput());
+        world.enemies[0].health = 0;
+        advanceSeconds(world, autoUpgradeInput(), 0.1);
+        world.drainEvents();
+
+        const jad = world.enemies.find((enemy) => enemy.type.id === EnemyTypeId.TZTOK_JAD)!;
+        expect(jad).toBeDefined();
+
+        jad.health = jad.maxHealth * 0.5;
+        world.advance(1 / 120, autoUpgradeInput());
+        const events = world.drainEvents();
+
+        expect(events.some((event) => event.kind === CombatEventKind.BOSS_PHASE)).toBe(true);
+        const healers = world.enemies.filter((enemy) => enemy.type.id === EnemyTypeId.YT_HURKOT);
+        expect(healers.length).toBe(2);
+
+        // Health dipping further below the threshold does not retrigger the phase or spawn more.
+        jad.health = jad.maxHealth * 0.1;
+        world.advance(1 / 120, autoUpgradeInput());
+        const laterEvents = world.drainEvents();
+        expect(laterEvents.some((event) => event.kind === CombatEventKind.BOSS_PHASE)).toBe(false);
+        expect(
+            world.enemies.filter((enemy) => enemy.type.id === EnemyTypeId.YT_HURKOT).length,
+        ).toBe(2);
     });
 });

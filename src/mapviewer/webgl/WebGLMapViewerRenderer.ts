@@ -32,7 +32,10 @@ import { AnimationPlayback, sequenceDurationSeconds } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
-import { AbilityInput, AbilitySlotInput } from "../game/GameWorld";
+import { EnemyBehaviour } from "../game/EnemyType";
+import { EQUIPMENT_PATH_LABELS, itemIdForTier } from "../game/Equipment";
+import { AbilityInput, AbilitySlotInput, PickupTarget } from "../game/GameWorld";
+import { GroundItem } from "../game/GroundItem";
 import { groundStrikeProgress } from "../game/GroundStrike";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
@@ -44,8 +47,11 @@ import { summarizeModifiers } from "../game/upgrades";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
+    BossHudInfo,
+    GroundItemHudInfo,
     GroundShadowHudInfo,
     HudFrame,
+    PickupFlashEvent,
     SplatEvent,
     SplatKind,
     UpgradeCardHudInfo,
@@ -61,6 +67,7 @@ import { ActorInstance, writeActorInstance } from "./actor/ActorInstanceData";
 import {
     EnemyTypeAnimationSet,
     getEnemyAnimationFrames,
+    getGroundItemAnimationFrames,
     getPlayerAnimationFrames,
     getStanceSeqIds,
 } from "./actor/ActorRenderData";
@@ -90,6 +97,12 @@ const INTERACTION_RADIUS = 5;
 // screen rect is within this radius, so aiming stays forgiving without becoming auto-aim.
 const ENEMY_HOVER_PICK_RADIUS_PX = 40;
 const ENEMY_BODY_HEIGHT_SCALE = 4;
+
+// Generous click target for a ground item: covers its floor label above the point, plus a radius
+// around the item's own projected screen point.
+const GROUND_ITEM_LABEL_HALF_WIDTH_PX = 90;
+const GROUND_ITEM_LABEL_HEIGHT_PX = 44;
+const GROUND_ITEM_PICK_RADIUS_PX = 32;
 
 // Projectiles and visual effects share the actor buffer's instance capacity with the player and
 // every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
@@ -126,7 +139,8 @@ type ActiveActor =
     | { kind: "player"; player: Player }
     | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
     | { kind: "projectile"; projectile: Projectile }
-    | { kind: "effect"; effect: VisualEffect };
+    | { kind: "effect"; effect: VisualEffect }
+    | { kind: "groundItem"; item: GroundItem };
 
 enum TextureFilterMode {
     DISABLED,
@@ -251,6 +265,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     closestInteractIndices: Map<number, number[]> = new Map();
     interactBuffer?: Float32Array;
     highlightedEnemy?: Enemy;
+    // Set by a click on a ground item's label/mesh (see buildPickupInput); cleared by a later click
+    // elsewhere, by the item being picked up or expiring, or by resolving to nothing on load.
+    private pickupTargetItemId?: number;
 
     npcRenderCount: number = 0;
     npcRenderData: Uint16Array = new Uint16Array(16 * 4);
@@ -267,6 +284,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     encounter: Encounter;
     encounterSpawned: boolean = false;
     private encounterCleared: boolean = false;
+    private bossPhaseLabel?: string;
 
     readonly terrain: WebGLTerrain;
 
@@ -777,38 +795,35 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private buildAnimationControls(preview: AnimPreviewParams): ReturnType<typeof folder> {
         const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
         const seqId = enemy?.previewSeqId ?? preview.seqRange.from;
+        const playback = enemy?.previewPlayback ?? AnimationPlayback.LOOP;
+        const playbackName = playback === AnimationPlayback.LOOP ? "Loop" : "Once";
         return folder(
             {
                 "Seq Id": {
-                    value: seqId,
-                    min: preview.seqRange.from,
-                    max: preview.seqRange.to,
-                    step: 1,
-                    onChange: (v: number) => {
-                        if (enemy) {
-                            enemy.previewSeqId = v;
-                        }
-                    },
+                    value: `${seqId} (${preview.seqRange.from}-${preview.seqRange.to})`,
+                    editable: false,
                 },
                 Prev: button(() => this.stepPreviewSeq(-1)),
                 Next: button(() => this.stepPreviewSeq(1)),
-                Playback: {
-                    value: enemy?.previewPlayback ?? AnimationPlayback.LOOP,
-                    options: { Loop: AnimationPlayback.LOOP, Once: AnimationPlayback.ONCE },
-                    onChange: (v: AnimationPlayback) => {
-                        if (!enemy) {
-                            return;
-                        }
-                        enemy.previewPlayback = v;
-                        this.restartPreviewAnimation();
-                        this.notifyControlsChanged?.();
-                    },
-                },
+                [`Playback: ${playbackName}`]: button(() => this.togglePreviewPlayback()),
                 Restart: button(() => this.restartPreviewAnimation()),
                 Info: { value: this.previewSeqInfo(seqId), editable: false },
             },
             { collapsed: false },
         );
+    }
+
+    private togglePreviewPlayback(): void {
+        const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
+        if (!enemy) {
+            return;
+        }
+        enemy.previewPlayback =
+            enemy.previewPlayback === AnimationPlayback.LOOP
+                ? AnimationPlayback.ONCE
+                : AnimationPlayback.LOOP;
+        this.restartPreviewAnimation();
+        this.notifyControlsChanged?.();
     }
 
     private stepPreviewSeq(direction: -1 | 1): void {
@@ -954,6 +969,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     loadActors(data: ActorBufferData, time: number): void {
+        const perfStart = performance.now();
         this.actorBuffer?.delete();
 
         const capacity =
@@ -969,8 +985,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             capacity,
             time,
         );
+        const afterBufferLoad = performance.now();
+        console.log(`[perf] loadActors buffer load: ${(afterBufferLoad - perfStart).toFixed(2)}ms`);
 
         this.updateTextureArray(data.loadedTextures);
+        const afterTextureUpdate = performance.now();
+        console.log(
+            `[perf] loadActors updateTextureArray (${data.loadedTextures.size} textures): ${(afterTextureUpdate - afterBufferLoad).toFixed(2)}ms`,
+        );
 
         const world = this.mapViewer.world;
         world.player = undefined;
@@ -979,6 +1001,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         world.visualEffects = [];
         this.encounterSpawned = false;
         this.encounterCleared = false;
+        this.bossPhaseLabel = undefined;
+        console.log(`[perf] loadActors total: ${(performance.now() - perfStart).toFixed(2)}ms`);
     }
 
     isValidActorBufferData(data: ActorBufferData): boolean {
@@ -999,6 +1023,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return;
         }
 
+        const perfStart = performance.now();
         world.startEncounter(
             this.encounter,
             playerSpawn.x,
@@ -1008,6 +1033,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
         this.spawnPreviewEnemyIfNeeded();
         this.encounterSpawned = true;
+        console.log(`[perf] trySpawnEncounter (spawn only): ${(performance.now() - perfStart).toFixed(2)}ms`);
     }
 
     // The animation viewer's one preview enemy: spawned directly (not via the wave/static roster)
@@ -1173,6 +1199,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             abilities: this.buildAbilityInput(),
             styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
             chooseUpgrade: this.buildUpgradeChoiceInput(),
+            pickupTarget: this.buildPickupInput(),
         });
         this.updateRoofHiding();
         this.pinCameraToPlayer();
@@ -1633,6 +1660,63 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         };
     }
 
+    // A click on a fresh press event either targets a ground item (label or a generous radius
+    // around its projected point, reusing the enemy picker's approach) or clears any pending
+    // pickup, the same way clicking an enemy or plain ground overrides a melee chase. The target
+    // also clears itself once the item is gone (picked up or expired).
+    private buildPickupInput(): PickupTarget | undefined {
+        const inputManager = this.mapViewer.inputManager;
+        if (!this.isPointerOverHud() && inputManager.isPressEvent()) {
+            this.pickupTargetItemId = pickEnemyNear(
+                { x: inputManager.pressEventX, y: inputManager.pressEventY },
+                this.buildGroundItemScreenCandidates(),
+                0,
+            );
+        }
+        if (this.pickupTargetItemId === undefined) {
+            return undefined;
+        }
+        if (!this.mapViewer.world.findGroundItem(this.pickupTargetItemId)) {
+            this.pickupTargetItemId = undefined;
+            return undefined;
+        }
+        return { groundItemId: this.pickupTargetItemId };
+    }
+
+    private buildGroundItemScreenCandidates(): EnemyScreenCandidate[] {
+        const candidates: EnemyScreenCandidate[] = [];
+        for (const item of this.mapViewer.world.groundItems) {
+            const rect = this.projectGroundItemScreenRect(item);
+            if (rect) {
+                candidates.push({ id: item.id, rect });
+            }
+        }
+        return candidates;
+    }
+
+    // Covers both the label (drawn above the item) and a generous radius around the item's own
+    // projected point, so clicking either the floor label or near the item mesh picks it up.
+    private projectGroundItemScreenRect(item: GroundItem): ScreenRect | undefined {
+        const groundHeight = this.terrain.getHeight(item.level, item.x, item.y);
+        const screen = worldToScreen(
+            this.mapViewer.camera.viewProjMatrix,
+            item.x,
+            item.y,
+            groundHeight,
+            this.canvas.clientWidth,
+            this.canvas.clientHeight,
+        );
+        if (!screen) {
+            return undefined;
+        }
+        return {
+            left: screen.x - GROUND_ITEM_LABEL_HALF_WIDTH_PX,
+            right: screen.x + GROUND_ITEM_LABEL_HALF_WIDTH_PX,
+            top: screen.y - GROUND_ITEM_LABEL_HEIGHT_PX - GROUND_ITEM_PICK_RADIUS_PX,
+            bottom: screen.y + GROUND_ITEM_PICK_RADIUS_PX,
+        };
+    }
+
     private buildAbilitySlots(player: Player): AbilitySlotHudInfo[] {
         const timeSeconds = this.mapViewer.world.timeSeconds;
         const bar = player.abilityBar;
@@ -1669,6 +1753,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const player = world.player;
 
         const splatEvents: SplatEvent[] = [];
+        const pickupFlashEvents: PickupFlashEvent[] = [];
         for (const event of world.drainEvents()) {
             if (event.kind === CombatEventKind.ENCOUNTER_CLEARED) {
                 this.encounterCleared = true;
@@ -1682,6 +1767,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     worldY: event.y,
                     groundHeight: this.terrain.getHeight(event.level, event.x, event.y),
                 });
+                continue;
+            }
+            if (event.kind === CombatEventKind.BOSS_PHASE) {
+                this.bossPhaseLabel = event.phaseLabel;
+                continue;
+            }
+            if (event.kind === CombatEventKind.ITEM_DROPPED) {
+                // world.groundItems already carries the dropped item; the HUD's floor label is
+                // rebuilt from that persistent state below, not from this one-off event.
+                continue;
+            }
+            if (event.kind === CombatEventKind.ITEM_PICKED_UP) {
+                const itemId = itemIdForTier(event.path, event.tierIndex);
+                const name = this.mapViewer.objTypeLoader.load(itemId).name;
+                pickupFlashEvents.push({ text: `Equipped: ${name}` });
                 continue;
             }
             const groundHeight = this.terrain.getHeight(
@@ -1743,6 +1843,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             });
         }
 
+        const groundItems: GroundItemHudInfo[] = [];
+        for (const item of world.groundItems) {
+            const groundHeight = this.terrain.getHeight(item.level, item.x, item.y);
+            const screen = worldToScreen(
+                camera.viewProjMatrix,
+                item.x,
+                item.y,
+                groundHeight,
+                this.canvas.clientWidth,
+                this.canvas.clientHeight,
+            );
+            if (!screen) {
+                continue;
+            }
+            const itemId = itemIdForTier(item.path, item.tierIndex);
+            groundItems.push({
+                groundItemId: item.id,
+                screenX: screen.x,
+                screenY: screen.y,
+                name: this.mapViewer.objTypeLoader.load(itemId).name,
+                pathLabel: EQUIPMENT_PATH_LABELS[item.path],
+            });
+        }
+
         const waveProgress = world.getWaveProgress();
 
         const targetEnemy = this.highlightedEnemy;
@@ -1750,6 +1874,19 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const switchProgress = player?.styleSwitchProgress(world.timeSeconds);
         const switchTarget = player?.pendingStyle(world.timeSeconds);
+
+        const bossEnemy = world.enemies.find(
+            (enemy) =>
+                enemy.type.behaviour === EnemyBehaviour.BOSS && enemy.state !== EnemyState.DEAD,
+        );
+        const bossNpcType = bossEnemy && this.resolveEnemyNpcType(bossEnemy);
+        const boss: BossHudInfo | undefined = bossEnemy &&
+            bossNpcType && {
+                name: bossNpcType.name,
+                health: bossEnemy.health,
+                maxHealth: bossEnemy.maxHealth,
+                phaseLabel: this.bossPhaseLabel,
+            };
 
         return {
             viewProjMatrix: camera.viewProjMatrix,
@@ -1775,6 +1912,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     : undefined,
             splatEvents,
             groundShadows,
+            groundItems,
+            pickupFlashEvents,
             wave: waveProgress && {
                 index: waveProgress.index,
                 total: waveProgress.total,
@@ -1797,6 +1936,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 ),
             },
             previewSeqId: this.mapViewer.animPreview ? world.enemies[0]?.previewSeqId : undefined,
+            boss,
         };
     }
 
@@ -2017,7 +2157,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             Number(world.player !== undefined) +
             world.enemies.length +
             world.projectiles.length +
-            world.visualEffects.length;
+            world.visualEffects.length +
+            world.groundItems.length;
 
         if (this.actorInstanceData.length / 4 < maxCount) {
             const newData = new Uint32Array(Math.ceil((maxCount * 2) / 16) * 16 * 4);
@@ -2118,6 +2259,25 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     groundHeight: groundHeight + effect.height,
                     rotation: 0,
                     level: this.terrain.getRenderLevel(effect.level, effect.x, effect.y),
+                    interactType: InteractType.NONE,
+                    interactId: 0,
+                },
+            );
+        }
+
+        for (const item of world.groundItems) {
+            const groundHeight = this.tryGetHeight(item.level, item.x, item.y);
+            if (groundHeight === undefined) {
+                continue;
+            }
+            push(
+                { kind: "groundItem", item },
+                {
+                    worldX: item.x,
+                    worldY: item.y,
+                    groundHeight,
+                    rotation: 0,
+                    level: this.terrain.getRenderLevel(item.level, item.x, item.y),
                     interactType: InteractType.NONE,
                     interactId: 0,
                 },
@@ -2258,6 +2418,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 const anim = getPlayerAnimationFrames(
                     actorData.player,
                     player.style,
+                    player.equipment,
                     player.animation.seqId,
                 );
                 const frames = alpha ? anim.framesAlpha : anim.frames;
@@ -2280,6 +2441,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 const anim = actorData.projectiles.effectAnimations[effect.kind];
                 const frames = alpha ? anim.framesAlpha : anim.frames;
                 return frames?.[effect.animation.frame] ?? NULL_DRAW_RANGE;
+            }
+            case "groundItem": {
+                const { item } = actor;
+                const itemId = itemIdForTier(item.path, item.tierIndex);
+                const anim = getGroundItemAnimationFrames(actorData.groundItems, itemId);
+                const frames = alpha ? anim?.framesAlpha : anim?.frames;
+                return frames?.[0] ?? NULL_DRAW_RANGE;
             }
         }
     }

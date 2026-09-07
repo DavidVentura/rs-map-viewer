@@ -178,7 +178,13 @@ export class ByteBuffer {
     }
 
     readUnsignedBytes(amount: number): Uint8Array {
-        const bytes = new Uint8Array(this._data.buffer).subarray(this.offset, this.offset + amount);
+        // this._data may itself be a view into a larger buffer (e.g. one entry of a bundled
+        // cache), so the read must be anchored to its byteOffset, not to the buffer's byte 0.
+        const bytes = new Uint8Array(
+            this._data.buffer,
+            this._data.byteOffset + this.offset,
+            amount,
+        );
         this.offset += amount;
         return bytes;
     }

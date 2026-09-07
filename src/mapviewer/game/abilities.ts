@@ -1,5 +1,5 @@
 import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from "./Ability";
-import { ARROW_SPEC, MAGIC_SPEC, POWER_SHOT_SPEC } from "./Projectile";
+import { ARROW_SPEC, JAD_MAGE_BLAST_SPEC, MAGIC_SPEC, POWER_SHOT_SPEC } from "./Projectile";
 import { ICE_BARRAGE_HIT_SEQ_ID, VisualEffectKind } from "./VisualEffect";
 
 export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
@@ -269,6 +269,88 @@ export const MAUL_SMASH: AbilityDefinition = {
         angleRadians: (2 * Math.PI) / 3,
         reach: 3 * 128,
     },
+};
+
+// TzTok-Jad's three attacks, verified from the cache (see EnemyType.ts's TZTOK_JAD comment for how
+// the cast seq ids were picked). Cycled in a fixed pattern (see EnemyType.BossPattern) rather than
+// picked by priority, so each ability's own lock just needs to cover the recovery pause before the
+// pattern's next entry becomes eligible, not to sequence the attacks itself.
+const JAD_ATTACK_RECHARGE_SECONDS = 2.5;
+
+export const JAD_MELEE_BITE_CAST_SEQ_ID = 2655;
+
+export const JAD_MELEE_BITE: AbilityDefinition = {
+    id: "jad_melee_bite",
+    name: "TzTok-Jad Bite",
+    windupSeconds: 1.2,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: JAD_ATTACK_RECHARGE_SECONDS }],
+    castSeqId: JAD_MELEE_BITE_CAST_SEQ_ID,
+    effect: { kind: AbilityEffectKind.MELEE, minDamage: 20, maxDamage: 35, reach: 48 },
+};
+
+export const JAD_RANGED_STOMP_CAST_SEQ_ID = 2652;
+
+export const JAD_RANGED_STOMP: AbilityDefinition = {
+    id: "jad_ranged_stomp",
+    name: "TzTok-Jad Stomp",
+    windupSeconds: 1.4,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: JAD_ATTACK_RECHARGE_SECONDS }],
+    castSeqId: JAD_RANGED_STOMP_CAST_SEQ_ID,
+    effect: {
+        kind: AbilityEffectKind.GROUND_STRIKE,
+        radiusTiles: 1.5,
+        telegraphSeconds: 1.6,
+        damageMin: 30,
+        damageMax: 45,
+        range: 10 * 128,
+    },
+};
+
+export const JAD_MAGE_BLAST_CAST_SEQ_ID = 2656;
+
+export const JAD_MAGE_BLAST: AbilityDefinition = {
+    id: "jad_mage_blast",
+    name: "TzTok-Jad Mage Blast",
+    windupSeconds: 1.5,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: JAD_ATTACK_RECHARGE_SECONDS + 1 }],
+    castSeqId: JAD_MAGE_BLAST_CAST_SEQ_ID,
+    effect: {
+        kind: AbilityEffectKind.PROJECTILE,
+        spec: JAD_MAGE_BLAST_SPEC,
+        damageMin: 25,
+        damageMax: 40,
+    },
+};
+
+// Yt-HurKot: same heal pulse as Yt-MejKot but bigger, reusing the shared heal cast seq (see
+// EnemyType.ts's YT_HURKOT comment).
+export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
+    id: "yt_hurkot_heal_pulse",
+    name: "Yt-HurKot Heal Pulse",
+    windupSeconds: 0.4,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.HEAL],
+    locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
+    castSeqId: YT_MEJKOT_HEAL_SEQ_ID,
+    effect: { kind: AbilityEffectKind.HEAL_ALLIES, radiusTiles: 4, amount: 30 },
 };
 
 export function buildPlayerAbilityBar(style: WeaponStyle): readonly AbilityDefinition[] {

@@ -153,6 +153,108 @@ describe("stepWaveDirector", () => {
     });
 });
 
+describe("boss waves", () => {
+    function bossWave(
+        startCondition: WaveStartCondition = { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+    ): Wave {
+        return {
+            groups: [{ enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 }],
+            startCondition,
+            boss: true,
+        };
+    }
+
+    it("does not start until every earlier wave (not just the immediately previous one) has died down to nothing", () => {
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+            bossWave(),
+        ];
+        let state = initialWaveDirectorState(table.length);
+        state = stepWaveDirector(state, table, 0, [0, 0, 0], [0, 0, 0]).nextState;
+        state = stepWaveDirector(state, table, 0, [4, 0, 0], [0, 0, 0]).nextState;
+        expect(state.nextWaveIndex).toBe(2);
+
+        // Wave 1 is fully alive, which alone would satisfy maxPreviousAliveFraction: 1, but wave 0
+        // still has 2 survivors, so the boss must keep waiting.
+        const stillBlocked = stepWaveDirector(state, table, 1, [2, 6, 0], [2, 0, 0]);
+        expect(stillBlocked.nextState.nextWaveIndex).toBe(2);
+        expect(stillBlocked.spawns.length).toBe(0);
+
+        const allClear = stepWaveDirector(state, table, 1, [0, 0, 0], [4, 6, 0]);
+        expect(allClear.nextState.nextWaveIndex).toBe(3);
+        expect(allClear.spawns).toEqual([
+            {
+                waveIndex: 2,
+                enemyTypeId: EnemyTypeId.KET_ZEK,
+                statsOverride: { healthMultiplier: 1, speedMultiplier: 1 },
+            },
+        ]);
+    });
+
+    it("ignores its own startCondition, using only the all-earlier-waves-dead rule", () => {
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+            bossWave({ maxPreviousAliveFraction: 0, maxElapsedSeconds: 0 }),
+        ];
+        let state = initialWaveDirectorState(table.length);
+        state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
+
+        // If the boss's own 0-second elapsed-time fallback were honored it would start here; it
+        // must still wait for wave 0 to clear instead.
+        const stillAlive = stepWaveDirector(state, table, 5, [4, 0], [0, 0]);
+        expect(stillAlive.spawns.length).toBe(0);
+
+        const cleared = stepWaveDirector(state, table, 5, [0, 0], [4, 0]);
+        expect(cleared.spawns.length).toBe(1);
+    });
+
+    it("blocks the next wave from starting while the boss wave is active, even though its own start condition would normally allow it immediately", () => {
+        const table = [bossWave(), wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        let state = initialWaveDirectorState(table.length);
+        state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
+        expect(state.nextWaveIndex).toBe(1);
+
+        const bossStillAlive = stepWaveDirector(state, table, 1, [1, 0], [0, 0]);
+        expect(bossStillAlive.nextState.nextWaveIndex).toBe(1);
+        expect(bossStillAlive.spawns.length).toBe(0);
+    });
+
+    it("lets the next wave start once the boss wave is fully cleared", () => {
+        const table = [bossWave(), wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        let state = initialWaveDirectorState(table.length);
+        state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
+
+        const bossCleared = stepWaveDirector(state, table, 1, [0, 0], [1, 0]);
+        expect(bossCleared.nextState.nextWaveIndex).toBe(2);
+        expect(bossCleared.spawns.length).toBe(6);
+    });
+
+    it("never overlaps with the waves before or after it", () => {
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 12 }),
+            bossWave(),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+        ];
+        let state = initialWaveDirectorState(table.length);
+        state = stepWaveDirector(state, table, 0, [0, 0, 0], [0, 0, 0]).nextState;
+
+        // Wave 0 is only half alive, which would normally be enough to overlap the next wave, but
+        // that next wave is the boss, which needs wave 0 fully dead.
+        const partial = stepWaveDirector(state, table, 1, [2, 0, 0], [2, 0, 0]);
+        expect(partial.spawns.length).toBe(0);
+        expect(partial.nextState.nextWaveIndex).toBe(1);
+
+        const bossStarts = stepWaveDirector(state, table, 1, [0, 0, 0], [4, 0, 0]);
+        expect(bossStarts.spawns.length).toBe(1);
+        expect(bossStarts.nextState.nextWaveIndex).toBe(2);
+
+        const bossActive = stepWaveDirector(bossStarts.nextState, table, 2, [0, 1, 0], [4, 0, 0]);
+        expect(bossActive.spawns.length).toBe(0);
+        expect(bossActive.nextState.nextWaveIndex).toBe(2);
+    });
+});
+
 describe("pickFarthestSpawnPoint", () => {
     it("picks the pool point farthest from the player", () => {
         const pool = [

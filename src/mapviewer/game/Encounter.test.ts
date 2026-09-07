@@ -5,7 +5,7 @@ import {
     getEncounter,
     parseEncounterId,
 } from "./Encounter";
-import { ENEMY_TYPES } from "./EnemyType";
+import { ENEMY_TYPES, EnemyTypeId } from "./EnemyType";
 
 function tileKey(x: number, y: number, level: number): string {
     return `${x >> 7},${y >> 7},${level}`;
@@ -73,20 +73,37 @@ describe("encounters", () => {
     it("Fight Caves ramps across several waves and mixes in the tankier Tz-Kek", () => {
         const encounter = getEncounter(EncounterId.FIGHT_CAVES);
         expect(encounter.spawnMode).toBe(EncounterSpawnMode.WAVES);
-        expect(encounter.waves.length).toBeGreaterThanOrEqual(8);
-        expect(encounter.waves.length).toBeLessThanOrEqual(10);
+        // 8-10 regular waves plus the TzTok-Jad finale.
+        expect(encounter.waves.length).toBeGreaterThanOrEqual(9);
+        expect(encounter.waves.length).toBeLessThanOrEqual(11);
 
-        const groupCounts = encounter.waves.map((wave) =>
+        const regularWaves = encounter.waves.filter((wave) => !wave.boss);
+        const groupCounts = regularWaves.map((wave) =>
             wave.groups.reduce((sum, group) => sum + group.count, 0),
         );
         expect(groupCounts[0]).toBeLessThan(groupCounts[groupCounts.length - 1]);
         expect(groupCounts[groupCounts.length - 1]).toBeGreaterThanOrEqual(20);
 
-        const hasTankierMix = encounter.waves.some(
+        const hasTankierMix = regularWaves.some(
             (wave) => wave.groups.length > 1 || wave.modifiers !== undefined,
         );
         expect(hasTankierMix).toBe(true);
     });
+
+    it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE])(
+        "%s ends with a single-enemy TzTok-Jad boss wave that no earlier wave overlaps",
+        (id) => {
+            const encounter = getEncounter(id);
+            const lastWave = encounter.waves[encounter.waves.length - 1];
+            expect(lastWave.boss).toBe(true);
+            expect(lastWave.groups).toEqual([{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }]);
+            expect(encounter.enemyTypeIds).toContain(EnemyTypeId.TZTOK_JAD);
+            expect(encounter.enemyTypeIds).toContain(EnemyTypeId.YT_HURKOT);
+
+            const earlierWaves = encounter.waves.slice(0, -1);
+            expect(earlierWaves.every((wave) => !wave.boss)).toBe(true);
+        },
+    );
 
     it.each(Object.values(EncounterId))("%s only references known enemy types", (id) => {
         const encounter = getEncounter(id);

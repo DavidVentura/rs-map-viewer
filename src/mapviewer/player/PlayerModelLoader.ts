@@ -1,3 +1,4 @@
+import { ObjType } from "../../rs/config/objtype/ObjType";
 import { ObjTypeLoader } from "../../rs/config/objtype/ObjTypeLoader";
 import { SeqType } from "../../rs/config/seqtype/SeqType";
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
@@ -30,14 +31,21 @@ export class PlayerModelLoader {
     }
 
     private buildBaseModel(appearance: PlayerAppearance): Model | undefined {
-        const modelIds = [...appearance.baseModelIds, ...this.getEquipmentModelIds(appearance)];
         const models: ModelData[] = [];
-        for (const id of modelIds) {
+        for (const id of appearance.baseModelIds) {
             const model = this.modelLoader.getModel(id);
             if (!model) {
                 return undefined;
             }
             models.push(model);
+        }
+
+        for (const itemId of appearance.equippedItemIds) {
+            const equipmentModels = this.getEquipmentModels(itemId, appearance.gender);
+            if (!equipmentModels) {
+                return undefined;
+            }
+            models.push(...equipmentModels);
         }
 
         if (models.length === 0) {
@@ -54,21 +62,48 @@ export class PlayerModelLoader {
         );
     }
 
-    private getEquipmentModelIds(appearance: PlayerAppearance): number[] {
-        const modelIds: number[] = [];
-        for (const itemId of appearance.equippedItemIds) {
-            const item = this.objTypeLoader.load(itemId);
-            const wornModelIds =
-                appearance.gender === PlayerGender.MALE
-                    ? [item.maleModel, item.maleModel1, item.maleModel2]
-                    : [item.femaleModel, item.femaleModel1, item.femaleModel2];
-            for (const modelId of wornModelIds) {
-                if (modelId !== -1) {
-                    modelIds.push(modelId);
+    // Recolor/retexture indices are the item's own palette values, so each item's tables must be
+    // applied to that item's own worn model(s) here, before merging with other equipped items:
+    // applying them after merging could recolor unrelated faces from other items that happen to
+    // share the same "from" palette value.
+    private getEquipmentModels(itemId: number, gender: PlayerGender): ModelData[] | undefined {
+        const item = this.objTypeLoader.load(itemId);
+        const wornModelIds =
+            gender === PlayerGender.MALE
+                ? [item.maleModel, item.maleModel1, item.maleModel2]
+                : [item.femaleModel, item.femaleModel1, item.femaleModel2];
+
+        const models: ModelData[] = [];
+        for (const modelId of wornModelIds) {
+            if (modelId === -1) {
+                continue;
+            }
+            const modelData = this.modelLoader.getModel(modelId);
+            if (!modelData) {
+                return undefined;
+            }
+            this.applyItemRecolor(modelData, item);
+            models.push(modelData);
+        }
+        return models;
+    }
+
+    private applyItemRecolor(modelData: ModelData, item: ObjType): void {
+        if (item.recolorFrom) {
+            const retexture = item.cacheInfo.game === "runescape" && item.cacheInfo.revision <= 464;
+            for (let i = 0; i < item.recolorFrom.length; i++) {
+                modelData.recolor(item.recolorFrom[i], item.recolorTo[i]);
+                if (retexture) {
+                    modelData.retexture(item.recolorFrom[i], item.recolorTo[i]);
                 }
             }
         }
-        return modelIds;
+
+        if (item.retextureFrom) {
+            for (let i = 0; i < item.retextureFrom.length; i++) {
+                modelData.retexture(item.retextureFrom[i], item.retextureTo[i]);
+            }
+        }
     }
 
     private transformModel(model: Model, sequence: SeqType, frame: number): Model {

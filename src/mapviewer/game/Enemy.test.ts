@@ -9,8 +9,9 @@ import {
     computeKeepDistanceMovement,
     decideEnemyState,
     enemyAttackRange,
+    selectPatternAbility,
 } from "./Enemy";
-import { EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 import { ARROW_SPEC } from "./Projectile";
 import { Terrain } from "./Terrain";
 import {
@@ -260,6 +261,7 @@ const TEST_ENEMY_TYPE: EnemyType = {
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [ENEMY_MELEE],
+    dropTier: DropTier.NONE,
 };
 
 const TEST_KITER_TYPE: EnemyType = {
@@ -275,6 +277,7 @@ const TEST_KITER_TYPE: EnemyType = {
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 512 },
     abilities: [TOK_XIL_GROUND_STRIKE],
+    dropTier: DropTier.NONE,
 };
 
 const TEST_TANK_TYPE: EnemyType = {
@@ -289,6 +292,7 @@ const TEST_TANK_TYPE: EnemyType = {
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.TANK,
     abilities: [YT_MEJKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
+    dropTier: DropTier.NONE,
 };
 
 function makeEnemy(): Enemy {
@@ -554,5 +558,140 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_MELEE);
+    });
+});
+
+describe("selectPatternAbility", () => {
+    const A: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_a" };
+    const B: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_b" };
+    const C: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_c" };
+    const pattern = [A, B, C];
+
+    it("picks the entry at startIndex when it is usable, advancing to the next index", () => {
+        expect(selectPatternAbility(pattern, 0, () => true)).toEqual({
+            ability: A,
+            nextIndex: 1,
+        });
+    });
+
+    it("wraps from the last entry back to the first", () => {
+        expect(selectPatternAbility(pattern, 2, () => true)).toEqual({
+            ability: C,
+            nextIndex: 0,
+        });
+    });
+
+    it("skips an entry that fails the usability check (e.g. melee out of range) and tries the next one in the cycle", () => {
+        const isUsable = (ability: AbilityDefinition) => ability !== A;
+        expect(selectPatternAbility(pattern, 0, isUsable)).toEqual({ ability: B, nextIndex: 2 });
+    });
+
+    it("returns undefined when no entry in the pattern is usable", () => {
+        expect(selectPatternAbility(pattern, 0, () => false)).toBeUndefined();
+    });
+
+    it("passes each skipped candidate's own index to the usability check", () => {
+        const seenIndices: number[] = [];
+        selectPatternAbility(pattern, 1, (_, index) => {
+            seenIndices.push(index);
+            return index === 0;
+        });
+        // Starting at 1: tries 1, 2, then wraps to 0, which is the first accepted.
+        expect(seenIndices).toEqual([1, 2, 0]);
+    });
+});
+
+const TEST_BOSS_MELEE: AbilityDefinition = { ...ENEMY_MELEE, id: "boss_melee" };
+const TEST_BOSS_RANGED: AbilityDefinition = {
+    ...ENEMY_MELEE,
+    id: "boss_ranged",
+    effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
+};
+
+const TEST_BOSS_TYPE: EnemyType = {
+    id: EnemyTypeId.TZTOK_JAD,
+    npcTypeId: 0,
+    idleSeqId: 1,
+    walkSeqId: 2,
+    deathSeqId: 3,
+    attackSeqId: 4,
+    hitRadius: 192,
+    maxHealth: 1200,
+    walkSpeed: 288 * 1.6,
+    behaviour: EnemyBehaviour.BOSS,
+    engagement: { leashRangeTiles: 6 },
+    pattern: [TEST_BOSS_MELEE, TEST_BOSS_RANGED],
+    abilities: [TEST_BOSS_MELEE, TEST_BOSS_RANGED],
+    dropTier: DropTier.BOSS,
+};
+
+describe("BOSS behaviour (integration through Enemy.update)", () => {
+    it("skips the melee pattern entry when the player is out of melee range and casts the ranged one instead", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_BOSS_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(1000, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_RANGED);
+    });
+
+    it("casts the melee pattern entry, in pattern order, once the player is adjacent", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_BOSS_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(50, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_MELEE);
+    });
+
+    it("advances through the pattern in order across repeated casts, not re-picking the entry it just used", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_BOSS_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(50, 0, 0);
+        const frame = 0.05;
+        let time = 10;
+
+        enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_MELEE);
+
+        let guard = 0;
+        while (enemy.state !== EnemyState.CHASE && guard < 1000) {
+            time += frame;
+            enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+            guard++;
+        }
+        expect(enemy.state).toBe(EnemyState.CHASE);
+
+        time += frame;
+        enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_RANGED);
+    });
+
+    it("holds ground instead of closing to melee range while the player is within the leash range", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_BOSS_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(500, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.x).toBe(0);
+        expect(enemy.y).toBe(0);
+    });
+
+    it("approaches once the player is beyond both the leash range and every pattern entry's cast range", () => {
+        const enemy = new Enemy(1, 0, 0, 0, 0, 0, TEST_BOSS_TYPE);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(ARROW_SPEC.range + 1000, 0, 0);
+
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+
+        expect(enemy.state).toBe(EnemyState.CHASE);
+        expect(enemy.x).toBeGreaterThan(0);
     });
 });

@@ -5,6 +5,9 @@ import { CacheFiles } from "./CacheFiles";
 import { CacheIndex, CacheIndexDat, CacheIndexDat2, LegacyCacheIndex } from "./CacheIndex";
 import { CacheType } from "./CacheType";
 import { IndexType } from "./IndexType";
+import { decodeCacheBundle } from "./bundle/CacheBundle";
+import { BundleCacheStore } from "./store/BundleCacheStore";
+import { CacheStore } from "./store/CacheStore";
 import { MemoryStore } from "./store/MemoryStore";
 
 export class CacheSystem<A extends ApiType = ApiType.SYNC> {
@@ -81,11 +84,34 @@ export class CacheSystem<A extends ApiType = ApiType.SYNC> {
                 return CacheSystem.loadLegacy(cacheFiles);
             case "dat":
             case "dat2":
+                // A bundle holds pre-extracted archives rather than physical dat2/idx sectors, so
+                // it bypasses MemoryStore entirely instead of being reassembled into one.
+                const bundleData = cacheFiles.files.get(CacheFiles.BUNDLE_FILE_NAME);
+                if (bundleData) {
+                    return CacheSystem.fromBundleBuffer(bundleData);
+                }
                 const store = MemoryStore.fromFiles(cacheFiles, indicesToLoad);
                 const indices = CacheSystem.loadIndicesFromStore(cacheType, store);
                 return new CacheSystem(indices);
         }
         throw new Error("Not implemented");
+    }
+
+    static fromBundleBuffer(buffer: ArrayBuffer): CacheSystem {
+        const bundle = decodeCacheBundle(buffer);
+        const store = new BundleCacheStore(bundle);
+        return CacheSystem.fromStore(store, bundle.header.indexIds);
+    }
+
+    // Builds a dat2 CacheSystem directly from a CacheStore, e.g. a RecordingCacheStore during
+    // bundle building or a BundleCacheStore at bundle load time, without going through
+    // MemoryStore/CacheFiles at all.
+    static fromStore(store: CacheStore<ApiType.SYNC>, indexIds: readonly number[]): CacheSystem {
+        const indices: (CacheIndex | undefined)[] = [];
+        for (const id of indexIds) {
+            indices[id] = CacheIndexDat2.fromStore(id, store);
+        }
+        return new CacheSystem(indices);
     }
 
     constructor(readonly indices: (CacheIndex<A> | undefined)[]) {}

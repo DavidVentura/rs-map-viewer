@@ -45,6 +45,10 @@ export type Wave = {
     readonly groups: readonly WaveGroup[];
     readonly startCondition: WaveStartCondition;
     readonly modifiers?: WaveModifiers;
+    // A boss wave only starts once every earlier wave has died down to nothing (its own
+    // startCondition is ignored), and no later wave starts until it is itself cleared: it never
+    // overlaps with what comes before or after it. See WaveDirector's stepWaveDirector.
+    readonly boss?: boolean;
 };
 
 export enum EncounterSpawnMode {
@@ -141,6 +145,14 @@ const FIGHT_CAVES_LATE_START: WaveStartCondition = {
     maxElapsedSeconds: 10,
 };
 
+// TzTok-Jad, the finale: only starts once every earlier wave is fully dead (see Wave.boss), so its
+// own startCondition numbers are never actually consulted.
+const JAD_BOSS_WAVE: Wave = {
+    groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
+    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
+    boss: true,
+};
+
 const FIGHT_CAVES: Encounter = {
     id: EncounterId.FIGHT_CAVES,
     mapSquares: [
@@ -168,6 +180,8 @@ const FIGHT_CAVES: Encounter = {
         EnemyTypeId.TOK_XIL,
         EnemyTypeId.KET_ZEK,
         EnemyTypeId.YT_MEJKOT,
+        EnemyTypeId.TZTOK_JAD,
+        EnemyTypeId.YT_HURKOT,
     ],
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
@@ -251,19 +265,32 @@ const FIGHT_CAVES: Encounter = {
             startCondition: FIGHT_CAVES_LATE_START,
             modifiers: { healthMultiplier: 1.15 },
         },
+        JAD_BOSS_WAVE,
     ],
 };
 
-const QUICK_CAVE_ENEMY_TYPE_IDS = [EnemyTypeId.TOK_XIL, EnemyTypeId.YT_MEJKOT, EnemyTypeId.KET_ZEK];
+const QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS = [
+    EnemyTypeId.TOK_XIL,
+    EnemyTypeId.YT_MEJKOT,
+    EnemyTypeId.KET_ZEK,
+];
+const QUICK_CAVE_ENEMY_TYPE_IDS = [
+    ...QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS,
+    EnemyTypeId.TZTOK_JAD,
+    EnemyTypeId.YT_HURKOT,
+];
 
 const QUICK_CAVE: Encounter = {
     ...FIGHT_CAVES,
     id: EncounterId.QUICK_CAVE,
     enemyTypeIds: QUICK_CAVE_ENEMY_TYPE_IDS,
-    waves: QUICK_CAVE_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
-        groups: [{ enemyTypeId, count: 1 }],
-        startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
-    })),
+    waves: [
+        ...QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
+            groups: [{ enemyTypeId, count: 1 }],
+            startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
+        })),
+        JAD_BOSS_WAVE,
+    ],
 };
 
 export const ENCOUNTERS: Readonly<Record<EncounterId, Encounter>> = {

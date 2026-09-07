@@ -1,4 +1,4 @@
-import { EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 
 export type SeqRange = {
     readonly from: number;
@@ -79,5 +79,6 @@ export function buildPreviewEnemyType(npc: PreviewNpcConfig): EnemyType {
         walkSpeed: 0,
         behaviour: EnemyBehaviour.RUSHER,
         abilities: [],
+        dropTier: DropTier.NONE,
     };
 }

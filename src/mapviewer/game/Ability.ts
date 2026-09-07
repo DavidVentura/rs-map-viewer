@@ -30,6 +30,9 @@ export enum AbilityEffectKind {
 export type ProjectileEffect = {
     readonly kind: AbilityEffectKind.PROJECTILE;
     readonly spec: ProjectileSpec;
+    // Rolled fresh per cast in place of spec.damage; unset for the fixed-damage player projectiles.
+    readonly damageMin?: number;
+    readonly damageMax?: number;
 };
 
 export type HealEffect = {

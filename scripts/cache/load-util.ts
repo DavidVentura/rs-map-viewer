@@ -49,6 +49,7 @@ export function loadCache(info: CacheInfo): LoadedCache {
         type: detectCacheType(info),
         files,
         xteas,
+        source: "full",
     };
 }
 

@@ -47,7 +47,11 @@
         "download-caches": "node scripts/download-caches.js",
         "export-textures": "npx tsx scripts/cache/export-textures.ts",
         "export-height-map": "npx tsx scripts/cache/export-height-map.ts",
-        "render-music": "npx tsx scripts/cache/render-music.ts"
+        "render-music": "npx tsx scripts/cache/render-music.ts",
+        "anim-table": "npx tsx scripts/cache/anim-table.ts",
+        "bundles": "npx tsx scripts/cache/bundle-encounter.ts all",
+        "bundles:check": "npx tsx scripts/cache/bundle-encounter.ts --check",
+        "prebuild": "npm run bundles"
     },
     "eslintConfig": {
         "extends": [

@@ -4,7 +4,15 @@ import { AbilityDefinition, AbilityEffectKind } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
-import { EnemyStatsOverride, EnemyType, isBandedEnemyType, resolveEnemyStats } from "./EnemyType";
+import {
+    EnemyBehaviour,
+    EnemyStatsOverride,
+    EnemyType,
+    isBandedEnemyType,
+    isBossEnemyType,
+    resolveEnemyStats,
+} from "./EnemyType";
+import { TILE_SIZE } from "./GroundStrike";
 import { Terrain } from "./Terrain";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -113,6 +121,30 @@ export function computeKeepDistanceMovement(
     return { x: 0, y: 0 };
 }
 
+export type PatternAbilitySelection = {
+    readonly ability: AbilityDefinition;
+    readonly nextIndex: number;
+};
+
+// A BOSS enemy cycles its pattern in order instead of picking the first ready ability: starting at
+// startIndex, tries each pattern entry in turn (wrapping around at most once), returning the first
+// one isUsable accepts and the index the pattern should resume from next time. An entry whose own
+// cooldown isn't up yet or whose range condition fails is skipped without being consumed, so it's
+// tried again on its next turn through the cycle.
+export function selectPatternAbility(
+    pattern: readonly AbilityDefinition[],
+    startIndex: number,
+    isUsable: (ability: AbilityDefinition, index: number) => boolean,
+): PatternAbilitySelection | undefined {
+    for (let offset = 0; offset < pattern.length; offset++) {
+        const index = (startIndex + offset) % pattern.length;
+        if (isUsable(pattern[index], index)) {
+            return { ability: pattern[index], nextIndex: (index + 1) % pattern.length };
+        }
+    }
+    return undefined;
+}
+
 type AttackWindow = { readonly min: number; readonly max: number };
 
 export class Enemy implements Combatant, SteeringBody {
@@ -131,6 +163,9 @@ export class Enemy implements Combatant, SteeringBody {
     despawnAt?: number;
     readonly animation: AnimationState;
     readonly abilityRuntime = new AbilityRuntime();
+
+    // Which entry of a BOSS type's pattern is tried first next turn (see selectPatternAbility).
+    patternIndex = 0;
 
     // Set by the animation viewer (see AnimPreview.ts) to pin this enemy to a single sequence,
     // looped or played once, instead of running the normal AI/state machine.
@@ -210,8 +245,20 @@ export class Enemy implements Combatant, SteeringBody {
 
         let readyAbility: AbilityDefinition | undefined;
         let attackWindow: AttackWindow | undefined;
+        let patternSelection: PatternAbilitySelection | undefined;
+        const bossType = isBossEnemyType(this.type) ? this.type : undefined;
         if (!frozen && player) {
-            readyAbility = this.selectReadyAbility(timeSeconds);
+            if (bossType) {
+                patternSelection = this.selectBossPatternAbility(
+                    bossType,
+                    distanceToPlayer,
+                    player,
+                    timeSeconds,
+                );
+                readyAbility = patternSelection?.ability;
+            } else {
+                readyAbility = this.selectReadyAbility(timeSeconds);
+            }
             if (readyAbility) {
                 attackWindow = this.attackWindowFor(readyAbility, player);
             }
@@ -240,6 +287,9 @@ export class Enemy implements Combatant, SteeringBody {
             readyAbility
         ) {
             this.abilityRuntime.use(readyAbility, { x: player.x, y: player.y }, timeSeconds);
+            if (patternSelection) {
+                this.patternIndex = patternSelection.nextIndex;
+            }
         }
         this.state = nextState;
 
@@ -290,6 +340,8 @@ export class Enemy implements Combatant, SteeringBody {
 
         const movement = isBandedEnemyType(this.type)
             ? this.computeBandedMovement(deltaX, deltaY, distanceToPlayer, player, neighbours)
+            : bossType
+            ? this.computeBossMovement(bossType, deltaX, deltaY, distanceToPlayer, neighbours)
             : this.computeRushMovement(deltaX, deltaY, distanceToPlayer, player, neighbours);
 
         if (movement.x === 0 && movement.y === 0) {
@@ -319,6 +371,7 @@ export class Enemy implements Combatant, SteeringBody {
         this.state = EnemyState.IDLE;
         this.frozenUntil = undefined;
         this.respawnAt = undefined;
+        this.patternIndex = 0;
         this.abilityRuntime.reset();
         this.animation.restart(this.idleSeqId);
     }
@@ -332,6 +385,23 @@ export class Enemy implements Combatant, SteeringBody {
         );
     }
 
+    // A BOSS's ability selection: unlike selectReadyAbility, both the cooldown gate and the range
+    // condition are checked here (see selectPatternAbility), since the pattern must skip an entry
+    // that's out of range (e.g. melee while the player is at range) rather than wait on it.
+    private selectBossPatternAbility(
+        type: Extract<EnemyType, { behaviour: EnemyBehaviour.BOSS }>,
+        distanceToPlayer: number,
+        player: Combatant,
+        timeSeconds: number,
+    ): PatternAbilitySelection | undefined {
+        return selectPatternAbility(type.pattern, this.patternIndex, (ability) => {
+            if (!this.abilityRuntime.canUse(ability, 0, timeSeconds)) {
+                return false;
+            }
+            return distanceToPlayer <= enemyAttackRange(ability, this.hitRadius, player.hitRadius);
+        });
+    }
+
     private attackWindowFor(ability: AbilityDefinition, player: Combatant): AttackWindow {
         if (ability.effect.kind === AbilityEffectKind.HEAL_ALLIES) {
             return { min: 0, max: Infinity };
@@ -339,6 +409,24 @@ export class Enemy implements Combatant, SteeringBody {
         const max = enemyAttackRange(ability, this.hitRadius, player.hitRadius);
         const min = isBandedEnemyType(this.type) ? this.type.engagement.minRange : 0;
         return { min, max };
+    }
+
+    private computeBossMovement(
+        type: Extract<EnemyType, { behaviour: EnemyBehaviour.BOSS }>,
+        deltaX: number,
+        deltaY: number,
+        distanceToPlayer: number,
+        neighbours: readonly SteeringBody[],
+    ): { x: number; y: number } {
+        const leashRange = type.engagement.leashRangeTiles * TILE_SIZE;
+        const direction = computeKeepDistanceMovement(
+            deltaX,
+            deltaY,
+            distanceToPlayer,
+            0,
+            leashRange,
+        );
+        return steerChase(direction.x, direction.y, false, this, neighbours);
     }
 
     private computeBandedMovement(

@@ -4,6 +4,12 @@ import { Model } from "../../../rs/model/Model";
 import { WeaponStyle } from "../../game/Ability";
 import { getEncounter } from "../../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../../game/EnemyType";
+import {
+    StanceVisualKey,
+    allDroppableItemIds,
+    stanceAppearanceItemIds,
+    stanceVisualVariants,
+} from "../../game/Equipment";
 import { StanceSeqIds } from "../../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
@@ -19,6 +25,7 @@ import { WorkerState } from "../../worker/RenderDataWorker";
 import { AnimationFrames } from "../AnimationFrames";
 import {
     EnemyTypeAnimationSet,
+    GroundItemActorData,
     PlayerActorData,
     ProjectileActorData,
     StanceAnimationSet,
@@ -57,14 +64,16 @@ const COMMON_EXTRA_SEQS: readonly ExtraSeq[] = [
     { seqId: PLAYER_DEATH_SEQ_ID },
 ];
 
-type StanceEquipment = StanceSeqIds & { itemId: number; extraSeqs: readonly ExtraSeq[] };
+type StanceSeqConfig = StanceSeqIds & { extraSeqs: readonly ExtraSeq[] };
 
-// bow: shortbow, unarmed idle/walk/run, bow attack
-// staff: staff of fire, standard spellcast idle/walk/run/attack, plus the ice barrage cast
-// scimitar: rune scimitar, unarmed idle/walk/run, slash attack
-const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
+// bow: unarmed idle/walk/run, bow attack
+// staff: standard spellcast idle/walk/run/attack, plus the ice barrage cast
+// scimitar: unarmed idle/walk/run, slash attack
+// Seq ids are fixed per style regardless of equipped tier; the equipped item ids used to build the
+// PlayerAppearance for a given bake now come from Equipment.stanceAppearanceItemIds instead of a
+// single hardcoded itemId here (see createStanceAnimationSet / createPlayerActorData below).
+const STANCE_SEQ_CONFIG: Record<WeaponStyle, StanceSeqConfig> = {
     [WeaponStyle.RANGED]: {
-        itemId: 841,
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
@@ -72,7 +81,6 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
         extraSeqs: COMMON_EXTRA_SEQS,
     },
     [WeaponStyle.MAGIC]: {
-        itemId: 1387,
         idleSeqId: 813,
         walkSeqId: 1146,
         runSeqId: 1210,
@@ -80,7 +88,6 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
         extraSeqs: [...COMMON_EXTRA_SEQS, { seqId: ICE_BARRAGE_CAST_SEQ_ID }],
     },
     [WeaponStyle.MELEE]: {
-        itemId: 1333,
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
@@ -93,25 +100,31 @@ const STANCE_EQUIPMENT: Record<WeaponStyle, StanceEquipment> = {
     },
 };
 
+// Bakes one full stance (idle/walk/run/attack/specials) for one equipment combination. Called once
+// per visual variant a style has (see Equipment.stanceVisualVariants): the weapon path bakes one
+// variant per raw tier (recolored per tier), while the secondary paths (defender/offhand/amulet)
+// still collapse to 2 groups each since only their top tier's model actually differs (see the
+// comment on Equipment.secondaryVisualGroup).
 function createStanceAnimationSet(
     playerModelLoader: PlayerModelLoader,
     sceneBuf: SceneBuffer,
     baseNpc: NpcType,
-    equipment: StanceEquipment,
+    seqConfig: StanceSeqConfig,
+    appearanceItemIds: readonly number[],
 ): StanceAnimationSet | undefined {
     const appearance = new PlayerAppearance(
         baseNpc.modelIds,
-        [equipment.itemId],
+        appearanceItemIds,
         PlayerGender.MALE,
         baseNpc.ambient,
         baseNpc.contrast,
     );
 
     const seqIds = [
-        equipment.idleSeqId,
-        equipment.walkSeqId,
-        equipment.runSeqId,
-        equipment.attackSeqId,
+        seqConfig.idleSeqId,
+        seqConfig.walkSeqId,
+        seqConfig.runSeqId,
+        seqConfig.attackSeqId,
     ];
 
     const animationsBySeqId = new Map<number, AnimationFrames>();
@@ -126,7 +139,7 @@ function createStanceAnimationSet(
         animationsBySeqId.set(seqId, anim);
     }
 
-    for (const extra of equipment.extraSeqs) {
+    for (const extra of seqConfig.extraSeqs) {
         if (animationsBySeqId.has(extra.seqId)) {
             continue;
         }
@@ -153,11 +166,11 @@ function createStanceAnimationSet(
     }
 
     return {
-        idleSeqId: equipment.idleSeqId,
-        walkSeqId: equipment.walkSeqId,
-        runSeqId: equipment.runSeqId,
-        attackSeqId: equipment.attackSeqId,
-        idleAnim: animationsBySeqId.get(equipment.idleSeqId)!,
+        idleSeqId: seqConfig.idleSeqId,
+        walkSeqId: seqConfig.walkSeqId,
+        runSeqId: seqConfig.runSeqId,
+        attackSeqId: seqConfig.attackSeqId,
+        idleAnim: animationsBySeqId.get(seqConfig.idleSeqId)!,
         animationsBySeqId,
     };
 }
@@ -169,17 +182,51 @@ function createPlayerActorData(
 ): PlayerActorData | undefined {
     const baseNpc = npcTypeLoader.load(3105);
 
-    const stances: Partial<Record<WeaponStyle, StanceAnimationSet>> = {};
+    const stanceVariants = new Map<StanceVisualKey, StanceAnimationSet>();
+    const defaultStanceKeyByStyle = {} as Record<WeaponStyle, StanceVisualKey>;
     for (const style of [WeaponStyle.RANGED, WeaponStyle.MAGIC, WeaponStyle.MELEE] as const) {
-        const equipment = STANCE_EQUIPMENT[style];
-        const set = createStanceAnimationSet(playerModelLoader, sceneBuf, baseNpc, equipment);
-        if (!set) {
-            return undefined;
+        const seqConfig = STANCE_SEQ_CONFIG[style];
+        const variants = stanceVisualVariants(style);
+        defaultStanceKeyByStyle[style] = variants[0].key;
+        for (const variant of variants) {
+            if (stanceVariants.has(variant.key)) {
+                continue;
+            }
+            const appearanceItemIds = stanceAppearanceItemIds(style, variant.equipment);
+            const set = createStanceAnimationSet(
+                playerModelLoader,
+                sceneBuf,
+                baseNpc,
+                seqConfig,
+                appearanceItemIds,
+            );
+            if (!set) {
+                return undefined;
+            }
+            stanceVariants.set(variant.key, set);
         }
-        stances[style] = set;
     }
 
-    return { stances: stances as Record<WeaponStyle, StanceAnimationSet> };
+    return { stanceVariants, defaultStanceKeyByStyle };
+}
+
+// Bakes every OSRS item that can ever appear as a ground drop (every tier above tier 0 across
+// every equipment path; see Equipment.allDroppableItemIds) as a single static ground-lying frame,
+// the same way createProjectileActorData bakes the arrow model.
+function createGroundItemActorData(state: WorkerState, sceneBuf: SceneBuffer): GroundItemActorData {
+    const objModelLoader = state.objModelLoader;
+    const animationsByItemId = new Map<number, AnimationFrames>();
+    for (const itemId of allDroppableItemIds()) {
+        if (animationsByItemId.has(itemId)) {
+            continue;
+        }
+        const model = objModelLoader.getModel(itemId, 1);
+        if (!model) {
+            throw new Error(`Ground item model is missing from the cache for item ${itemId}`);
+        }
+        animationsByItemId.set(itemId, addStaticModelAnimationFrames(sceneBuf, model));
+    }
+    return { animationsByItemId };
 }
 
 function enemyTypeSeqIds(enemyType: EnemyType): number[] {
@@ -249,6 +296,10 @@ const ARROW_LENGTH_SCALE = 160;
 const ARROW_THICKNESS_SCALE = 380;
 const ARROW_LIGHTNESS_BOOST = 45;
 
+// TzTok-Jad's mage blast reuses the fire bolt spot animation, scaled up (Model.scale divides by
+// 128, so this is 3x) so the slow-moving projectile reads as a bigger, boss-scale attack.
+const JAD_MAGE_BLAST_MODEL_SCALE = 128 * 3;
+
 function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): ProjectileActorData {
     const objModelLoader = state.objModelLoader;
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
@@ -291,6 +342,23 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         FIRE_BOLT_TRAVEL_SEQ_ID,
     );
 
+    const jadBoltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
+    if (!jadBoltModel) {
+        throw new Error("Fire bolt projectile spot animation does not match the expected sequence");
+    }
+    jadBoltModel.scale(
+        JAD_MAGE_BLAST_MODEL_SCALE,
+        JAD_MAGE_BLAST_MODEL_SCALE,
+        JAD_MAGE_BLAST_MODEL_SCALE,
+    );
+    const jadBoltAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        jadBoltModel,
+        FIRE_BOLT_TRAVEL_SEQ_ID,
+    );
+
     const boltHitSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_HIT_SPOTANIM_ID);
     const boltHitModel = buildSpotAnimModel(modelLoader, textureLoader, boltHitSpotAnim);
     if (!boltHitModel || boltHitSpotAnim.sequenceId !== FIRE_BOLT_HIT_SEQ_ID) {
@@ -322,6 +390,7 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [ProjectileKind.ARROW]: { anim: arrowAnim, rotationOffset: 1024 },
             [ProjectileKind.MAGIC]: { anim: boltAnim, rotationOffset: 0 },
             [ProjectileKind.POWER_SHOT]: { anim: powerShotAnim, rotationOffset: 1024 },
+            [ProjectileKind.JAD_MAGE_BLAST]: { anim: jadBoltAnim, rotationOffset: 0 },
         },
         effectAnimations: {
             [VisualEffectKind.MAGIC_HIT]: boltHitAnim,
@@ -385,6 +454,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         }
 
         const projectiles = createProjectileActorData(state, sceneBuf);
+        const groundItems = createGroundItemActorData(state, sceneBuf);
 
         const vertices = sceneBuf.vertexBuf.byteArray();
         const indices = new Int32Array(sceneBuf.indices);
@@ -415,7 +485,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 vertices,
                 indices,
 
-                actorData: { player, enemyTypes, projectiles },
+                actorData: { player, enemyTypes, projectiles, groundItems },
 
                 loadedTextures,
             },

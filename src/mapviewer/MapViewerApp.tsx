@@ -1,4 +1,3 @@
-import { vec3 } from "gl-matrix";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { registerSerializer } from "threads";
@@ -8,14 +7,14 @@ import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
 import { DownloadProgress } from "../rs/cache/CacheFiles";
 import { formatBytes } from "../util/BytesUtil";
 import { isIos, isWallpaperEngine } from "../util/DeviceUtil";
-import { fetchCacheList, loadCacheFiles } from "./Caches";
+import { fetchCacheList, loadCacheBundle, loadCacheFiles } from "./Caches";
 import { MapViewer } from "./MapViewer";
 import { MapViewerContainer } from "./MapViewerContainer";
 import { WEBGL, getAvailableRenderers } from "./MapViewerRenderers";
 import { fetchNpcSpawns, getNpcSpawnsUrl } from "./data/npc/NpcSpawn";
 import { fetchObjSpawns } from "./data/obj/ObjSpawn";
 import { parseAnimPreviewParams } from "./game/AnimPreview";
-import { getEncounter, parseEncounterId } from "./game/Encounter";
+import { parseEncounterId } from "./game/Encounter";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -59,11 +58,29 @@ function MapViewerApp() {
                 }
             }
 
+            const encounterId = parseEncounterId(searchParams.get("enc"));
+            const animPreview = parseAnimPreviewParams(searchParams);
+            // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs
+            // that an encounter bundle was never built to contain. Bundles are build artifacts,
+            // so development uses the full cache unless explicitly asked, to avoid stale bundles
+            // hiding data changes.
+            const useBundle =
+                searchParams.get("anim") === null &&
+                (process.env.NODE_ENV === "production" || searchParams.get("bundle") === "1");
+
             const [cache, objSpawns, npcSpawns] = await Promise.all([
-                loadCacheFiles(cacheInfo, abortController.signal, setDownloadProgress),
+                (useBundle
+                    ? loadCacheBundle(encounterId, abortController.signal, setDownloadProgress)
+                    : Promise.resolve(undefined)
+                ).then(
+                    (bundleCache) =>
+                        bundleCache ??
+                        loadCacheFiles(cacheInfo, abortController.signal, setDownloadProgress),
+                ),
                 objSpawnsPromise,
                 fetchNpcSpawns(getNpcSpawnsUrl(cacheInfo)),
             ]);
+            console.log(`Loaded "${cache.info.name}" cache from ${cache.source} source`);
 
             const mapImageCache = await caches.open("map-images");
 
@@ -75,9 +92,6 @@ function MapViewerApp() {
 
             // Add some way to get preferred renderer
             const rendererType = availableRenderers[0];
-
-            const encounterId = parseEncounterId(searchParams.get("enc"));
-            const animPreview = parseAnimPreviewParams(searchParams);
 
             const mapViewer = new MapViewer(
                 workerPool,
@@ -92,19 +106,8 @@ function MapViewerApp() {
             );
             (window as any).mapViewer = mapViewer;
 
-            const hasCameraParams =
-                searchParams.get("cx") && searchParams.get("cy") && searchParams.get("cz");
-            if (!hasCameraParams) {
-                const { playerSpawn } = getEncounter(encounterId);
-                mapViewer.setCamera({
-                    position: vec3.fromValues(
-                        playerSpawn.x / 128,
-                        mapViewer.camera.pos[1],
-                        playerSpawn.y / 128,
-                    ),
-                });
-            }
-
+            // MapViewer's constructor already starts the camera at this encounter's spawn;
+            // applySearchParams only needs to override it when the URL asked for a specific spot.
             mapViewer.applySearchParams(searchParams);
             mapViewer.init();
 

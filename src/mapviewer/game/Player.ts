@@ -4,12 +4,27 @@ import { AbilityDefinition, AbilityTarget, WeaponStyle } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
+import {
+    DEFAULT_EQUIPMENT,
+    EquipmentPath,
+    EquipmentState,
+    equipAtTier,
+    equipmentAbilityModifiers,
+    equipmentDamageTakenMultiplier,
+    equipmentMaxHealthBonus,
+} from "./Equipment";
 import { Terrain } from "./Terrain";
 import { STYLE_SWITCH_SEQ_IDS, buildPlayerAbilityBar } from "./abilities";
 import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
-import { AbilityModifiers, DEFAULT_ABILITY_MODIFIERS, Upgrade, applyModifiers } from "./upgrades";
+import {
+    AbilityModifiers,
+    DEFAULT_ABILITY_MODIFIERS,
+    Upgrade,
+    applyModifiers,
+    composeModifiers,
+} from "./upgrades";
 
 export type PlayerInput = {
     x: number;
@@ -46,9 +61,20 @@ export class Player implements Combatant, ManaPool {
     mana = Player.MAX_MANA;
 
     private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
+    equipment: EquipmentState = DEFAULT_EQUIPMENT;
 
     get maxHealth(): number {
-        return Player.MAX_HEALTH + this.modifiers.maxHealthBonus;
+        return (
+            Player.MAX_HEALTH +
+            this.modifiers.maxHealthBonus +
+            equipmentMaxHealthBonus(this.equipment)
+        );
+    }
+
+    // Only the melee defender mitigates damage in the current design; always active regardless of
+    // the player's active style, like a permanently worn shield. Read by CombatEvent.applyDamage.
+    get damageTakenMultiplier(): number {
+        return equipmentDamageTakenMultiplier(this.equipment);
     }
 
     get maxMana(): number {
@@ -105,8 +131,12 @@ export class Player implements Combatant, ManaPool {
     }
 
     get abilityBar(): readonly AbilityDefinition[] {
+        const combined = composeModifiers(
+            this.modifiers,
+            equipmentAbilityModifiers(this.equipment, this.style),
+        );
         return buildPlayerAbilityBar(this.style).map((definition) =>
-            applyModifiers(definition, this.modifiers),
+            applyModifiers(definition, combined),
         );
     }
 
@@ -122,8 +152,19 @@ export class Player implements Combatant, ManaPool {
         this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
     }
 
+    // Bumps the given path to the next tier above the player's current tier (never below it, never
+    // past the path's max), used by the pickup flow: a drop is always the next tier on some path.
+    equipItemUpgrade(path: EquipmentPath, tierIndex: number): void {
+        const previousMaxHealth = this.maxHealth;
+        const previousMaxMana = this.maxMana;
+        this.equipment = equipAtTier(this.equipment, path, tierIndex);
+        this.health = Math.min(this.maxHealth, this.health + (this.maxHealth - previousMaxHealth));
+        this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
+    }
+
     resetProgression(): void {
         this.modifiers = DEFAULT_ABILITY_MODIFIERS;
+        this.equipment = DEFAULT_EQUIPMENT;
     }
 
     getSlotReadiness(slot: number, timeSeconds: number): AbilitySlotReadiness {

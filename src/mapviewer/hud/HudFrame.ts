@@ -107,6 +107,29 @@ export type UpgradeOfferHudInfo = {
     readonly cards: readonly UpgradeCardHudInfo[];
 };
 
+export type BossHudInfo = {
+    readonly name: string;
+    readonly health: number;
+    readonly maxHealth: number;
+    readonly phaseLabel?: string;
+};
+
+// A dropped equipment upgrade lying on the ground: always-visible Diablo-style floor label,
+// projected to screen space by the renderer (see WebGLMapViewerRenderer.buildGroundItemHudInfos).
+export type GroundItemHudInfo = {
+    readonly groundItemId: number;
+    readonly screenX: number;
+    readonly screenY: number;
+    readonly name: string;
+    readonly pathLabel: string;
+};
+
+// A transient "Equipped: <name>" banner shown for a couple of seconds after a pickup; fixed to the
+// screen rather than projected from a world position, so it's tracked separately from SplatEvent.
+export type PickupFlashEvent = {
+    readonly text: string;
+};
+
 export type HudFrame = {
     viewProjMatrix: mat4;
     screenSize: ScreenSize;
@@ -120,4 +143,7 @@ export type HudFrame = {
     wave?: WaveHudInfo;
     upgradeOffer?: UpgradeOfferHudInfo;
     previewSeqId?: number;
+    boss?: BossHudInfo;
+    groundItems: GroundItemHudInfo[];
+    pickupFlashEvents: PickupFlashEvent[];
 };

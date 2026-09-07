@@ -1,4 +1,5 @@
 import { Combatant } from "./Combatant";
+import { EquipmentPath } from "./Equipment";
 
 export enum CombatEventKind {
     DAMAGE = 0,
@@ -9,6 +10,9 @@ export enum CombatEventKind {
     ENEMY_RESPAWNED = 5,
     ENCOUNTER_CLEARED = 6,
     GROUND_STRIKE_LANDED = 7,
+    ITEM_DROPPED = 8,
+    ITEM_PICKED_UP = 9,
+    BOSS_PHASE = 10,
 }
 
 export type DamageEvent = {
@@ -56,6 +60,27 @@ export type GroundStrikeLandedEvent = {
     radius: number;
 };
 
+export type ItemDroppedEvent = {
+    kind: CombatEventKind.ITEM_DROPPED;
+    path: EquipmentPath;
+    tierIndex: number;
+    x: number;
+    y: number;
+    level: number;
+};
+
+export type ItemPickedUpEvent = {
+    kind: CombatEventKind.ITEM_PICKED_UP;
+    path: EquipmentPath;
+    tierIndex: number;
+};
+
+export type BossPhaseEvent = {
+    kind: CombatEventKind.BOSS_PHASE;
+    boss: Combatant;
+    phaseLabel: string;
+};
+
 export type CombatEvent =
     | DamageEvent
     | HealEvent
@@ -64,7 +89,10 @@ export type CombatEvent =
     | EnemyDiedEvent
     | EnemyRespawnedEvent
     | EncounterClearedEvent
-    | GroundStrikeLandedEvent;
+    | GroundStrikeLandedEvent
+    | ItemDroppedEvent
+    | ItemPickedUpEvent
+    | BossPhaseEvent;
 
 export interface Freezable extends Combatant {
     frozenUntil?: number;
@@ -75,9 +103,23 @@ export function applyFreeze(target: Freezable, untilSeconds: number, events: Com
     events.push({ kind: CombatEventKind.FREEZE, target, untilSeconds });
 }
 
+// A target with its own damage-taken multiplier (currently only Player, via its melee-defender
+// equipment) mitigates incoming damage here rather than this transform special-casing Player, the
+// same pattern Freezable above uses for freeze duration.
+export interface DamageTakenModifiable extends Combatant {
+    readonly damageTakenMultiplier: number;
+}
+
+function hasDamageTakenMultiplier(target: Combatant): target is DamageTakenModifiable {
+    return typeof (target as Partial<DamageTakenModifiable>).damageTakenMultiplier === "number";
+}
+
 export function applyDamage(target: Combatant, amount: number, events: CombatEvent[]): void {
-    target.health = Math.max(0, target.health - amount);
-    events.push({ kind: CombatEventKind.DAMAGE, target, amount });
+    const effectiveAmount = hasDamageTakenMultiplier(target)
+        ? amount * target.damageTakenMultiplier
+        : amount;
+    target.health = Math.max(0, target.health - effectiveAmount);
+    events.push({ kind: CombatEventKind.DAMAGE, target, amount: effectiveAmount });
 }
 
 export function applyHeal(target: Combatant, amount: number, events: CombatEvent[]): void {

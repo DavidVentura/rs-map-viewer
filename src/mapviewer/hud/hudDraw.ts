@@ -4,6 +4,8 @@ import { Faction } from "../game/Combatant";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
+    BossHudInfo,
+    GroundItemHudInfo,
     PlayerHudInfo,
     StyleSwitchHudInfo,
     TargetHudInfo,
@@ -694,6 +696,46 @@ export function drawWaveCounter(
     ctx.restore();
 }
 
+const BOSS_BAR_WIDTH = 520;
+const BOSS_BAR_HEIGHT = 22;
+const BOSS_BAR_NAME_MARGIN_TOP = WAVE_COUNTER_SUMMARY_MARGIN_TOP + 28;
+const BOSS_BAR_NAME_HEIGHT = 24;
+const BOSS_BAR_MARGIN_TOP = BOSS_BAR_NAME_MARGIN_TOP + BOSS_BAR_NAME_HEIGHT;
+
+export function drawBossBar(ctx: CanvasRenderingContext2D, width: number, boss: BossHudInfo): void {
+    const barX = width / 2 - BOSS_BAR_WIDTH / 2;
+    const barY = BOSS_BAR_MARGIN_TOP;
+
+    ctx.save();
+    ctx.font = "700 20px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = "#ffd24d";
+    const nameText = boss.phaseLabel ? `${boss.name} — ${boss.phaseLabel}` : boss.name;
+    ctx.strokeText(nameText, width / 2, BOSS_BAR_NAME_MARGIN_TOP);
+    ctx.fillText(nameText, width / 2, BOSS_BAR_NAME_MARGIN_TOP);
+    ctx.restore();
+
+    const gradient = ctx.createLinearGradient(0, barY, 0, barY + BOSS_BAR_HEIGHT);
+    gradient.addColorStop(0, "rgba(28, 24, 22, 0.96)");
+    gradient.addColorStop(1, "rgba(10, 8, 8, 0.98)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(barX, barY, BOSS_BAR_WIDTH, BOSS_BAR_HEIGHT);
+
+    const percent = percentOf(boss.health, boss.maxHealth);
+    ctx.fillStyle = "#c81e1e";
+    ctx.fillRect(barX + 2, barY + 2, (BOSS_BAR_WIDTH - 4) * percent, BOSS_BAR_HEIGHT - 4);
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120, 96, 60, 0.7)";
+    ctx.strokeRect(barX + 1, barY + 1, BOSS_BAR_WIDTH - 2, BOSS_BAR_HEIGHT - 2);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+    ctx.strokeRect(barX, barY, BOSS_BAR_WIDTH, BOSS_BAR_HEIGHT);
+}
+
 const PREVIEW_SEQ_LABEL_MARGIN_TOP = 12;
 
 export function drawPreviewSeqLabel(
@@ -835,4 +877,67 @@ export function drawGroundImpactFlash(
         gradient.addColorStop(0.5, `rgba(${GROUND_IMPACT_MID_COLOR}, ${0.6 * alpha})`);
         gradient.addColorStop(1, `rgba(${GROUND_IMPACT_EDGE_COLOR}, 0)`);
     });
+}
+
+const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
+const GROUND_ITEM_LABEL_TAG_COLOR = "#8fe88f";
+const GROUND_ITEM_LABEL_BG_COLOR = "rgba(6, 6, 10, 0.78)";
+const GROUND_ITEM_LABEL_PADDING_X = 10;
+const GROUND_ITEM_LABEL_LINE_HEIGHT = 16;
+
+// A Diablo-style floor label: item name on top, "Upgrade (<path>)" tag below, always visible (no
+// hover needed) above the item's projected screen point.
+export function drawGroundItemLabel(
+    ctx: CanvasRenderingContext2D,
+    screen: { x: number; y: number },
+    item: GroundItemHudInfo,
+): void {
+    ctx.save();
+    ctx.font = "700 13px sans-serif";
+    const nameWidth = ctx.measureText(item.name).width;
+    const tagText = `Upgrade (${item.pathLabel})`;
+    ctx.font = "600 11px sans-serif";
+    const tagWidth = ctx.measureText(tagText).width;
+    const boxWidth = Math.max(nameWidth, tagWidth) + GROUND_ITEM_LABEL_PADDING_X * 2;
+    const boxHeight = GROUND_ITEM_LABEL_LINE_HEIGHT * 2 + 6;
+    const boxX = screen.x - boxWidth / 2;
+    const boxY = screen.y - boxHeight - 14;
+
+    ctx.fillStyle = GROUND_ITEM_LABEL_BG_COLOR;
+    ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+    ctx.strokeRect(boxX + 0.5, boxY + 0.5, boxWidth - 1, boxHeight - 1);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = "700 13px sans-serif";
+    ctx.fillStyle = GROUND_ITEM_LABEL_NAME_COLOR;
+    ctx.fillText(item.name, screen.x, boxY + 4);
+    ctx.font = "600 11px sans-serif";
+    ctx.fillStyle = GROUND_ITEM_LABEL_TAG_COLOR;
+    ctx.fillText(tagText, screen.x, boxY + 4 + GROUND_ITEM_LABEL_LINE_HEIGHT);
+    ctx.restore();
+}
+
+const PICKUP_FLASH_MARGIN_TOP = 90;
+const PICKUP_FLASH_COLOR = "#4dff7a";
+
+export function drawPickupFlash(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    text: string,
+    progress: number,
+): void {
+    ctx.save();
+    ctx.globalAlpha = 1 - Math.max(0, progress - 0.7) / 0.3;
+    ctx.font = "700 20px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = PICKUP_FLASH_COLOR;
+    ctx.strokeText(text, width / 2, PICKUP_FLASH_MARGIN_TOP);
+    ctx.fillText(text, width / 2, PICKUP_FLASH_MARGIN_TOP);
+    ctx.restore();
 }

@@ -5,6 +5,7 @@ export type AbilityModifiers = {
     readonly damageMultiplier: number;
     readonly cooldownMultiplier: number;
     readonly windupMultiplier: number;
+    readonly manaCostMultiplier: number;
     readonly coneAngleBonusRadians: number;
     readonly extraVolleyArrows: number;
     readonly freezeSecondsBonus: number;
@@ -12,12 +13,17 @@ export type AbilityModifiers = {
     readonly maxHealthBonus: number;
     readonly maxManaBonus: number;
     readonly moveSpeedMultiplier: number;
+    // Flat damage added on top of damageMultiplier, e.g. equipped arrows. Applied to every effect
+    // kind that deals damage; callers gate it to 0 for styles/specs it shouldn't touch (see
+    // Equipment.equipmentAbilityModifiers) rather than this transform special-casing sources.
+    readonly flatDamageBonus: number;
 };
 
 export const DEFAULT_ABILITY_MODIFIERS: AbilityModifiers = {
     damageMultiplier: 1,
     cooldownMultiplier: 1,
     windupMultiplier: 1,
+    manaCostMultiplier: 1,
     coneAngleBonusRadians: 0,
     extraVolleyArrows: 0,
     freezeSecondsBonus: 0,
@@ -25,7 +31,30 @@ export const DEFAULT_ABILITY_MODIFIERS: AbilityModifiers = {
     maxHealthBonus: 0,
     maxManaBonus: 0,
     moveSpeedMultiplier: 1,
+    flatDamageBonus: 0,
 };
+
+// Folds two independently-accumulated AbilityModifiers into one (e.g. upgrade-stacked modifiers
+// and equipment-derived modifiers), combining each field the same way stacking another instance of
+// it already would: multiplicative fields multiply, additive fields add. The result composes
+// through the same single applyModifiers transform below, so equipment never gets its own copy of
+// that transform.
+export function composeModifiers(a: AbilityModifiers, b: AbilityModifiers): AbilityModifiers {
+    return {
+        damageMultiplier: a.damageMultiplier * b.damageMultiplier,
+        cooldownMultiplier: a.cooldownMultiplier * b.cooldownMultiplier,
+        windupMultiplier: a.windupMultiplier * b.windupMultiplier,
+        manaCostMultiplier: a.manaCostMultiplier * b.manaCostMultiplier,
+        coneAngleBonusRadians: a.coneAngleBonusRadians + b.coneAngleBonusRadians,
+        extraVolleyArrows: a.extraVolleyArrows + b.extraVolleyArrows,
+        freezeSecondsBonus: a.freezeSecondsBonus + b.freezeSecondsBonus,
+        potionMaxChargesBonus: a.potionMaxChargesBonus + b.potionMaxChargesBonus,
+        maxHealthBonus: a.maxHealthBonus + b.maxHealthBonus,
+        maxManaBonus: a.maxManaBonus + b.maxManaBonus,
+        moveSpeedMultiplier: a.moveSpeedMultiplier * b.moveSpeedMultiplier,
+        flatDamageBonus: a.flatDamageBonus + b.flatDamageBonus,
+    };
+}
 
 function isIdentityModifiers(modifiers: AbilityModifiers): boolean {
     return (Object.keys(DEFAULT_ABILITY_MODIFIERS) as (keyof AbilityModifiers)[]).every(
@@ -45,15 +74,21 @@ function applyEffectModifiers(
         case AbilityEffectKind.PROJECTILE:
             return {
                 ...effect,
-                spec: { ...effect.spec, damage: effect.spec.damage * modifiers.damageMultiplier },
+                spec: {
+                    ...effect.spec,
+                    damage:
+                        effect.spec.damage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                },
             };
         case AbilityEffectKind.HEAL:
             return effect;
         case AbilityEffectKind.MELEE:
             return {
                 ...effect,
-                minDamage: effect.minDamage * modifiers.damageMultiplier,
-                maxDamage: effect.maxDamage * modifiers.damageMultiplier,
+                minDamage:
+                    effect.minDamage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                maxDamage:
+                    effect.maxDamage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
             };
         case AbilityEffectKind.CONE_MELEE:
             return {
@@ -64,21 +99,29 @@ function applyEffectModifiers(
         case AbilityEffectKind.AREA:
             return {
                 ...effect,
-                damageMin: effect.damageMin * modifiers.damageMultiplier,
-                damageMax: effect.damageMax * modifiers.damageMultiplier,
+                damageMin:
+                    effect.damageMin * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                damageMax:
+                    effect.damageMax * modifiers.damageMultiplier + modifiers.flatDamageBonus,
                 freezeSeconds: effect.freezeSeconds + modifiers.freezeSecondsBonus,
             };
         case AbilityEffectKind.MULTI_PROJECTILE:
             return {
                 ...effect,
-                spec: { ...effect.spec, damage: effect.spec.damage * modifiers.damageMultiplier },
+                spec: {
+                    ...effect.spec,
+                    damage:
+                        effect.spec.damage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                },
                 count: effect.count + modifiers.extraVolleyArrows,
             };
         case AbilityEffectKind.GROUND_STRIKE:
             return {
                 ...effect,
-                damageMin: effect.damageMin * modifiers.damageMultiplier,
-                damageMax: effect.damageMax * modifiers.damageMultiplier,
+                damageMin:
+                    effect.damageMin * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                damageMax:
+                    effect.damageMax * modifiers.damageMultiplier + modifiers.flatDamageBonus,
             };
         case AbilityEffectKind.HEAL_ALLIES:
             return effect;
@@ -99,6 +142,7 @@ export function applyModifiers(
         ...definition,
         windupSeconds: definition.windupSeconds * modifiers.windupMultiplier,
         rechargeSeconds: definition.rechargeSeconds * modifiers.cooldownMultiplier,
+        manaCost: definition.manaCost * modifiers.manaCostMultiplier,
         maxCharges: definition.maxCharges + potionChargeBonus(definition, modifiers),
         effect: applyEffectModifiers(definition.effect, modifiers),
     };

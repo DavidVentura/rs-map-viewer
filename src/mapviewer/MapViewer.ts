@@ -36,7 +36,7 @@ const CACHED_MAP_IMAGE_PREFIX = "/map-images/";
 
 export class MapViewer {
     inputManager: InputManager = new InputManager();
-    camera: Camera = new Camera(3242, -26, 3202, -245, 1862);
+    camera: Camera;
 
     pathfinder: Pathfinder = new Pathfinder();
 
@@ -108,6 +108,13 @@ export class MapViewer {
         cache: LoadedCache,
         readonly animPreview?: AnimPreviewParams,
     ) {
+        // Starting the camera at this encounter's spawn (rather than a fixed literal) matters for
+        // more than convenience: initCache() below queues loads for the squares around the
+        // camera's starting position before any caller gets a chance to move it, so a wrong
+        // default would eagerly load a different encounter's squares - which a size-limited
+        // bundle for THIS encounter would not contain.
+        const { playerSpawn } = getEncounter(encounterId);
+        this.camera = new Camera(playerSpawn.x / 128, -26, playerSpawn.y / 128, -245, 1862);
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
     }

@@ -11,13 +11,28 @@ import {
     HealAlliesEffect,
     MeleeEffect,
     MultiProjectileEffect,
+    ProjectileEffect,
     WeaponStyle,
 } from "./Ability";
 import { CombatEvent, CombatEventKind, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
-import { EnemyStatsOverride, EnemyType, getEnemyType } from "./EnemyType";
+import {
+    BossPhaseAdds,
+    EnemyStatsOverride,
+    EnemyType,
+    getEnemyType,
+    resolveTriggeredBossPhase,
+} from "./EnemyType";
+import {
+    GROUND_ITEM_LIFETIME_SECONDS,
+    GroundItem,
+    distanceToGroundItem,
+    isGroundItemExpired,
+    pendingGroundItemPaths,
+    rollDropPath,
+} from "./GroundItem";
 import { PendingGroundStrike, TILE_SIZE, combatantsHitByGroundStrike } from "./GroundStrike";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
@@ -51,12 +66,21 @@ export type AbilitySlotInput = {
 
 export type AbilityInput = readonly AbilitySlotInput[];
 
+export type PickupTarget = {
+    readonly groundItemId: number;
+};
+
 export type SimInput = {
     movement: PlayerInput;
     abilities: AbilityInput;
     styleSwitch?: WeaponStyle;
     // Index into the pending upgrade offer; only consulted while one is pending.
     chooseUpgrade?: number;
+    // Set while the player has an active pickup intent (see the renderer's click handling); the
+    // world walks the player to the item using the same walk-to-target movement as the melee
+    // chase, and equips it once in range. Cleared by the renderer, not the world, whenever the
+    // player instead holds an attack on an enemy or plain ground movement.
+    pickupTarget?: PickupTarget;
 };
 
 const UPGRADE_OFFER_SIZE = 3;
@@ -72,6 +96,9 @@ export class GameWorld {
     static readonly CORPSE_SECONDS = 6;
     static readonly ENEMY_GRID_CELL_SIZE = 256;
     static readonly ENEMY_NEIGHBOUR_QUERY_RADIUS = 256;
+    // How close the player must walk to a ground item to pick it up; also the chase's stop
+    // distance, so the player always ends up in pickup range rather than short of it.
+    static readonly PICKUP_RADIUS = 0.5 * TILE_SIZE;
 
     timeSeconds = 0;
     player?: Player;
@@ -79,16 +106,19 @@ export class GameWorld {
     projectiles: Projectile[] = [];
     visualEffects: VisualEffect[] = [];
     pendingGroundStrikes: PendingGroundStrike[] = [];
+    groundItems: GroundItem[] = [];
     private events: CombatEvent[] = [];
 
     private accumulatedSeconds = 0;
     private nextEnemyId = 1;
+    private nextGroundItemId = 1;
 
     private encounter?: Encounter;
     private waveDirectorState: WaveDirectorState = initialWaveDirectorState(0);
     private enemyWaveIndex = new Map<number, number>();
     private killsByWave: number[] = [];
     private waveClearedNotified: boolean[] = [];
+    private triggeredBossPhases = new Map<number, Set<number>>();
     pendingUpgradeOffer?: readonly Upgrade[];
 
     constructor(
@@ -117,7 +147,9 @@ export class GameWorld {
         this.spawnPlayer(x, y, level, styleSeqIds);
         this.encounter = encounter;
         this.enemies = [];
+        this.groundItems = [];
         this.enemyWaveIndex.clear();
+        this.triggeredBossPhases.clear();
         this.killsByWave = encounter.waves.map(() => 0);
         this.waveClearedNotified = encounter.waves.map(() => false);
         this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
@@ -130,8 +162,10 @@ export class GameWorld {
     abortEncounter(): void {
         this.player = undefined;
         this.enemies = [];
+        this.groundItems = [];
         this.encounter = undefined;
         this.enemyWaveIndex.clear();
+        this.triggeredBossPhases.clear();
         this.killsByWave = [];
         this.waveClearedNotified = [];
         this.waveDirectorState = initialWaveDirectorState(0);
@@ -239,6 +273,9 @@ export class GameWorld {
         this.enemies = this.enemies.filter(
             (enemy) => enemy.despawnAt === undefined || this.timeSeconds < enemy.despawnAt,
         );
+        this.groundItems = this.groundItems.filter(
+            (item) => !isGroundItemExpired(item, this.timeSeconds),
+        );
 
         this.advanceWaveDirector();
 
@@ -290,6 +327,34 @@ export class GameWorld {
             this.terrain,
         );
         this.resolveReadyCast(player);
+        this.resolvePickup(player, input);
+    }
+
+    findGroundItem(id: number): GroundItem | undefined {
+        return this.groundItems.find((item) => item.id === id);
+    }
+
+    // Equips the targeted ground item and removes it once the player has walked within pickup
+    // range (see computePickupChaseInput, which drives the walk using the same reach constant).
+    private resolvePickup(player: Player, input: SimInput): void {
+        const pickupTarget = input.pickupTarget;
+        if (!pickupTarget) {
+            return;
+        }
+        const item = this.findGroundItem(pickupTarget.groundItemId);
+        if (!item || item.level !== player.level) {
+            return;
+        }
+        if (distanceToGroundItem(item, player.x, player.y) > GameWorld.PICKUP_RADIUS) {
+            return;
+        }
+        player.equipItemUpgrade(item.path, item.tierIndex);
+        this.groundItems = this.groundItems.filter((existing) => existing.id !== item.id);
+        this.events.push({
+            kind: CombatEventKind.ITEM_PICKED_UP,
+            path: item.path,
+            tierIndex: item.tierIndex,
+        });
     }
 
     private updateEnemy(enemy: Enemy, neighbours: readonly Enemy[], dtSeconds: number): void {
@@ -312,6 +377,7 @@ export class GameWorld {
                 enemy.despawnAt = this.timeSeconds + GameWorld.CORPSE_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
+            this.maybeDropEquipment(enemy);
             return;
         }
         if (!wasAlive) {
@@ -319,6 +385,85 @@ export class GameWorld {
             return;
         }
         this.resolveEnemyAttack(enemy);
+        this.checkBossPhase(enemy);
+    }
+
+    // Boss phases (see EnemyType.BossPhase) trigger once, the first time health crosses their
+    // threshold; triggering one spawns its adds next to the boss and emits BOSS_PHASE so the HUD
+    // can show the phase label. The adds dying doesn't end the phase or retrigger it.
+    private checkBossPhase(enemy: Enemy): void {
+        const phases = enemy.type.phases;
+        if (!phases) {
+            return;
+        }
+        const triggered = this.triggeredBossPhases.get(enemy.id) ?? new Set<number>();
+        const phaseIndex = resolveTriggeredBossPhase(
+            phases,
+            enemy.health,
+            enemy.maxHealth,
+            triggered,
+        );
+        if (phaseIndex === undefined) {
+            return;
+        }
+        triggered.add(phaseIndex);
+        this.triggeredBossPhases.set(enemy.id, triggered);
+
+        const phase = phases[phaseIndex];
+        this.spawnBossPhaseAdds(enemy, phase.spawnAdds);
+        this.events.push({
+            kind: CombatEventKind.BOSS_PHASE,
+            boss: enemy,
+            phaseLabel: phase.label,
+        });
+    }
+
+    private spawnBossPhaseAdds(boss: Enemy, adds: BossPhaseAdds): void {
+        const addType = getEnemyType(adds.enemyTypeId);
+        const offset = adds.offsetTiles * TILE_SIZE;
+        for (let i = 0; i < adds.count; i++) {
+            const angle = (i / adds.count) * Math.PI * 2;
+            const x = boss.x + Math.cos(angle) * offset;
+            const y = boss.y + Math.sin(angle) * offset;
+            this.spawnEnemy(x, y, boss.level, addType);
+        }
+    }
+
+    // Rolls a drop from the dying enemy's dropTier (see EnemyType.DropTier and GroundItem.rollDropPath):
+    // at most one pending drop per equipment path, always the next tier above the player's current
+    // one, never for a path already at max tier.
+    private maybeDropEquipment(enemy: Enemy): void {
+        const player = this.player;
+        if (!player) {
+            return;
+        }
+        const path = rollDropPath(
+            enemy.type.dropTier,
+            player.equipment,
+            pendingGroundItemPaths(this.groundItems),
+            this.random,
+        );
+        if (!path) {
+            return;
+        }
+        const tierIndex = player.equipment[path] + 1;
+        this.groundItems.push({
+            id: this.nextGroundItemId++,
+            path,
+            tierIndex,
+            x: enemy.x,
+            y: enemy.y,
+            level: enemy.level,
+            expiresAtSeconds: this.timeSeconds + GROUND_ITEM_LIFETIME_SECONDS,
+        });
+        this.events.push({
+            kind: CombatEventKind.ITEM_DROPPED,
+            path,
+            tierIndex,
+            x: enemy.x,
+            y: enemy.y,
+            level: enemy.level,
+        });
     }
 
     private recordWaveEnemyDeath(enemy: Enemy): void {
@@ -442,7 +587,7 @@ export class GameWorld {
                 this.resolveEnemyMelee(enemy, this.player, cast.definition.effect);
                 break;
             case AbilityEffectKind.PROJECTILE:
-                this.spawnProjectile(enemy, cast.definition.effect.spec, {
+                this.spawnProjectile(enemy, this.resolveProjectileSpec(cast.definition.effect), {
                     x: this.player.x,
                     y: this.player.y,
                 });
@@ -495,6 +640,7 @@ export class GameWorld {
     private resetEncounter(): void {
         this.pendingUpgradeOffer = undefined;
         this.player?.resetProgression();
+        this.groundItems = [];
 
         const encounter = this.encounter;
         if (!encounter || encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
@@ -508,6 +654,7 @@ export class GameWorld {
         // director from wave 1 instead.
         this.enemies = [];
         this.enemyWaveIndex.clear();
+        this.triggeredBossPhases.clear();
         this.killsByWave = encounter.waves.map(() => 0);
         this.waveClearedNotified = encounter.waves.map(() => false);
         this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
@@ -534,7 +681,33 @@ export class GameWorld {
     }
 
     private resolveMovementInput(player: Player, input: SimInput): PlayerInput {
-        return this.computeMeleeChaseInput(player, input) ?? input.movement;
+        return (
+            this.computeMeleeChaseInput(player, input) ??
+            this.computePickupChaseInput(player, input) ??
+            input.movement
+        );
+    }
+
+    // Walks the player toward a pending pickup target using the same walk-to-target chase as
+    // computeMeleeChaseInput, stopping once within GameWorld.PICKUP_RADIUS (resolvePickup then
+    // equips the item on the same tick it stops).
+    private computePickupChaseInput(player: Player, input: SimInput): PlayerInput | undefined {
+        const pickupTarget = input.pickupTarget;
+        if (!pickupTarget) {
+            return undefined;
+        }
+        const item = this.findGroundItem(pickupTarget.groundItemId);
+        if (!item || item.level !== player.level) {
+            return undefined;
+        }
+        const deltaX = item.x - player.x;
+        const deltaY = item.y - player.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const movement = computeChaseMovement(deltaX, deltaY, distance, GameWorld.PICKUP_RADIUS);
+        if (movement.x === 0 && movement.y === 0) {
+            return undefined;
+        }
+        return { x: movement.x, y: movement.y, running: input.movement.running };
     }
 
     private computeMeleeChaseInput(player: Player, input: SimInput): PlayerInput | undefined {
@@ -613,7 +786,7 @@ export class GameWorld {
     private resolveEffect(caster: Player, effect: AbilityEffect, target: AbilityTarget): void {
         switch (effect.kind) {
             case AbilityEffectKind.PROJECTILE:
-                this.spawnProjectile(caster, effect.spec, target);
+                this.spawnProjectile(caster, this.resolveProjectileSpec(effect), target);
                 break;
             case AbilityEffectKind.HEAL:
                 applyHeal(caster, effect.amount, this.events);
@@ -634,6 +807,18 @@ export class GameWorld {
                 this.resolveGroundStrike(caster, effect, target);
                 break;
         }
+    }
+
+    // Rolls a fresh damage value into the spec for abilities that declare a damage range (see
+    // ProjectileEffect.damageMin/Max), otherwise passes the spec's own fixed damage through as-is.
+    private resolveProjectileSpec(effect: ProjectileEffect): ProjectileSpec {
+        if (effect.damageMin === undefined || effect.damageMax === undefined) {
+            return effect.spec;
+        }
+        return {
+            ...effect.spec,
+            damage: rollDamage(effect.damageMin, effect.damageMax, this.random),
+        };
     }
 
     private spawnProjectile(caster: Combatant, spec: ProjectileSpec, target: AbilityTarget): void {

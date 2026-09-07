@@ -11,6 +11,10 @@ export class CacheFiles {
 
     static DAT_INDEX_COUNT = 5;
 
+    // Key used to store a raw, undecoded encounter bundle buffer, as an alternative to physical
+    // dat2/idx files. CacheSystem.fromFiles checks for this key to pick the bundle-backed path.
+    static BUNDLE_FILE_NAME = "bundle";
+
     static fetchFiles(
         cacheType: CacheType,
         baseUrl: string,
@@ -164,6 +168,26 @@ export class CacheFiles {
         files.set(metaFile.name, metaFile.data);
 
         return new CacheFiles(files);
+    }
+
+    static async fetchBundle(
+        baseUrl: string,
+        encounterId: string,
+        cacheName: string,
+        signal?: AbortSignal,
+        progressListener?: ProgressListener,
+    ): Promise<CacheFiles> {
+        const cache = await caches.open(cacheName);
+        const file = await fetchCachedFile(
+            baseUrl,
+            `${encounterId}.bundle`,
+            true,
+            true,
+            cache,
+            signal,
+            progressListener,
+        );
+        return new CacheFiles(new Map([[CacheFiles.BUNDLE_FILE_NAME, file.data]]));
     }
 
     constructor(readonly files: Map<string, ArrayBuffer>) {}

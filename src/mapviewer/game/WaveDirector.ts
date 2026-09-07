@@ -43,6 +43,8 @@ function resolveModifiers(wave: Wave): EnemyStatsOverride {
     };
 }
 
+// A boss wave ignores its own startCondition entirely: it starts only once every earlier wave (not
+// just the one immediately before it) has died down to nothing, with no elapsed-time fallback.
 function shouldStartWave(
     table: readonly Wave[],
     waveIndex: number,
@@ -57,6 +59,9 @@ function shouldStartWave(
     if (previousStartedAt === undefined) {
         return false;
     }
+    if (table[waveIndex].boss) {
+        return aliveByWave.slice(0, waveIndex).every((alive) => alive === 0);
+    }
     const previousTotal = totalGroupCount(table[waveIndex - 1]);
     const previousAliveFraction =
         previousTotal === 0 ? 0 : (aliveByWave[waveIndex - 1] ?? 0) / previousTotal;
@@ -65,6 +70,36 @@ function shouldStartWave(
     return (
         previousAliveFraction <= condition.maxPreviousAliveFraction ||
         elapsedSeconds >= condition.maxElapsedSeconds
+    );
+}
+
+function waveFullyCleared(
+    wave: Wave,
+    waveIndex: number,
+    aliveByWave: readonly number[],
+    spawnedSoFarByWave: readonly number[],
+): boolean {
+    return (
+        (aliveByWave[waveIndex] ?? 0) === 0 &&
+        spawnedSoFarByWave[waveIndex] >= totalGroupCount(wave)
+    );
+}
+
+// While the wave right before waveIndex is an uncleared boss wave, waveIndex may not start: a boss
+// wave never overlaps with what comes after it either.
+function blockedByActiveBoss(
+    table: readonly Wave[],
+    waveIndex: number,
+    aliveByWave: readonly number[],
+    spawnedSoFarByWave: readonly number[],
+): boolean {
+    if (waveIndex === 0) {
+        return false;
+    }
+    const previous = table[waveIndex - 1];
+    return (
+        !!previous.boss &&
+        !waveFullyCleared(previous, waveIndex - 1, aliveByWave, spawnedSoFarByWave)
     );
 }
 
@@ -91,6 +126,7 @@ export function stepWaveDirector(
     let waveStartedAtSeconds = state.waveStartedAtSeconds;
     if (
         nextWaveIndex < table.length &&
+        !blockedByActiveBoss(table, nextWaveIndex, aliveByWave, spawnedSoFarByWave) &&
         shouldStartWave(table, nextWaveIndex, timeSeconds, waveStartedAtSeconds, aliveByWave)
     ) {
         waveStartedAtSeconds = waveStartedAtSeconds.map((startedAt, index) =>

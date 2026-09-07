@@ -16,6 +16,7 @@ export enum ProjectileKind {
     ARROW,
     MAGIC,
     POWER_SHOT,
+    JAD_MAGE_BLAST,
 }
 
 export enum ProjectileOutcome {
@@ -81,6 +82,25 @@ export const POWER_SHOT_SPEC: ProjectileSpec = {
     homing: false,
     piercing: true,
     travelSeqId: -1,
+};
+
+// TzTok-Jad's mage blast: a slow, big, non-homing fire bolt aimed at the player's position at cast
+// end, travelling 8 tiles in 1.5s so it can be sidestepped. damage is overridden per cast by
+// JadMageBlastEffect.damageMin/Max; this fixed value is never actually applied.
+const JAD_MAGE_BLAST_TRAVEL_TILES = 8;
+const JAD_MAGE_BLAST_TRAVEL_SECONDS = 1.5;
+
+export const JAD_MAGE_BLAST_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.JAD_MAGE_BLAST,
+    speed: (JAD_MAGE_BLAST_TRAVEL_TILES * 128) / JAD_MAGE_BLAST_TRAVEL_SECONDS,
+    range: 12 * 128,
+    hitRadius: 48,
+    damage: 32,
+    arc: { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 },
+    homing: false,
+    piercing: false,
+    travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
+    hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
 };
 
 export class Projectile {
