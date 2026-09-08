@@ -5,8 +5,8 @@ import {
     JAD_MELEE_BITE,
     JAD_MELEE_BITE_CAST_SEQ_ID,
     JAD_RANGED_STOMP,
-    KET_ZEK_GROUND_STRIKE,
-    TOK_XIL_GROUND_STRIKE,
+    KET_ZEK_FIRE_BLAST,
+    TOK_XIL_RANGED_SHOT,
     YT_HURKOT_HEAL_PULSE,
     YT_MEJKOT_HEAL_PULSE,
     YT_MEJKOT_MELEE,
@@ -224,7 +224,7 @@ const TOK_XIL: EnemyType = {
     walkSpeed: 576 * 1.6 * 0.6,
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 8 * 128 },
-    abilities: [TOK_XIL_GROUND_STRIKE],
+    abilities: [TOK_XIL_RANGED_SHOT],
     dropTier: DropTier.ELITE,
 };
 
@@ -263,7 +263,7 @@ const KET_ZEK: EnemyType = {
     walkSpeed: 576 * 1.6 * 0.4,
     behaviour: EnemyBehaviour.CASTER,
     engagement: { minRange: 6 * 128 },
-    abilities: [KET_ZEK_GROUND_STRIKE],
+    abilities: [KET_ZEK_FIRE_BLAST],
     dropTier: DropTier.ELITE,
 };
 

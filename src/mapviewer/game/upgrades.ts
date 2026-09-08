@@ -4,7 +4,7 @@ import { RandomSource } from "./abilityRules";
 export type AbilityModifiers = {
     readonly damageMultiplier: number;
     readonly cooldownMultiplier: number;
-    readonly windupMultiplier: number;
+    readonly castTimeMultiplier: number;
     readonly manaCostMultiplier: number;
     readonly coneAngleBonusRadians: number;
     readonly extraVolleyArrows: number;
@@ -22,7 +22,7 @@ export type AbilityModifiers = {
 export const DEFAULT_ABILITY_MODIFIERS: AbilityModifiers = {
     damageMultiplier: 1,
     cooldownMultiplier: 1,
-    windupMultiplier: 1,
+    castTimeMultiplier: 1,
     manaCostMultiplier: 1,
     coneAngleBonusRadians: 0,
     extraVolleyArrows: 0,
@@ -43,7 +43,7 @@ export function composeModifiers(a: AbilityModifiers, b: AbilityModifiers): Abil
     return {
         damageMultiplier: a.damageMultiplier * b.damageMultiplier,
         cooldownMultiplier: a.cooldownMultiplier * b.cooldownMultiplier,
-        windupMultiplier: a.windupMultiplier * b.windupMultiplier,
+        castTimeMultiplier: a.castTimeMultiplier * b.castTimeMultiplier,
         manaCostMultiplier: a.manaCostMultiplier * b.manaCostMultiplier,
         coneAngleBonusRadians: a.coneAngleBonusRadians + b.coneAngleBonusRadians,
         extraVolleyArrows: a.extraVolleyArrows + b.extraVolleyArrows,
@@ -140,7 +140,10 @@ export function applyModifiers(
     }
     return {
         ...definition,
-        windupSeconds: definition.windupSeconds * modifiers.windupMultiplier,
+        // castSpeed scales inversely so the animation's impact frame still lines up with the new,
+        // shorter (or longer) impactSeconds.
+        impactSeconds: definition.impactSeconds * modifiers.castTimeMultiplier,
+        castSpeed: definition.castSpeed / modifiers.castTimeMultiplier,
         rechargeSeconds: definition.rechargeSeconds * modifiers.cooldownMultiplier,
         manaCost: definition.manaCost * modifiers.manaCostMultiplier,
         maxCharges: definition.maxCharges + potionChargeBonus(definition, modifiers),
@@ -189,7 +192,10 @@ export const QUICK_HANDS: Upgrade = {
     id: UpgradeId.QUICK_HANDS,
     name: "Quick Hands",
     description: "15% faster ability wind-up",
-    apply: (modifiers) => ({ ...modifiers, windupMultiplier: modifiers.windupMultiplier * 0.85 }),
+    apply: (modifiers) => ({
+        ...modifiers,
+        castTimeMultiplier: modifiers.castTimeMultiplier * 0.85,
+    }),
 };
 
 export const WIDER_CLEAVE: Upgrade = {
@@ -299,8 +305,8 @@ export function summarizeModifiers(modifiers: AbilityModifiers): string | undefi
     if (modifiers.cooldownMultiplier !== 1) {
         parts.push(`${formatPercentDelta(1 / modifiers.cooldownMultiplier)} atk speed`);
     }
-    if (modifiers.windupMultiplier !== 1) {
-        parts.push(`${formatPercentDelta(1 / modifiers.windupMultiplier)} cast speed`);
+    if (modifiers.castTimeMultiplier !== 1) {
+        parts.push(`${formatPercentDelta(1 / modifiers.castTimeMultiplier)} cast speed`);
     }
     if (modifiers.moveSpeedMultiplier !== 1) {
         parts.push(`${formatPercentDelta(modifiers.moveSpeedMultiplier)} speed`);

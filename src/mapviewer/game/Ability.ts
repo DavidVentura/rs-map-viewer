@@ -52,6 +52,9 @@ export type ConeMeleeEffect = {
     readonly damageMultiplier: number;
     readonly angleRadians: number;
     readonly reach: number;
+    // Spawned once at impact, at a ground point in front of the caster (not per enemy hit); unset
+    // for cone melees with no distinct impact graphic (e.g. Cleave).
+    readonly hitEffect?: ProjectileHitEffect;
 };
 
 export type AreaEffect = {
@@ -101,8 +104,15 @@ export type AbilityEffect =
 export type AbilityDefinition = {
     readonly id: string;
     readonly name: string;
-    readonly windupSeconds: number;
+    // Time from cast start to when the effect (damage/heal/etc) resolves, at this ability's
+    // castSpeed. The cast animation keeps playing past this point through its own recovery
+    // (see castAnimationSeconds), covered by the ability's ATTACK lock rather than by this field.
+    readonly impactSeconds: number;
     readonly channelSeconds: number;
+    // Playback speed multiplier for the cast animation (1 = natural speed). Chosen per-ability so
+    // impactSeconds lands on the animation's visual contact frame; see abilities.ts for how each
+    // value was derived from the cache's frame data.
+    readonly castSpeed: number;
     readonly manaCost: number;
     readonly maxCharges: number;
     readonly rechargeSeconds: number;
@@ -111,6 +121,19 @@ export type AbilityDefinition = {
     readonly effect: AbilityEffect;
     readonly castSeqId?: number;
 };
+
+// The ATTACK-group lock's own seconds value, i.e. how long the recovery portion of a cast's
+// animation runs after its impact (see AbilityDefinition.impactSeconds). 0 for abilities with no
+// ATTACK-group lock.
+export function attackLockSeconds(definition: AbilityDefinition): number {
+    return definition.locks.find((lock) => lock.group === CooldownGroup.ATTACK)?.seconds ?? 0;
+}
+
+// Total wall-clock time the cast animation plays for, from cast start through impact and all the
+// way through recovery: impact, then any channel, then the ATTACK lock's recovery time.
+export function castAnimationSeconds(definition: AbilityDefinition): number {
+    return definition.impactSeconds + definition.channelSeconds + attackLockSeconds(definition);
+}
 
 export type AbilityTarget = {
     readonly x: number;

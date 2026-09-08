@@ -294,15 +294,12 @@ const QUICK_CAVE: Encounter = {
     ],
 };
 
-// Every enemy type at once, in a single wave with no gating: a sandbox for trying builds against
-// the whole cast in one go. Yt-HurKot isn't listed here since it never spawns directly, only as one
+// The ranged, mage and boss roster at once, in a single wave with no gating: a sandbox for tuning
+// projectiles, animations and effects against the enemies that have them. Yt-HurKot isn't listed here since it never spawns directly, only as one
 // of TzTok-Jad's phase adds (see EnemyType.ts); it still needs to be in enemyTypeIds so the loader
 // preloads it for when that phase triggers.
 const SANDBOX_WAVE_ENEMY_TYPE_IDS = [
-    EnemyTypeId.TZ_KIH,
-    EnemyTypeId.TZ_KEK,
     EnemyTypeId.TOK_XIL,
-    EnemyTypeId.YT_MEJKOT,
     EnemyTypeId.KET_ZEK,
     EnemyTypeId.TZTOK_JAD,
 ];

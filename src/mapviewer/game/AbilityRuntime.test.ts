@@ -4,8 +4,9 @@ import { AbilityRuntime } from "./AbilityRuntime";
 const INSTANT_ATTACK: AbilityDefinition = {
     id: "instant_attack",
     name: "Instant Attack",
-    windupSeconds: 0,
+    impactSeconds: 0,
     channelSeconds: 0,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
@@ -17,8 +18,9 @@ const INSTANT_ATTACK: AbilityDefinition = {
 const TELEGRAPHED_SHOT: AbilityDefinition = {
     id: "telegraphed_shot",
     name: "Telegraphed Shot",
-    windupSeconds: 0.5,
+    impactSeconds: 0.5,
     channelSeconds: 0,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0.5,
@@ -38,8 +40,9 @@ const COSTLY_SPELL: AbilityDefinition = {
 const CHANNELED_ABILITY: AbilityDefinition = {
     id: "channeled_ability",
     name: "Channeled Ability",
-    windupSeconds: 0,
+    impactSeconds: 0,
     channelSeconds: 1,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,

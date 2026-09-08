@@ -13,6 +13,7 @@ export enum CombatEventKind {
     ITEM_DROPPED = 8,
     ITEM_PICKED_UP = 9,
     BOSS_PHASE = 10,
+    CONE_MELEE_LANDED = 11,
 }
 
 export type DamageEvent = {
@@ -81,6 +82,19 @@ export type BossPhaseEvent = {
     phaseLabel: string;
 };
 
+// A cone-melee cast that carries a hitEffect (see ConeMeleeEffect.hitEffect) landing: lets the HUD
+// draw a short-lived outline of the cone's actual damage area (see hudDraw.drawGroundConeFlash),
+// distinct from GroundStrikeLandedEvent's circular area.
+export type ConeMeleeLandedEvent = {
+    kind: CombatEventKind.CONE_MELEE_LANDED;
+    x: number;
+    y: number;
+    level: number;
+    facingRotation: number;
+    angleRadians: number;
+    reach: number;
+};
+
 export type CombatEvent =
     | DamageEvent
     | HealEvent
@@ -92,7 +106,8 @@ export type CombatEvent =
     | GroundStrikeLandedEvent
     | ItemDroppedEvent
     | ItemPickedUpEvent
-    | BossPhaseEvent;
+    | BossPhaseEvent
+    | ConeMeleeLandedEvent;
 
 export interface Freezable extends Combatant {
     frozenUntil?: number;

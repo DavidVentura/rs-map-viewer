@@ -207,9 +207,13 @@ export class Enemy implements Combatant, SteeringBody {
         return this.type.attackSeqId;
     }
 
-    get castSeqId(): number {
+    // The cast/recovery sequence to show at `time`: the actively-playing cast's own castSeqId (see
+    // AbilityRuntime.activeCastAnimation, which outlives the cast's pendingCast/effect resolution
+    // through its recovery), falling back to the type's cast/basic-attack sequence once nothing is
+    // playing.
+    castSeqIdAt(time: number): number {
         return (
-            this.abilityRuntime.pendingDefinition()?.castSeqId ??
+            this.abilityRuntime.activeCastAnimation(time)?.definition.castSeqId ??
             this.type.castSeqId ??
             this.type.attackSeqId
         );
@@ -304,26 +308,33 @@ export class Enemy implements Combatant, SteeringBody {
             return;
         }
 
-        if (frozen || this.state === EnemyState.RECOVERY) {
+        if (frozen) {
             this.animation.setSequence(this.idleSeqId);
             this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
             return;
         }
 
-        if (this.state === EnemyState.WINDUP) {
-            if (player) {
+        // WINDUP and RECOVERY are one continuous animation (see AbilityRuntime.activeCastAnimation):
+        // WINDUP is the portion up to impact, RECOVERY is the remainder covered by the ability's
+        // ATTACK lock. setSequence no-ops once the sequence is already playing, so this doesn't
+        // restart it on every tick.
+        if (this.state === EnemyState.WINDUP || this.state === EnemyState.RECOVERY) {
+            if (this.state === EnemyState.WINDUP && player) {
                 const deltaX = player.x - this.x;
                 const deltaY = player.y - this.y;
                 if (deltaX !== 0 || deltaY !== 0) {
                     this.rotation = directionToRotation(deltaX, deltaY);
                 }
             }
-            this.animation.setSequence(this.castSeqId);
+            const castSpeed =
+                this.abilityRuntime.activeCastAnimation(timeSeconds)?.definition.castSpeed ?? 1;
+            this.animation.setSequence(this.castSeqIdAt(timeSeconds));
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
                 seqFrameLoader,
                 AnimationPlayback.ONCE,
+                castSpeed,
             );
             return;
         }

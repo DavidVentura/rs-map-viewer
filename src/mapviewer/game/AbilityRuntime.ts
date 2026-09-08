@@ -1,4 +1,4 @@
-import { AbilityDefinition, AbilityTarget, CooldownGroup } from "./Ability";
+import { AbilityDefinition, AbilityTarget, CooldownGroup, castAnimationSeconds } from "./Ability";
 import {
     ChargeState,
     canUseAbility,
@@ -13,10 +13,21 @@ export type PendingCast = {
     readonly readyAt: number;
 };
 
+// Tracks the cast animation independently of PendingCast: PendingCast is consumed at impact (see
+// takeReadyCast), but the animation keeps playing through recovery past that point (see
+// castAnimationSeconds), so Player/Enemy need to know what to keep playing after the effect has
+// already resolved.
+export type ActiveCastAnimation = {
+    readonly definition: AbilityDefinition;
+    readonly startedAt: number;
+    readonly endsAt: number;
+};
+
 export class AbilityRuntime {
     private groupCooldownUntil = new Map<CooldownGroup, number>();
     private chargeStateById = new Map<string, ChargeState>();
     private pendingCast?: PendingCast;
+    private activeAnimation?: ActiveCastAnimation;
 
     canUse(definition: AbilityDefinition, mana: number, time: number): boolean {
         return canUseAbility(
@@ -47,8 +58,17 @@ export class AbilityRuntime {
         return this.isBusy(time) && this.pendingCast!.definition.channelSeconds > 0;
     }
 
+    // The cast/recovery animation to play at `time`, or undefined once it's fully played out. See
+    // ActiveCastAnimation: this outlives pendingCast, which is only good until impact.
+    activeCastAnimation(time: number): ActiveCastAnimation | undefined {
+        if (!this.activeAnimation || time >= this.activeAnimation.endsAt) {
+            return undefined;
+        }
+        return this.activeAnimation;
+    }
+
     use(definition: AbilityDefinition, target: AbilityTarget, time: number): void {
-        const commitSeconds = definition.windupSeconds + definition.channelSeconds;
+        const commitSeconds = definition.impactSeconds + definition.channelSeconds;
         this.groupCooldownUntil = lockGroups(
             definition.locks,
             this.groupCooldownUntil,
@@ -65,6 +85,11 @@ export class AbilityRuntime {
             ),
         );
         this.pendingCast = { definition, target, readyAt: time + commitSeconds };
+        this.activeAnimation = {
+            definition,
+            startedAt: time,
+            endsAt: time + castAnimationSeconds(definition),
+        };
     }
 
     takeReadyCast(time: number): PendingCast | undefined {
@@ -84,5 +109,6 @@ export class AbilityRuntime {
         this.groupCooldownUntil = new Map();
         this.chargeStateById = new Map();
         this.pendingCast = undefined;
+        this.activeAnimation = undefined;
     }
 }

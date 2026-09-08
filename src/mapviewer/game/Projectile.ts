@@ -23,6 +23,8 @@ export enum ProjectileKind {
     POWER_SHOT,
     JAD_MAGE_BLAST,
     JAD_RANGED_ROCK,
+    TOK_XIL_SHOT,
+    KET_ZEK_FIRE_BLAST,
 }
 
 export enum ProjectileOutcome {
@@ -155,6 +157,54 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
     damage: 30,
     flight: { kind: "DROP", startHeight: JAD_RANGED_ROCK_FALL_HEIGHT },
     travelSeqId: JAD_RANGED_ROCK_SEQ_ID,
+};
+
+// Tok-Xil's ranged shot: a straight, non-homing bolt (SpotAnimType ids 446 travel / 445 hit, both
+// found next to the confirmed TzHaar block 444/448-451 - see EnemyType.ts's TOK_XIL comment; medium
+// confidence only, not visually confirmed through the animation viewer). range matches the old
+// ground-strike's cast range so Tok-Xil still engages at the same distance (see
+// Enemy.enemyAttackRange). damage is overridden per cast by TOK_XIL_RANGED_SHOT's damageMin/Max;
+// this fixed value is never actually applied.
+export const TOK_XIL_SHOT_TRAVEL_SEQ_ID = 2649;
+export const TOK_XIL_SHOT_HIT_SEQ_ID = 2648;
+
+export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.TOK_XIL_SHOT,
+    speed: 2048,
+    range: 11 * 128,
+    hitRadius: 128,
+    damage: 6,
+    flight: { kind: "STRAIGHT", piercing: false, homing: false },
+    travelSeqId: TOK_XIL_SHOT_TRAVEL_SEQ_ID,
+    hitEffect: {
+        kind: VisualEffectKind.TOK_XIL_SHOT_HIT,
+        seqId: TOK_XIL_SHOT_HIT_SEQ_ID,
+        height: 96,
+    },
+};
+
+// Ket-Zek's fire blast: a straight, non-homing bolt (SpotAnimType ids 452 travel / 453 hit, both
+// found next to the confirmed TzHaar block - see EnemyType.ts's KET_ZEK comment; medium confidence
+// only, not visually confirmed through the animation viewer). Slower than Tok-Xil's shot for a
+// heavier-feeling cast. range matches the old ground-strike's cast range (see
+// Enemy.enemyAttackRange). damage is overridden per cast by KET_ZEK_FIRE_BLAST's damageMin/Max;
+// this fixed value is never actually applied.
+export const KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID = 2718;
+export const KET_ZEK_FIRE_BLAST_HIT_SEQ_ID = 2719;
+
+export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.KET_ZEK_FIRE_BLAST,
+    speed: 1024,
+    range: 10 * 128,
+    hitRadius: 128,
+    damage: 18,
+    flight: { kind: "STRAIGHT", piercing: false, homing: false },
+    travelSeqId: KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
+    hitEffect: {
+        kind: VisualEffectKind.KET_ZEK_FIRE_BLAST_HIT,
+        seqId: KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
+        height: 124,
+    },
 };
 
 export class Projectile {

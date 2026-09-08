@@ -1818,6 +1818,18 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 });
                 continue;
             }
+            if (event.kind === CombatEventKind.CONE_MELEE_LANDED) {
+                splatEvents.push({
+                    kind: SplatKind.CONE_IMPACT,
+                    facingRotation: event.facingRotation,
+                    angleRadians: event.angleRadians,
+                    reach: event.reach,
+                    worldX: event.x,
+                    worldY: event.y,
+                    groundHeight: this.terrain.getHeight(event.level, event.x, event.y),
+                });
+                continue;
+            }
             if (event.kind === CombatEventKind.BOSS_PHASE) {
                 this.bossPhaseLabel = event.phaseLabel;
                 continue;

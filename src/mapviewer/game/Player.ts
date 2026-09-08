@@ -2,7 +2,7 @@ import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityDefinition, AbilityTarget, WeaponStyle } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
-import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "./Animation";
+import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
 import {
     DEFAULT_EQUIPMENT,
@@ -84,8 +84,7 @@ export class Player implements Combatant, ManaPool {
 
     rotation = 0;
 
-    private castAnimationEndsAt?: number;
-    private castAnimationSpeed = 1;
+    private castAnimationStartedAt?: number;
     private deadUntil?: number;
     style: WeaponStyle = WeaponStyle.RANGED;
     readonly animation: AnimationState;
@@ -206,7 +205,7 @@ export class Player implements Combatant, ManaPool {
         this.health = this.maxHealth;
         this.mana = this.maxMana;
         this.deadUntil = undefined;
-        this.castAnimationEndsAt = undefined;
+        this.castAnimationStartedAt = undefined;
         this.abilityRuntime.reset();
         this.animation.restart(this.idleSeqId);
     }
@@ -234,23 +233,18 @@ export class Player implements Combatant, ManaPool {
             this.mana + Player.MANA_REGEN_PER_SECOND * deltaTimeSeconds,
         );
 
-        const castEndsAt = this.abilityRuntime.castEndsAt();
-        if (castEndsAt !== undefined && timeSeconds < castEndsAt) {
-            if (this.castAnimationEndsAt !== castEndsAt) {
-                this.castAnimationEndsAt = castEndsAt;
-                const castSeqId =
-                    this.abilityRuntime.pendingDefinition()?.castSeqId ?? this.attackSeqId;
-                this.animation.restart(castSeqId);
-                this.castAnimationSpeed =
-                    sequenceDurationSeconds(castSeqId, seqTypeLoader, seqFrameLoader) /
-                    (castEndsAt - timeSeconds);
+        const activeCast = this.abilityRuntime.activeCastAnimation(timeSeconds);
+        if (activeCast) {
+            if (this.castAnimationStartedAt !== activeCast.startedAt) {
+                this.castAnimationStartedAt = activeCast.startedAt;
+                this.animation.restart(activeCast.definition.castSeqId ?? this.attackSeqId);
             }
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
                 seqFrameLoader,
                 AnimationPlayback.ONCE,
-                this.castAnimationSpeed,
+                activeCast.definition.castSpeed,
             );
             return;
         }

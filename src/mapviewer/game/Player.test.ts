@@ -77,7 +77,7 @@ describe("Player.beginCast", () => {
         player.beginCast(MAGIC_BOLT, { x: 100, y: 0 }, 10);
         expect(player.mana).toBe(player.maxMana - MAGIC_BOLT.manaCost);
         expect(player.abilityRuntime.isBusy(10)).toBe(true);
-        expect(player.abilityRuntime.isBusy(10 + MAGIC_BOLT.windupSeconds)).toBe(false);
+        expect(player.abilityRuntime.isBusy(10 + MAGIC_BOLT.impactSeconds)).toBe(false);
     });
 
     it("faces the caster toward the target", () => {

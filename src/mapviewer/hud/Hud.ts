@@ -1,3 +1,4 @@
+import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { worldRadiusToScreenPx, worldToScreen } from "../webgl/groundPoint";
 import { HudFrame, PickupFlashEvent, SplatEvent, SplatKind } from "./HudFrame";
 import {
@@ -6,6 +7,7 @@ import {
     drawBossBar,
     drawBottomPanel,
     drawDamageSplat,
+    drawGroundConeFlash,
     drawGroundImpactFlash,
     drawGroundItemLabel,
     drawGroundShadow,
@@ -23,12 +25,21 @@ import {
 
 const SPLAT_LIFETIME_SECONDS = 1;
 const GROUND_IMPACT_LIFETIME_SECONDS = 0.25;
+const CONE_IMPACT_LIFETIME_SECONDS = 0.4;
 const PICKUP_FLASH_LIFETIME_SECONDS = 2;
+// How many segments the cone's boundary arc is projected with; enough to read as a curve rather
+// than a triangle at Maul Smash's 120-degree angle.
+const CONE_IMPACT_ARC_SEGMENTS = 12;
 
 function splatLifetimeSeconds(kind: SplatKind): number {
-    return kind === SplatKind.GROUND_IMPACT
-        ? GROUND_IMPACT_LIFETIME_SECONDS
-        : SPLAT_LIFETIME_SECONDS;
+    switch (kind) {
+        case SplatKind.GROUND_IMPACT:
+            return GROUND_IMPACT_LIFETIME_SECONDS;
+        case SplatKind.CONE_IMPACT:
+            return CONE_IMPACT_LIFETIME_SECONDS;
+        default:
+            return SPLAT_LIFETIME_SECONDS;
+    }
 }
 
 type LiveSplat = SplatEvent & { ageSeconds: number };
@@ -177,6 +188,30 @@ export class Hud {
                     if (radiusPx !== undefined) {
                         drawGroundImpactFlash(this.ctx, screen, radiusPx, progress);
                     }
+                    break;
+                }
+                case SplatKind.CONE_IMPACT: {
+                    const centerTheta = (splat.facingRotation - 1024) * RS_TO_RADIANS;
+                    const halfAngle = splat.angleRadians / 2;
+                    const boundaryScreenPoints: { x: number; y: number }[] = [];
+                    for (let i = 0; i <= CONE_IMPACT_ARC_SEGMENTS; i++) {
+                        const theta =
+                            centerTheta -
+                            halfAngle +
+                            (halfAngle * 2 * i) / CONE_IMPACT_ARC_SEGMENTS;
+                        const point = worldToScreen(
+                            frame.viewProjMatrix,
+                            splat.worldX + Math.sin(theta) * splat.reach,
+                            splat.worldY + Math.cos(theta) * splat.reach,
+                            splat.groundHeight,
+                            width,
+                            height,
+                        );
+                        if (point) {
+                            boundaryScreenPoints.push(point);
+                        }
+                    }
+                    drawGroundConeFlash(this.ctx, screen, boundaryScreenPoints, progress);
                     break;
                 }
             }

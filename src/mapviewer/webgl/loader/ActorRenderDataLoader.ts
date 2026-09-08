@@ -19,10 +19,15 @@ import {
     FIRE_BOLT_TRAVEL_SEQ_ID,
     JAD_FIRE_SEQ_ID,
     JAD_RANGED_ROCK_SEQ_ID,
+    KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
+    KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     ProjectileKind,
+    TOK_XIL_SHOT_HIT_SEQ_ID,
+    TOK_XIL_SHOT_TRAVEL_SEQ_ID,
 } from "../../game/Projectile";
 import {
     ICE_BARRAGE_HIT_SEQ_ID,
+    MAUL_SMASH_HIT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
 } from "../../game/VisualEffect";
@@ -383,6 +388,21 @@ const JAD_RANGED_ROCK_SPOTANIM_ID = 451;
 // TzHaar healer heal graphic (SpotAnimType id): 444.
 const TZHAAR_HEAL_SPOTANIM_ID = 444;
 
+// Elder maul special impact graphic (SpotAnimType id): 2804, found by scanning the cache for spot
+// animations driven by a sequence in the same block as the maul's own cast seq (11124) - this one
+// uses seq 11125 (MAUL_SMASH_HIT_SEQ_ID), immediately after it.
+const MAUL_SMASH_HIT_SPOTANIM_ID = 2804;
+
+// Tok-Xil's ranged shot (SpotAnimType ids): 446 travel / 445 hit, found next to the confirmed
+// TzHaar block above; medium confidence only, not visually confirmed through the animation viewer.
+const TOK_XIL_SHOT_TRAVEL_SPOTANIM_ID = 446;
+const TOK_XIL_SHOT_HIT_SPOTANIM_ID = 445;
+
+// Ket-Zek's fire blast (SpotAnimType ids): 452 travel / 453 hit, found next to the confirmed
+// TzHaar block above; medium confidence only, not visually confirmed through the animation viewer.
+const KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID = 452;
+const KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID = 453;
+
 // A visually distinct, larger arrow model for the ranged Power Shot special.
 const POWER_SHOT_MODEL_SCALE = 200;
 const ARROW_LENGTH_SCALE = 160;
@@ -527,6 +547,84 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         ICE_BARRAGE_HIT_SEQ_ID,
     );
 
+    const maulSmashHitSpotAnim = spotAnimTypeLoader.load(MAUL_SMASH_HIT_SPOTANIM_ID);
+    const maulSmashHitModel = buildSpotAnimModel(modelLoader, textureLoader, maulSmashHitSpotAnim);
+    if (!maulSmashHitModel || maulSmashHitSpotAnim.sequenceId !== MAUL_SMASH_HIT_SEQ_ID) {
+        throw new Error("Maul smash hit spot animation does not match the expected sequence");
+    }
+    const maulSmashHitAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        maulSmashHitModel,
+        MAUL_SMASH_HIT_SEQ_ID,
+    );
+
+    const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_TRAVEL_SPOTANIM_ID);
+    const tokXilShotModel = buildSpotAnimModel(modelLoader, textureLoader, tokXilShotSpotAnim);
+    if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== TOK_XIL_SHOT_TRAVEL_SEQ_ID) {
+        throw new Error("Tok-Xil shot spot animation does not match the expected sequence");
+    }
+    const tokXilShotAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        tokXilShotModel,
+        TOK_XIL_SHOT_TRAVEL_SEQ_ID,
+    );
+
+    const tokXilShotHitSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_HIT_SPOTANIM_ID);
+    const tokXilShotHitModel = buildSpotAnimModel(
+        modelLoader,
+        textureLoader,
+        tokXilShotHitSpotAnim,
+    );
+    if (!tokXilShotHitModel || tokXilShotHitSpotAnim.sequenceId !== TOK_XIL_SHOT_HIT_SEQ_ID) {
+        throw new Error("Tok-Xil shot hit spot animation does not match the expected sequence");
+    }
+    const tokXilShotHitAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        tokXilShotHitModel,
+        TOK_XIL_SHOT_HIT_SEQ_ID,
+    );
+
+    const ketZekBlastSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID);
+    const ketZekBlastModel = buildSpotAnimModel(modelLoader, textureLoader, ketZekBlastSpotAnim);
+    if (!ketZekBlastModel || ketZekBlastSpotAnim.sequenceId !== KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID) {
+        throw new Error("Ket-Zek fire blast spot animation does not match the expected sequence");
+    }
+    const ketZekBlastAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        ketZekBlastModel,
+        KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
+    );
+
+    const ketZekBlastHitSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID);
+    const ketZekBlastHitModel = buildSpotAnimModel(
+        modelLoader,
+        textureLoader,
+        ketZekBlastHitSpotAnim,
+    );
+    if (
+        !ketZekBlastHitModel ||
+        ketZekBlastHitSpotAnim.sequenceId !== KET_ZEK_FIRE_BLAST_HIT_SEQ_ID
+    ) {
+        throw new Error(
+            "Ket-Zek fire blast hit spot animation does not match the expected sequence",
+        );
+    }
+    const ketZekBlastHitAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        ketZekBlastHitModel,
+        KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
+    );
+
     return {
         projectileMeshes: {
             [ProjectileKind.ARROW]: arrowAnim,
@@ -534,12 +632,17 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [ProjectileKind.POWER_SHOT]: powerShotAnim,
             [ProjectileKind.JAD_MAGE_BLAST]: jadFireAnim,
             [ProjectileKind.JAD_RANGED_ROCK]: jadRockAnim,
+            [ProjectileKind.TOK_XIL_SHOT]: tokXilShotAnim,
+            [ProjectileKind.KET_ZEK_FIRE_BLAST]: ketZekBlastAnim,
         },
         effectAnimations: {
             [VisualEffectKind.MAGIC_HIT]: boltHitAnim,
             [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
             [VisualEffectKind.JAD_FIRE_HIT]: jadFireHitAnim,
             [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
+            [VisualEffectKind.TOK_XIL_SHOT_HIT]: tokXilShotHitAnim,
+            [VisualEffectKind.KET_ZEK_FIRE_BLAST_HIT]: ketZekBlastHitAnim,
+            [VisualEffectKind.MAUL_SMASH_HIT]: maulSmashHitAnim,
         },
     };
 }

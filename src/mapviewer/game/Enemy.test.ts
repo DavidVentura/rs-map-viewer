@@ -16,7 +16,7 @@ import { ARROW_SPEC } from "./Projectile";
 import { Terrain } from "./Terrain";
 import {
     ENEMY_MELEE,
-    TOK_XIL_GROUND_STRIKE,
+    TOK_XIL_RANGED_SHOT,
     YT_MEJKOT_HEAL_PULSE,
     YT_MEJKOT_MELEE,
 } from "./abilities";
@@ -171,11 +171,19 @@ describe("enemyAttackRange", () => {
     });
 
     it("uses the ground strike's own cast range, ignoring hit radii", () => {
-        expect(enemyAttackRange(TOK_XIL_GROUND_STRIKE, 128, 64)).toBe(
-            TOK_XIL_GROUND_STRIKE.effect.kind === AbilityEffectKind.GROUND_STRIKE
-                ? TOK_XIL_GROUND_STRIKE.effect.range
-                : -1,
-        );
+        const groundStrikeDefinition: AbilityDefinition = {
+            ...ENEMY_MELEE,
+            id: "enemy_ground_strike",
+            effect: {
+                kind: AbilityEffectKind.GROUND_STRIKE,
+                radiusTiles: 1,
+                telegraphSeconds: 1,
+                damageMin: 1,
+                damageMax: 1,
+                range: 10 * 128,
+            },
+        };
+        expect(enemyAttackRange(groundStrikeDefinition, 128, 64)).toBe(10 * 128);
     });
 });
 
@@ -276,7 +284,7 @@ const TEST_KITER_TYPE: EnemyType = {
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 512 },
-    abilities: [TOK_XIL_GROUND_STRIKE],
+    abilities: [TOK_XIL_RANGED_SHOT],
     dropTier: DropTier.NONE,
 };
 
@@ -302,13 +310,13 @@ function makeEnemy(): Enemy {
 describe("Enemy.castSeqId preference order", () => {
     it("falls back to the type's attackSeqId when nothing more specific is set", () => {
         const enemy = makeEnemy();
-        expect(enemy.castSeqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+        expect(enemy.castSeqIdAt(0)).toBe(TEST_ENEMY_TYPE.attackSeqId);
     });
 
     it("prefers the type's castSeqId over attackSeqId", () => {
         const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
         const enemy = new Enemy(1, 0, 0, 0, 0, 0, type);
-        expect(enemy.castSeqId).toBe(999);
+        expect(enemy.castSeqIdAt(0)).toBe(999);
     });
 
     it("prefers the pending ability's castSeqId over the type's castSeqId and attackSeqId", () => {
@@ -318,7 +326,7 @@ describe("Enemy.castSeqId preference order", () => {
 
         enemy.abilityRuntime.use(ability, { x: 0, y: 0 }, 0);
 
-        expect(enemy.castSeqId).toBe(1234);
+        expect(enemy.castSeqIdAt(0)).toBe(1234);
     });
 
     it("falls through to the type's castSeqId once the pending ability has no castSeqId", () => {
@@ -327,7 +335,7 @@ describe("Enemy.castSeqId preference order", () => {
 
         enemy.abilityRuntime.use(ENEMY_MELEE, { x: 0, y: 0 }, 0);
 
-        expect(enemy.castSeqId).toBe(999);
+        expect(enemy.castSeqIdAt(0)).toBe(999);
     });
 });
 
@@ -434,12 +442,12 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
-        const windupSeconds = ENEMY_MELEE.windupSeconds;
-        time += windupSeconds - 0.001;
+        const impactSeconds = ENEMY_MELEE.impactSeconds;
+        time += impactSeconds - 0.001;
         enemy.update(
             player,
             [],
-            windupSeconds - 0.001,
+            impactSeconds - 0.001,
             time,
             seqTypeLoader,
             seqFrameLoader,

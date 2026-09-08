@@ -7,10 +7,17 @@ export enum VisualEffectKind {
     ICE_BARRAGE_HIT = 1,
     JAD_FIRE_HIT = 2,
     TZHAAR_HEAL = 3,
+    MAUL_SMASH_HIT = 4,
+    TOK_XIL_SHOT_HIT = 5,
+    KET_ZEK_FIRE_BLAST_HIT = 6,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
 export const TZHAAR_HEAL_SEQ_ID = 2640;
+// Elder maul special (SpotAnimType id 2804): found by scanning the cache for spot animations
+// driven by a sequence in the same block as the maul's own cast seq (MAUL_SMASH_CAST_SEQ_ID,
+// 11124) - this one uses seq 11125, immediately after it.
+export const MAUL_SMASH_HIT_SEQ_ID = 11125;
 
 export class VisualEffect {
     readonly animation: AnimationState;

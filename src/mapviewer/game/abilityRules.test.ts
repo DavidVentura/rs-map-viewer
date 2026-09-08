@@ -15,8 +15,9 @@ import {
 const BASE_DEFINITION = {
     id: "test",
     name: "Test",
-    windupSeconds: 0,
+    impactSeconds: 0,
     channelSeconds: 0,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,

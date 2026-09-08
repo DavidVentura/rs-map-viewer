@@ -888,7 +888,7 @@ export class GameWorld {
 
     private spawnVisualEffect(
         hitEffect: ProjectileHitEffect,
-        target: Combatant,
+        point: { readonly x: number; readonly y: number; readonly level: number },
         holdSeconds?: number,
     ): void {
         if (this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
@@ -897,9 +897,9 @@ export class GameWorld {
         this.visualEffects.push(
             new VisualEffect(
                 hitEffect.kind,
-                target.level,
-                target.x,
-                target.y,
+                point.level,
+                point.x,
+                point.y,
                 hitEffect.height,
                 hitEffect.seqId,
                 holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
@@ -949,6 +949,24 @@ export class GameWorld {
                 continue;
             }
             applyDamage(enemy, rollDamage(minDamage, maxDamage, this.random), this.events);
+        }
+        if (effect.hitEffect) {
+            const facing = rotationToDirection(caster.rotation);
+            const landingDistance = effect.reach * 0.5;
+            this.spawnVisualEffect(effect.hitEffect, {
+                x: caster.x + facing.x * landingDistance,
+                y: caster.y + facing.y * landingDistance,
+                level: caster.level,
+            });
+            this.events.push({
+                kind: CombatEventKind.CONE_MELEE_LANDED,
+                x: caster.x,
+                y: caster.y,
+                level: caster.level,
+                facingRotation: caster.rotation,
+                angleRadians: effect.angleRadians,
+                reach: effect.reach,
+            });
         }
     }
 
