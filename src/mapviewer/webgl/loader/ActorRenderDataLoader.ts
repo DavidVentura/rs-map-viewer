@@ -247,15 +247,15 @@ function createEnemyTypeAnimationSet(
     enemyType: EnemyType,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(enemyType.npcTypeId);
-    const model = npcModelLoader.getRestModel(npcType);
-    if (!model) {
+    const rest = npcModelLoader.getRestModel(npcType);
+    if (!rest) {
         throw new Error(`Enemy model is missing for enemy type ${enemyType.id}`);
     }
     return skinning.addAnimationSet(
-        model,
+        rest.model,
         enemyTypeSeqIds(enemyType),
         ActorFaceSelection.all(),
-        npcScaleTransform(npcType),
+        npcScaleTransform(rest.npcType),
     );
 }
 
@@ -272,15 +272,15 @@ function createPreviewEnemyTypeAnimationSet(
     for (let seqId = preview.seqRange.from; seqId <= preview.seqRange.to; seqId++) {
         seqIds.add(seqId);
     }
-    const model = npcModelLoader.getRestModel(npcType);
-    if (!model) {
+    const rest = npcModelLoader.getRestModel(npcType);
+    if (!rest) {
         throw new Error(`Preview NPC model is missing for ${preview.npcTypeId}`);
     }
     return skinning.addAnimationSet(
-        model,
+        rest.model,
         [...seqIds],
         ActorFaceSelection.all(),
-        npcScaleTransform(npcType),
+        npcScaleTransform(rest.npcType),
     );
 }
 
@@ -325,7 +325,8 @@ function createPreviewGfxAnimationSet(
         // Newer spot anims use skeletal sequences with no old-style frames, which this baker
         // can't pose; the viewer shows their rest model (the Info line reports 0 frames) rather
         // than one such id in the range aborting the whole actor buffer load.
-        const hasFrames = seqId !== undefined && !seqTypeLoader.load(seqId).isSkeletalSeq();
+        const hasFrames =
+            seqId !== undefined && (seqTypeLoader.load(seqId).frameIds?.length ?? 0) > 0;
         const anim = skinning.addAnimation(model, hasFrames ? seqId : undefined);
         bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
     }

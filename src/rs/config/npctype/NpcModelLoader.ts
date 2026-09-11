@@ -10,6 +10,11 @@ import { VarManager } from "../vartype/VarManager";
 import { NpcType } from "./NpcType";
 import { NpcTypeLoader } from "./NpcTypeLoader";
 
+export interface NpcRestModel {
+    readonly npcType: NpcType;
+    readonly model: Model;
+}
+
 export class NpcModelLoader {
     modelCache: Map<number, Model>;
 
@@ -26,12 +31,14 @@ export class NpcModelLoader {
     }
 
     getModel(npcType: NpcType, seqId: number, frame: number): Model | undefined {
-        let model = this.getRestModel(npcType);
-        if (!model) {
+        const rest = this.getRestModel(npcType);
+        if (!rest) {
             return undefined;
         }
+        const resolvedType = rest.npcType;
+        let model = rest.model;
 
-        const hasScale = npcType.widthScale !== 128 || npcType.heightScale !== 128;
+        const hasScale = resolvedType.widthScale !== 128 || resolvedType.heightScale !== 128;
         const seqType = this.seqTypeLoader.load(seqId);
         if (seqType && seqId !== -1 && frame !== -1) {
             model = this.transformNpcModel(model, seqType, frame);
@@ -40,12 +47,14 @@ export class NpcModelLoader {
         }
 
         if (hasScale) {
-            model.scale(npcType.widthScale, npcType.heightScale, npcType.widthScale);
+            model.scale(resolvedType.widthScale, resolvedType.heightScale, resolvedType.widthScale);
         }
         return model;
     }
 
-    getRestModel(npcType: NpcType): Model | undefined {
+    // Resolves varbit/varp transforms first, so the returned type is the one whose model and scale
+    // are actually rendered.
+    getRestModel(npcType: NpcType): NpcRestModel | undefined {
         if (npcType.transforms) {
             const transformed = npcType.transform(this.varManager, this.npcTypeLoader);
             if (!transformed) {
@@ -95,7 +104,7 @@ export class NpcModelLoader {
             this.modelCache.set(npcType.id, model);
         }
 
-        return model;
+        return { npcType, model };
     }
 
     transformNpcModel(model: Model, seqType: SeqType, frame: number): Model {
