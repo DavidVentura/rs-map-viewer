@@ -159,38 +159,41 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
     travelSeqId: JAD_RANGED_ROCK_SEQ_ID,
 };
 
-// Tok-Xil's ranged shot: a straight, non-homing bolt (SpotAnimType ids 446 travel / 445 hit, both
-// found next to the confirmed TzHaar block 444/448-451 - see EnemyType.ts's TOK_XIL comment; medium
-// confidence only, not visually confirmed through the animation viewer). range matches the old
-// ground-strike's cast range so Tok-Xil still engages at the same distance (see
-// Enemy.enemyAttackRange). damage is overridden per cast by TOK_XIL_RANGED_SHOT's damageMin/Max;
-// this fixed value is never actually applied.
-export const TOK_XIL_SHOT_TRAVEL_SEQ_ID = 2649;
-export const TOK_XIL_SHOT_HIT_SEQ_ID = 2648;
+// Both TzHaar casters throw from the top of their tall bodies and the shot falls onto the player's
+// position at cast time, so they share Jad's DESCENDING arc: apex at launch, no in-flight
+// collision, damage only in radius at the landing point (moving away dodges it).
+const TZHAAR_CASTER_ARC: ProjectileArcProfile = {
+    baseHeight: 256,
+    heightPerDistance: 0.2,
+    maxHeight: 640,
+};
 
+// Tok-Xil's ranged shot: SpotAnimType id 443, a static spike model with no sequence and no impact
+// graphic (picked by the user by eye). range matches the old ground-strike's cast range so Tok-Xil
+// still engages at the same distance (see Enemy.enemyAttackRange). damage is overridden per cast
+// by TOK_XIL_RANGED_SHOT's damageMin/Max; this fixed value is never actually applied.
 export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
     kind: ProjectileKind.TOK_XIL_SHOT,
     speed: 2048,
     range: 11 * 128,
     hitRadius: 128,
     damage: 6,
-    flight: { kind: "STRAIGHT", piercing: false, homing: false },
-    travelSeqId: TOK_XIL_SHOT_TRAVEL_SEQ_ID,
-    hitEffect: {
-        kind: VisualEffectKind.TOK_XIL_SHOT_HIT,
-        seqId: TOK_XIL_SHOT_HIT_SEQ_ID,
-        height: 96,
+    flight: {
+        kind: "ARC",
+        profile: TZHAAR_CASTER_ARC,
+        landing: "FIXED_POINT",
+        shape: "DESCENDING",
     },
+    travelSeqId: -1,
 };
 
-// Ket-Zek's fire blast: a straight, non-homing bolt (SpotAnimType ids 452 travel / 453 hit, both
-// found next to the confirmed TzHaar block - see EnemyType.ts's KET_ZEK comment; medium confidence
-// only, not visually confirmed through the animation viewer). Slower than Tok-Xil's shot for a
-// heavier-feeling cast. range matches the old ground-strike's cast range (see
+// Ket-Zek's fire blast: SpotAnimType ids 445 travel / 446 impact (picked by the user by eye; their
+// sequences 2648/2649 sit directly after Ket-Zek's own animation block 2642-2647). Slower than
+// Tok-Xil's shot for a heavier-feeling cast. range matches the old ground-strike's cast range (see
 // Enemy.enemyAttackRange). damage is overridden per cast by KET_ZEK_FIRE_BLAST's damageMin/Max;
 // this fixed value is never actually applied.
-export const KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID = 2718;
-export const KET_ZEK_FIRE_BLAST_HIT_SEQ_ID = 2719;
+export const KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID = 2648;
+export const KET_ZEK_FIRE_BLAST_HIT_SEQ_ID = 2649;
 
 export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
     kind: ProjectileKind.KET_ZEK_FIRE_BLAST,
@@ -198,7 +201,12 @@ export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
     range: 10 * 128,
     hitRadius: 128,
     damage: 18,
-    flight: { kind: "STRAIGHT", piercing: false, homing: false },
+    flight: {
+        kind: "ARC",
+        profile: TZHAAR_CASTER_ARC,
+        landing: "FIXED_POINT",
+        shape: "DESCENDING",
+    },
     travelSeqId: KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     hitEffect: {
         kind: VisualEffectKind.KET_ZEK_FIRE_BLAST_HIT,

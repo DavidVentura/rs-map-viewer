@@ -158,9 +158,11 @@ export class MapViewer {
             params["enc"] = this.encounterId;
         }
 
-        if (this.animPreview) {
+        if (this.animPreview?.kind === "NPC_SEQS") {
             params["anim"] = this.animPreview.npcTypeId.toString();
             params["seqs"] = `${this.animPreview.seqRange.from}-${this.animPreview.seqRange.to}`;
+        } else if (this.animPreview?.kind === "SPOT_ANIMS") {
+            params["gfx"] = `${this.animPreview.range.from}-${this.animPreview.range.to}`;
         }
 
         params["v"] = 1;

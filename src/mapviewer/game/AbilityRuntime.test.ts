@@ -6,6 +6,7 @@ const INSTANT_ATTACK: AbilityDefinition = {
     name: "Instant Attack",
     impactSeconds: 0,
     channelSeconds: 0,
+    animationSeconds: 0,
     castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
@@ -20,6 +21,7 @@ const TELEGRAPHED_SHOT: AbilityDefinition = {
     name: "Telegraphed Shot",
     impactSeconds: 0.5,
     channelSeconds: 0,
+    animationSeconds: 0.5,
     castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
@@ -42,6 +44,7 @@ const CHANNELED_ABILITY: AbilityDefinition = {
     name: "Channeled Ability",
     impactSeconds: 0,
     channelSeconds: 1,
+    animationSeconds: 0,
     castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
@@ -49,6 +52,24 @@ const CHANNELED_ABILITY: AbilityDefinition = {
     requires: [],
     locks: [],
     effect: { kind: AbilityEffectKind.HEAL, amount: 0 },
+};
+
+// Short animation, long ATTACK-lock recovery: models an enemy cast whose visible swing finishes
+// well before the caster is allowed to act again (see Enemy.ts, which falls back to idle once
+// activeCastAnimation expires while RECOVERY continues under the lock).
+const LONG_RECOVERY_SHORT_ANIMATION: AbilityDefinition = {
+    id: "long_recovery_short_animation",
+    name: "Long Recovery Short Animation",
+    impactSeconds: 0.2,
+    channelSeconds: 0,
+    animationSeconds: 0.5,
+    castSpeed: 1,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 2 }],
+    effect: { kind: AbilityEffectKind.MELEE, minDamage: 1, maxDamage: 1, reach: 0 },
 };
 
 describe("AbilityRuntime cooldown groups", () => {
@@ -130,5 +151,29 @@ describe("AbilityRuntime channeling", () => {
         runtime.use(TELEGRAPHED_SHOT, { x: 0, y: 0 }, 0);
         expect(runtime.isBusy(0.1)).toBe(true);
         expect(runtime.isChanneling(0.1)).toBe(false);
+    });
+});
+
+describe("AbilityRuntime cast animation", () => {
+    it("keeps the cast animation active only for animationSeconds / castSpeed, independent of the lock", () => {
+        const runtime = new AbilityRuntime();
+        runtime.use(LONG_RECOVERY_SHORT_ANIMATION, { x: 0, y: 0 }, 10);
+        expect(runtime.activeCastAnimation(10.499)?.definition).toBe(LONG_RECOVERY_SHORT_ANIMATION);
+        expect(runtime.activeCastAnimation(10.5)).toBeUndefined();
+    });
+
+    it("resolves the pending cast at impactSeconds, well before the animation or the lock end", () => {
+        const runtime = new AbilityRuntime();
+        runtime.use(LONG_RECOVERY_SHORT_ANIMATION, { x: 0, y: 0 }, 10);
+        expect(runtime.takeReadyCast(10.2)?.definition).toBe(LONG_RECOVERY_SHORT_ANIMATION);
+        expect(runtime.activeCastAnimation(10.2)).toBeDefined();
+    });
+
+    it("keeps the ability's own group locked well after the cast animation has finished", () => {
+        const runtime = new AbilityRuntime();
+        runtime.use(LONG_RECOVERY_SHORT_ANIMATION, { x: 0, y: 0 }, 10);
+        expect(runtime.activeCastAnimation(10.5)).toBeUndefined();
+        expect(runtime.canUse(LONG_RECOVERY_SHORT_ANIMATION, 0, 12.199)).toBe(false);
+        expect(runtime.canUse(LONG_RECOVERY_SHORT_ANIMATION, 0, 12.2)).toBe(true);
     });
 });

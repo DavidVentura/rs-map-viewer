@@ -8,7 +8,6 @@ export enum VisualEffectKind {
     JAD_FIRE_HIT = 2,
     TZHAAR_HEAL = 3,
     MAUL_SMASH_HIT = 4,
-    TOK_XIL_SHOT_HIT = 5,
     KET_ZEK_FIRE_BLAST_HIT = 6,
 }
 

@@ -1,4 +1,9 @@
-import { AbilityDefinition, AbilityEffectKind, CooldownGroup } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffectKind,
+    CooldownGroup,
+    castAnimationSeconds,
+} from "./Ability";
 import { AnimationPlayback } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import {
@@ -474,6 +479,50 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
             terrain,
         );
         expect(enemy.state).toBe(EnemyState.CHASE);
+    });
+
+    it("shows the cast sequence through castAnimationSeconds, then falls back to idle for the rest of recovery", () => {
+        const enemy = makeMeleeEnemy(0, 0);
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(100, 0, 0);
+
+        let time = 10;
+        enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+
+        const played = castAnimationSeconds(ENEMY_MELEE);
+        const totalCommit =
+            ENEMY_MELEE.impactSeconds +
+            ENEMY_MELEE.locks.find((lock) => lock.group === CooldownGroup.ATTACK)!.seconds;
+        expect(played).toBeLessThan(totalCommit);
+
+        const justBeforeAnimationEnds = 10 + played - 0.01;
+        enemy.update(
+            player,
+            [],
+            justBeforeAnimationEnds - time,
+            justBeforeAnimationEnds,
+            seqTypeLoader,
+            seqFrameLoader,
+            terrain,
+        );
+        time = justBeforeAnimationEnds;
+        expect(enemy.state).toBe(EnemyState.RECOVERY);
+        expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+
+        const justAfterAnimationEnds = 10 + played + 0.01;
+        enemy.update(
+            player,
+            [],
+            justAfterAnimationEnds - time,
+            justAfterAnimationEnds,
+            seqTypeLoader,
+            seqFrameLoader,
+            terrain,
+        );
+        expect(enemy.state).toBe(EnemyState.RECOVERY);
+        expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.idleSeqId);
     });
 
     it("cancels the wind-up and resets the ability runtime if frozen mid wind-up", () => {

@@ -67,12 +67,12 @@ function MapViewerApp() {
             const encounterId = parseEncounterId(searchParams.get("enc"));
             const animPreview = parseAnimPreviewParams(searchParams);
             const invulnerable = parseInvulnerable(searchParams);
-            // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs
-            // that an encounter bundle was never built to contain. Bundles are build artifacts,
-            // so development uses the full cache unless explicitly asked, to avoid stale bundles
-            // hiding data changes.
+            // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs or
+            // spot anims that an encounter bundle was never built to contain. Bundles are build
+            // artifacts, so development uses the full cache unless explicitly asked, to avoid
+            // stale bundles hiding data changes.
             const useBundle =
-                searchParams.get("anim") === null &&
+                !animPreview &&
                 (process.env.NODE_ENV === "production" || searchParams.get("bundle") === "1");
 
             const [cache, objSpawns, npcSpawns] = await Promise.all([

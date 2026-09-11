@@ -330,7 +330,7 @@ describe("Magic style", () => {
 
 describe("Enemy attack cycle", () => {
     it("winds up more slowly than the player's fastest basic attack, so it reads as a telegraph", () => {
-        expect(ENEMY_MELEE.impactSeconds).toBeGreaterThanOrEqual(0.6);
+        expect(ENEMY_MELEE.impactSeconds).toBeGreaterThanOrEqual(0.5);
         expect(ENEMY_MELEE.impactSeconds).toBeGreaterThan(BOW_SHOT.impactSeconds);
     });
 
@@ -516,6 +516,7 @@ const GROUND_STRIKE_TEST: AbilityDefinition = {
     name: "Test Ground Strike",
     impactSeconds: 0.2,
     channelSeconds: 0,
+    animationSeconds: 0.2,
     castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,

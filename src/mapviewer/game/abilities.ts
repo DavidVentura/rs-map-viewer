@@ -20,19 +20,24 @@ export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
 export const CLEAVE_CAST_SEQ_ID = 1203;
 export const HEALING_POTION_CAST_SEQ_ID = 829;
 
-// Impact/castSpeed derivation (here and for every ability below): the old windupSeconds+lock
-// duration is kept as the ability's total commit-to-next-use time, but the swing's damage now
-// lands at the animation's visual contact frame (found from the cache's per-frame lengths via
-// scripts/cache/anim-table.ts) instead of at the very end, with the rest of the animation playing
-// as recovery through the ATTACK lock's own seconds. castSpeed is whatever multiplier makes the
-// seq's natural length fill that same total time (naturalSeconds / (oldWindup + oldLock)), so the
-// swing is no longer sped up as aggressively as when the whole animation had to fit in just the
-// windup. Bow shot (seq 426, 1.16s natural): release sits at the string-snap frame (frame 5, 53%).
+// Impact/castSpeed derivation for the player abilities below (kept as originally tuned - see
+// abilities.ts's file header history): the old windupSeconds+lock duration is kept as the
+// ability's total commit-to-next-use time, but the swing's damage lands at the animation's visual
+// contact frame (found from the cache's per-frame lengths via scripts/cache/anim-table.ts) instead
+// of at the very end, with the rest of the animation playing as recovery through the ATTACK lock's
+// own seconds. castSpeed is whatever multiplier makes the seq's natural length fill that same
+// total time (naturalSeconds / (oldWindup + oldLock)), so the swing is no longer sped up as
+// aggressively as when the whole animation had to fit in just the windup. animationSeconds below
+// is that same naturalSeconds figure, now an explicit field instead of only living in this
+// comment: it's what castAnimationSeconds() divides by castSpeed to know when the cast sequence
+// itself finishes (see Ability.ts). Bow shot (seq 426, 1.16s natural): release sits at the
+// string-snap frame (frame 5, 53%).
 export const BOW_SHOT: AbilityDefinition = {
     id: "bow_shot",
     name: "Bow Shot",
     impactSeconds: 0.21,
     channelSeconds: 0,
+    animationSeconds: 1.16,
     castSpeed: 2.9,
     manaCost: 0,
     maxCharges: 1,
@@ -48,6 +53,7 @@ export const MAGIC_BOLT: AbilityDefinition = {
     name: "Magic Bolt",
     impactSeconds: 0.41,
     channelSeconds: 0,
+    animationSeconds: 1.48,
     castSpeed: 2.47,
     manaCost: 10,
     maxCharges: 1,
@@ -64,6 +70,7 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     name: "Scimitar Slash",
     impactSeconds: 0.36,
     channelSeconds: 0,
+    animationSeconds: 0.78,
     castSpeed: 1.56,
     manaCost: 0,
     maxCharges: 1,
@@ -93,6 +100,7 @@ export const CLEAVE: AbilityDefinition = {
     name: "Cleave",
     impactSeconds: 0.25,
     channelSeconds: 0,
+    animationSeconds: 1.04,
     castSpeed: 1.3,
     manaCost: 0,
     maxCharges: 1,
@@ -115,6 +123,7 @@ export const ICE_BARRAGE: AbilityDefinition = {
     name: "Ice Barrage",
     impactSeconds: 0.825,
     channelSeconds: 0,
+    animationSeconds: 1.32,
     castSpeed: 0.88,
     manaCost: 30,
     maxCharges: 1,
@@ -143,6 +152,7 @@ export const VOLLEY: AbilityDefinition = {
     name: "Volley",
     impactSeconds: 0.42,
     channelSeconds: 0,
+    animationSeconds: 1.16,
     castSpeed: 1.45,
     manaCost: 0,
     maxCharges: 1,
@@ -162,6 +172,7 @@ export const POWER_SHOT: AbilityDefinition = {
     name: "Power Shot",
     impactSeconds: 0.42,
     channelSeconds: 0,
+    animationSeconds: 1.16,
     castSpeed: 1.45,
     manaCost: 0,
     maxCharges: 1,
@@ -173,12 +184,17 @@ export const POWER_SHOT: AbilityDefinition = {
 
 // Heal effects resolve at the end of the drink (impactSeconds unchanged from the old
 // windupSeconds); castSpeed is only derived so the seq 829 drink animation (1.46s natural) fills
-// that same time instead of being computed dynamically at runtime.
+// that same time instead of being computed dynamically at runtime. Unlike the ATTACK-locked
+// abilities above, castAnimationSeconds (1.46 / 1.46 = 1s) now lands almost exactly on
+// impactSeconds itself rather than on impact+lock, since there's no ATTACK lock to give a
+// recovery portion to play through - the HEAL lock below is a pure re-use cooldown, not a
+// recovery animation, so once the drink finishes the player is free to move immediately.
 export const HEALING_POTION: AbilityDefinition = {
     id: "healing_potion",
     name: "Healing Potion",
     impactSeconds: 1,
     channelSeconds: 0,
+    animationSeconds: 1.46,
     castSpeed: 1.46,
     manaCost: 0,
     maxCharges: 3,
@@ -192,21 +208,37 @@ export const HEALING_POTION: AbilityDefinition = {
     effect: { kind: AbilityEffectKind.HEAL, amount: 30 },
 };
 
+// Enemy abilities below all play their cast sequence at castSpeed 1 (natural speed) instead of the
+// old per-ability slowdown (0.27x-0.99x) that stretched the whole animation to fill the old
+// windup+lock window - that read as the enemy hanging in its top pose for way too long.
+// impactSeconds now lands on the animation's own visual contact frame (from per-frame tick lengths
+// dumped with a throwaway script modelled on scripts/cache/anim-table.ts), and animationSeconds is
+// that sequence's natural length, so castAnimationSeconds (animationSeconds / castSpeed, see
+// Ability.ts) is the point past which Enemy.ts falls back to idle instead of holding the cast's
+// last frame. Each ability's ATTACK lock is widened so impactSeconds + lock still equals the old
+// windup + lock total (i.e. the same overall attack cadence as before), so the difference between
+// the (now much shorter) animation and that total plays out as idle recovery, not as a frozen pose.
+//
 // Shared by goblin/Tz-Kih/Tz-Kek, whose attack seqs run from 0.6s to 1.9s natural; Tz-Kek's (seq
 // 2625, 1.16s) is the most legible of the three so its mid-swing hold (frame 5, 48%) is the
-// reference point, applied uniformly since the ability itself has one impact time regardless of
-// which enemy type is casting it (same simplification the old single windupSeconds already made).
+// reference point for both impactSeconds and animationSeconds, applied uniformly since the ability
+// itself has one impact/animation time regardless of which enemy type is casting it (same
+// simplification the old single windupSeconds already made). This under/over-shoots the other two
+// enemies' own seqs a little: the goblin's real 1.9s swing will start showing idle a bit before its
+// own animation would otherwise finish, and Tz-Kih's real 0.6s swing briefly holds its last frame
+// for ~0.6s before switching to idle - both far short of the old multi-second freeze.
 export const ENEMY_MELEE: AbilityDefinition = {
     id: "enemy_melee",
     name: "Enemy Melee",
-    impactSeconds: 1.15,
+    impactSeconds: 0.56,
     channelSeconds: 0,
-    castSpeed: 0.48,
+    animationSeconds: 1.16,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.25 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.84 }],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 5, reach: 48 },
 };
 
@@ -217,14 +249,15 @@ export const ENEMY_MELEE: AbilityDefinition = {
 export const TOK_XIL_RANGED_SHOT: AbilityDefinition = {
     id: "tok_xil_ranged_shot",
     name: "Tok-Xil Ranged Shot",
-    impactSeconds: 1.15,
+    impactSeconds: 1.14,
     channelSeconds: 0,
-    castSpeed: 0.99,
+    animationSeconds: 1.58,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.45 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.46 }],
     effect: {
         kind: AbilityEffectKind.PROJECTILE,
         spec: TOK_XIL_SHOT_SPEC,
@@ -240,14 +273,15 @@ export const TOK_XIL_RANGED_SHOT: AbilityDefinition = {
 export const KET_ZEK_FIRE_BLAST: AbilityDefinition = {
     id: "ket_zek_fire_blast",
     name: "Ket-Zek Fire Blast",
-    impactSeconds: 3.85,
+    impactSeconds: 1.07,
     channelSeconds: 0,
-    castSpeed: 0.28,
+    animationSeconds: 1.3,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.85 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 3.63 }],
     effect: {
         kind: AbilityEffectKind.PROJECTILE,
         spec: KET_ZEK_FIRE_BLAST_SPEC,
@@ -261,14 +295,15 @@ export const KET_ZEK_FIRE_BLAST: AbilityDefinition = {
 export const YT_MEJKOT_MELEE: AbilityDefinition = {
     id: "yt_mejkot_melee",
     name: "Yt-MejKot Slam",
-    impactSeconds: 1.48,
+    impactSeconds: 0.4,
     channelSeconds: 0,
-    castSpeed: 0.27,
+    animationSeconds: 0.76,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.32 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 2.4 }],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 5, maxDamage: 9, reach: 48 },
 };
 
@@ -277,12 +312,16 @@ export const YT_MEJKOT_MELEE: AbilityDefinition = {
 // its idle/walk/death/melee seqs 2636-2638/2637) pending visual confirmation with the anim viewer.
 export const YT_MEJKOT_HEAL_SEQ_ID = 2639;
 
+// Seq 2639 (0.76s natural) has no single standout hold - it's a fairly uniform raise into a
+// slightly longer close, so the release point is a judgment call rather than a frame-data pick:
+// ~55% of the sequence, same as Jad's mage blast below.
 export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
     id: "yt_mejkot_heal_pulse",
     name: "Yt-MejKot Heal Pulse",
-    impactSeconds: 0.4,
+    impactSeconds: 0.42,
     channelSeconds: 0,
-    castSpeed: 1.9,
+    animationSeconds: 0.76,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
@@ -312,6 +351,7 @@ export const MAUL_SMASH: AbilityDefinition = {
     name: "Maul Smash",
     impactSeconds: 1.96,
     channelSeconds: 0,
+    animationSeconds: 1.78,
     castSpeed: 0.5,
     manaCost: 0,
     maxCharges: 1,
@@ -335,9 +375,9 @@ export const MAUL_SMASH: AbilityDefinition = {
 // TzTok-Jad's three attacks, verified from the cache (see EnemyType.ts's TZTOK_JAD comment for how
 // the cast seq ids were picked). Cycled in a fixed pattern (see EnemyType.BossPattern) rather than
 // picked by priority, so each ability's own ATTACK lock just needs to cover its own recovery
-// (impactSeconds + this lock == the old windup + the old shared 2.5s recharge, see abilities.ts's
-// impact/castSpeed derivation comment above BOW_SHOT) before the pattern's next entry becomes
-// eligible, not to sequence the attacks itself.
+// (impactSeconds + this lock == the old windup + the old shared 2.5s recharge, see this file's
+// enemy-abilities comment above ENEMY_MELEE for the current castSpeed-1 derivation) before the
+// pattern's next entry becomes eligible, not to sequence the attacks itself.
 
 export const JAD_MELEE_BITE_CAST_SEQ_ID = 2655;
 
@@ -346,14 +386,15 @@ export const JAD_MELEE_BITE_CAST_SEQ_ID = 2655;
 export const JAD_MELEE_BITE: AbilityDefinition = {
     id: "jad_melee_bite",
     name: "TzTok-Jad Bite",
-    impactSeconds: 2,
+    impactSeconds: 0.78,
     channelSeconds: 0,
-    castSpeed: 0.39,
+    animationSeconds: 1.44,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.7 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 2.92 }],
     castSeqId: JAD_MELEE_BITE_CAST_SEQ_ID,
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 20, maxDamage: 35, reach: 48 },
 };
@@ -365,14 +406,15 @@ export const JAD_RANGED_STOMP_CAST_SEQ_ID = 2652;
 export const JAD_RANGED_STOMP: AbilityDefinition = {
     id: "jad_ranged_stomp",
     name: "TzTok-Jad Stomp",
-    impactSeconds: 2.69,
+    impactSeconds: 0.76,
     channelSeconds: 0,
-    castSpeed: 0.28,
+    animationSeconds: 1.1,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 1.21 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 3.14 }],
     castSeqId: JAD_RANGED_STOMP_CAST_SEQ_ID,
     effect: {
         kind: AbilityEffectKind.PROJECTILE,
@@ -385,19 +427,20 @@ export const JAD_RANGED_STOMP: AbilityDefinition = {
 export const JAD_MAGE_BLAST_CAST_SEQ_ID = 2656;
 
 // Jad's mage blast (seq 2656, 3.1s natural, uniform frame lengths - no distinct hold to read): the
-// longest and most elaborate of the three casts per EnemyType.ts's comment, so the blast is placed
-// near the end of the build-up (85%) rather than picked from frame data.
+// contact frame is unclear from the frame data, so this uses ~55% of the sequence per the general
+// rule of thumb for a build-up with no standout hold.
 export const JAD_MAGE_BLAST: AbilityDefinition = {
     id: "jad_mage_blast",
     name: "TzTok-Jad Mage Blast",
-    impactSeconds: 4.25,
+    impactSeconds: 1.71,
     channelSeconds: 0,
-    castSpeed: 0.62,
+    animationSeconds: 3.1,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
-    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.75 }],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 3.29 }],
     castSeqId: JAD_MAGE_BLAST_CAST_SEQ_ID,
     effect: {
         kind: AbilityEffectKind.PROJECTILE,
@@ -412,9 +455,10 @@ export const JAD_MAGE_BLAST: AbilityDefinition = {
 export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
     id: "yt_hurkot_heal_pulse",
     name: "Yt-HurKot Heal Pulse",
-    impactSeconds: 0.4,
+    impactSeconds: 0.42,
     channelSeconds: 0,
-    castSpeed: 1.9,
+    animationSeconds: 0.76,
+    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,

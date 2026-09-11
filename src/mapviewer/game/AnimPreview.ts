@@ -5,10 +5,13 @@ export type SeqRange = {
     readonly to: number;
 };
 
-export type AnimPreviewParams = {
-    readonly npcTypeId: number;
-    readonly seqRange: SeqRange;
-};
+// The animation viewer's two mutually exclusive modes: ?anim=<npcTypeId>&seqs=<from>-<to> previews
+// an npc's sequences (see buildPreviewEnemyType), ?gfx=<from>-<to> previews a range of spot
+// animations (SpotAnimType ids) as a hovering visual effect (see WebGLMapViewerRenderer's gfx
+// preview controls).
+export type AnimPreviewParams =
+    | { readonly kind: "NPC_SEQS"; readonly npcTypeId: number; readonly seqRange: SeqRange }
+    | { readonly kind: "SPOT_ANIMS"; readonly range: SeqRange };
 
 const SEQ_RANGE_PATTERN = /^(\d+)-(\d+)$/;
 
@@ -28,24 +31,30 @@ export function parseSeqRange(value: string | null): SeqRange | undefined {
     return { from, to };
 }
 
-// Parses the animation viewer's URL params (?anim=<npcTypeId>&seqs=<from>-<to>). Returns undefined
-// if either is missing or malformed, which the caller takes to mean "not in preview mode".
+// Parses the animation viewer's URL params: ?anim=<npcTypeId>&seqs=<from>-<to> takes priority over
+// ?gfx=<from>-<to> when both are somehow present, since the two modes are mutually exclusive.
+// Returns undefined when neither mode is fully specified, which the caller takes to mean "not in
+// preview mode".
 export function parseAnimPreviewParams(
     searchParams: URLSearchParams,
 ): AnimPreviewParams | undefined {
     const npcParam = searchParams.get("anim");
-    if (!npcParam) {
+    if (npcParam !== null) {
+        const npcTypeId = parseInt(npcParam, 10);
+        if (Number.isNaN(npcTypeId)) {
+            return undefined;
+        }
+        const seqRange = parseSeqRange(searchParams.get("seqs"));
+        if (!seqRange) {
+            return undefined;
+        }
+        return { kind: "NPC_SEQS", npcTypeId, seqRange };
+    }
+    const range = parseSeqRange(searchParams.get("gfx"));
+    if (!range) {
         return undefined;
     }
-    const npcTypeId = parseInt(npcParam, 10);
-    if (Number.isNaN(npcTypeId)) {
-        return undefined;
-    }
-    const seqRange = parseSeqRange(searchParams.get("seqs"));
-    if (!seqRange) {
-        return undefined;
-    }
-    return { npcTypeId, seqRange };
+    return { kind: "SPOT_ANIMS", range };
 }
 
 // Steps a seq id by one position within range, wrapping around at either end.

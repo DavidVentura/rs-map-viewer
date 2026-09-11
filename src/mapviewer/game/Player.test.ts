@@ -1,6 +1,12 @@
-import { WeaponStyle } from "./Ability";
+import { WeaponStyle, attackLockSeconds, castAnimationSeconds } from "./Ability";
 import { Player, StanceSeqIdsByStance } from "./Player";
-import { BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH } from "./abilities";
+import {
+    BOW_SHOT,
+    HEALING_POTION,
+    HEALING_POTION_CAST_SEQ_ID,
+    MAGIC_BOLT,
+    SCIMITAR_SLASH,
+} from "./abilities";
 import { DEFAULT_ABILITY_MODIFIERS, FLEET_FOOTED, VITALITY } from "./upgrades";
 
 const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
@@ -84,6 +90,45 @@ describe("Player.beginCast", () => {
         const player = makePlayer();
         player.beginCast(BOW_SHOT, { x: 0, y: 500 }, 0);
         expect(player.rotation).toBe(1024);
+    });
+});
+
+describe("Player cast animation duration", () => {
+    it("keeps the cast animation active for the cast sequence's own duration, not the ATTACK lock", () => {
+        const player = makePlayer();
+        player.beginCast(BOW_SHOT, { x: 100, y: 0 }, 0);
+        const played = castAnimationSeconds(BOW_SHOT);
+        expect(player.abilityRuntime.activeCastAnimation(played - 0.01)).toBeDefined();
+        expect(player.abilityRuntime.activeCastAnimation(played)).toBeUndefined();
+    });
+
+    it("returns to idle once the drink animation itself finishes, even though the heal/attack locks are still recovering", () => {
+        const player = makePlayer();
+        player.beginCast(HEALING_POTION, { x: 0, y: 0 }, 0);
+        const played = HEALING_POTION.animationSeconds / HEALING_POTION.castSpeed;
+        expect(played).toBeLessThan(
+            HEALING_POTION.impactSeconds + attackLockSeconds(HEALING_POTION),
+        );
+
+        player.update(
+            { x: 0, y: 0, running: false },
+            played - 0.01,
+            played - 0.01,
+            seqTypeLoader,
+            {} as any,
+            {} as any,
+        );
+        expect(player.animation.seqId).toBe(HEALING_POTION_CAST_SEQ_ID);
+
+        player.update(
+            { x: 0, y: 0, running: false },
+            0.02,
+            played + 0.01,
+            seqTypeLoader,
+            {} as any,
+            {} as any,
+        );
+        expect(player.animation.seqId).toBe(player.idleSeqId);
     });
 });
 

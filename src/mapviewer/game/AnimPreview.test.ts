@@ -39,14 +39,14 @@ describe("parseSeqRange", () => {
 describe("parseAnimPreviewParams", () => {
     it("parses a valid anim + seqs pair", () => {
         const params = parseAnimPreviewParams(new URLSearchParams("anim=3123&seqs=2636-2641"));
-        expect(params).toEqual({ npcTypeId: 3123, seqRange: { from: 2636, to: 2641 } });
+        expect(params).toEqual({
+            kind: "NPC_SEQS",
+            npcTypeId: 3123,
+            seqRange: { from: 2636, to: 2641 },
+        });
     });
 
-    it("returns undefined when anim is missing", () => {
-        expect(parseAnimPreviewParams(new URLSearchParams("seqs=2636-2641"))).toBeUndefined();
-    });
-
-    it("returns undefined when seqs is missing", () => {
+    it("returns undefined when anim is present but seqs is missing", () => {
         expect(parseAnimPreviewParams(new URLSearchParams("anim=3123"))).toBeUndefined();
     });
 
@@ -58,6 +58,27 @@ describe("parseAnimPreviewParams", () => {
 
     it("returns undefined when seqs is malformed", () => {
         expect(parseAnimPreviewParams(new URLSearchParams("anim=3123&seqs=bad"))).toBeUndefined();
+    });
+
+    it("parses a valid gfx range when anim is absent", () => {
+        expect(parseAnimPreviewParams(new URLSearchParams("gfx=440-460"))).toEqual({
+            kind: "SPOT_ANIMS",
+            range: { from: 440, to: 460 },
+        });
+    });
+
+    it("prefers anim over gfx when both are present", () => {
+        expect(
+            parseAnimPreviewParams(new URLSearchParams("anim=3123&seqs=2636-2641&gfx=440-460")),
+        ).toEqual({ kind: "NPC_SEQS", npcTypeId: 3123, seqRange: { from: 2636, to: 2641 } });
+    });
+
+    it("returns undefined when gfx is malformed", () => {
+        expect(parseAnimPreviewParams(new URLSearchParams("gfx=bad"))).toBeUndefined();
+    });
+
+    it("returns undefined when neither anim nor gfx is present", () => {
+        expect(parseAnimPreviewParams(new URLSearchParams(""))).toBeUndefined();
     });
 });
 

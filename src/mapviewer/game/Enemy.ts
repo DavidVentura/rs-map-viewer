@@ -314,10 +314,13 @@ export class Enemy implements Combatant, SteeringBody {
             return;
         }
 
-        // WINDUP and RECOVERY are one continuous animation (see AbilityRuntime.activeCastAnimation):
-        // WINDUP is the portion up to impact, RECOVERY is the remainder covered by the ability's
-        // ATTACK lock. setSequence no-ops once the sequence is already playing, so this doesn't
-        // restart it on every tick.
+        // WINDUP and RECOVERY are one continuous animation while it's still playing (see
+        // AbilityRuntime.activeCastAnimation): WINDUP is the portion up to impact, RECOVERY is the
+        // remainder up to castAnimationSeconds. RECOVERY commonly outlasts the animation itself
+        // (the ATTACK lock's own recovery time on top of it), so once activeCastAnimation expires
+        // the enemy shows idle for the rest of RECOVERY rather than holding the cast's last frame.
+        // setSequence no-ops once the sequence is already playing, so this doesn't restart it on
+        // every tick.
         if (this.state === EnemyState.WINDUP || this.state === EnemyState.RECOVERY) {
             if (this.state === EnemyState.WINDUP && player) {
                 const deltaX = player.x - this.x;
@@ -326,15 +329,19 @@ export class Enemy implements Combatant, SteeringBody {
                     this.rotation = directionToRotation(deltaX, deltaY);
                 }
             }
-            const castSpeed =
-                this.abilityRuntime.activeCastAnimation(timeSeconds)?.definition.castSpeed ?? 1;
+            const activeCast = this.abilityRuntime.activeCastAnimation(timeSeconds);
+            if (!activeCast) {
+                this.animation.setSequence(this.idleSeqId);
+                this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+                return;
+            }
             this.animation.setSequence(this.castSeqIdAt(timeSeconds));
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
                 seqFrameLoader,
                 AnimationPlayback.ONCE,
-                castSpeed,
+                activeCast.definition.castSpeed,
             );
             return;
         }

@@ -1,7 +1,7 @@
 import Denque from "denque";
 import { vec2, vec4 } from "gl-matrix";
-import { button, folder } from "leva";
-import { Schema } from "leva/dist/declarations/src/types";
+import { button, folder, monitor } from "leva";
+import { FolderInput, Schema } from "leva/dist/declarations/src/types";
 import {
     DrawCall,
     Framebuffer,
@@ -28,7 +28,7 @@ import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
 import { AbilityTarget, WeaponStyle } from "../game/Ability";
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
-import { AnimationPlayback, sequenceDurationSeconds } from "../game/Animation";
+import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
@@ -70,6 +70,7 @@ import {
 } from "./actor/ActorInstanceData";
 import {
     EnemyTypeAnimationSet,
+    PreviewGfxBake,
     getEnemyAnimationFrames,
     getGroundItemAnimationFrames,
     getPlayerBodyAnimationFrames,
@@ -103,6 +104,10 @@ const INTERACTION_RADIUS = 5;
 const ENEMY_HOVER_PICK_RADIUS_PX = 20;
 const ENEMY_BODY_HEIGHT_SCALE = 3;
 
+// Leva never overwrites an existing input's value when a schema is re-registered, so read-only
+// preview labels are polled monitors instead of static values.
+const PREVIEW_LABEL_MONITOR = { graph: false, interval: 200 };
+
 // Generous click target for a ground item: covers its floor label above the point, plus a radius
 // around the item's own projected screen point.
 const GROUND_ITEM_LABEL_HALF_WIDTH_PX = 90;
@@ -113,6 +118,10 @@ const GROUND_ITEM_PICK_RADIUS_PX = 32;
 // every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
 const MAX_PROJECTILES = 32;
 const MAX_VISUAL_EFFECTS = 32;
+
+// The gfx preview hovers its current spot anim one tile above the ground (TILE_SIZE) so it reads
+// clearly in the ortho camera instead of sinking into the terrain.
+const PREVIEW_GFX_HOVER_HEIGHT = 128;
 
 function encodeNpcInfo(interactType: InteractType, rotation: number, level: number): number {
     return (interactType << 13) | (rotation << 2) | level;
@@ -146,7 +155,8 @@ type ActiveActor =
     | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
     | { kind: "projectile"; projectile: Projectile }
     | { kind: "effect"; effect: VisualEffect }
-    | { kind: "groundItem"; item: GroundItem };
+    | { kind: "groundItem"; item: GroundItem }
+    | { kind: "previewGfx" };
 
 enum TextureFilterMode {
     DISABLED,
@@ -289,6 +299,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
     actorDataTextureBuffer: (Texture | undefined)[] = new Array(5);
     activeActors: ActiveActor[] = [];
+
+    // The gfx preview's currently shown spot anim id and playback mode (see AnimPreview.ts's
+    // SPOT_ANIMS mode): unlike the npc seq preview, there's no Enemy to own this state on, since a
+    // gfx preview never spawns one.
+    private previewGfxId?: number;
+    private previewGfxPlayback: AnimationPlayback = AnimationPlayback.LOOP;
+    private readonly previewGfxAnimation = new AnimationState(-1);
 
     encounter: Encounter;
     encounterSpawned: boolean = false;
@@ -809,31 +826,47 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 },
             }),
         };
-        if (!this.mapViewer.animPreview) {
+        const preview = this.mapViewer.animPreview;
+        if (!preview) {
             return gameControls;
         }
         return {
             ...gameControls,
-            Animation: this.buildAnimationControls(this.mapViewer.animPreview),
+            Animation:
+                preview.kind === "NPC_SEQS"
+                    ? this.buildAnimationControls(preview)
+                    : this.buildGfxPreviewControls(preview),
         };
     }
 
-    private buildAnimationControls(preview: AnimPreviewParams): ReturnType<typeof folder> {
+    private currentPreviewSeqId(preview: Extract<AnimPreviewParams, { kind: "NPC_SEQS" }>): number {
         const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
-        const seqId = enemy?.previewSeqId ?? preview.seqRange.from;
+        return enemy?.previewSeqId ?? preview.seqRange.from;
+    }
+
+    private buildAnimationControls(
+        preview: Extract<AnimPreviewParams, { kind: "NPC_SEQS" }>,
+    ): FolderInput<unknown> {
+        const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
         const playback = enemy?.previewPlayback ?? AnimationPlayback.LOOP;
         const playbackName = playback === AnimationPlayback.LOOP ? "Loop" : "Once";
         return folder(
             {
-                "Seq Id": {
-                    value: `${seqId} (${preview.seqRange.from}-${preview.seqRange.to})`,
-                    editable: false,
-                },
+                "Seq Id": monitor(
+                    () =>
+                        `${this.currentPreviewSeqId(preview)} (${preview.seqRange.from}-${
+                            preview.seqRange.to
+                        })`,
+                    PREVIEW_LABEL_MONITOR,
+                ),
                 Prev: button(() => this.stepPreviewSeq(-1)),
                 Next: button(() => this.stepPreviewSeq(1)),
                 [`Playback: ${playbackName}`]: button(() => this.togglePreviewPlayback()),
                 Restart: button(() => this.restartPreviewAnimation()),
-                Info: { value: this.previewSeqInfo(seqId), editable: false },
+                Info: monitor(
+                    () => this.previewSeqInfo(this.currentPreviewSeqId(preview)),
+                    PREVIEW_LABEL_MONITOR,
+                ),
             },
             { collapsed: false },
         );
@@ -855,7 +888,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private stepPreviewSeq(direction: -1 | 1): void {
         const preview = this.mapViewer.animPreview;
         const enemy: Enemy | undefined = this.mapViewer.world.enemies[0];
-        if (!preview || !enemy || enemy.previewSeqId === undefined) {
+        if (!preview || preview.kind !== "NPC_SEQS" || !enemy || enemy.previewSeqId === undefined) {
             return;
         }
         enemy.previewSeqId = stepSeqId(enemy.previewSeqId, preview.seqRange, direction);
@@ -879,6 +912,100 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             sequenceDurationSeconds(seqId, seqTypeLoader, seqFrameLoader) * 1000,
         );
         return `${frameCount} frames, ${durationMs} ms`;
+    }
+
+    private buildGfxPreviewControls(
+        preview: Extract<AnimPreviewParams, { kind: "SPOT_ANIMS" }>,
+    ): FolderInput<unknown> {
+        const playbackName = this.previewGfxPlayback === AnimationPlayback.LOOP ? "Loop" : "Once";
+        return folder(
+            {
+                "Gfx Id": monitor(
+                    () =>
+                        `${this.previewGfxId ?? preview.range.from} (${preview.range.from}-${
+                            preview.range.to
+                        })`,
+                    PREVIEW_LABEL_MONITOR,
+                ),
+                Prev: button(() => this.stepPreviewGfx(-1)),
+                Next: button(() => this.stepPreviewGfx(1)),
+                [`Playback: ${playbackName}`]: button(() => this.togglePreviewGfxPlayback()),
+                Restart: button(() => this.restartPreviewGfxAnimation()),
+                Info: monitor(
+                    () => this.previewGfxInfo(this.previewGfxId ?? preview.range.from),
+                    PREVIEW_LABEL_MONITOR,
+                ),
+            },
+            { collapsed: false },
+        );
+    }
+
+    private togglePreviewGfxPlayback(): void {
+        this.previewGfxPlayback =
+            this.previewGfxPlayback === AnimationPlayback.LOOP
+                ? AnimationPlayback.ONCE
+                : AnimationPlayback.LOOP;
+        this.restartPreviewGfxAnimation();
+        this.notifyControlsChanged?.();
+    }
+
+    private stepPreviewGfx(direction: -1 | 1): void {
+        const preview = this.mapViewer.animPreview;
+        if (!preview || preview.kind !== "SPOT_ANIMS" || this.previewGfxId === undefined) {
+            return;
+        }
+        this.previewGfxId = stepSeqId(this.previewGfxId, preview.range, direction);
+        this.restartPreviewGfxAnimation();
+        this.notifyControlsChanged?.();
+    }
+
+    private restartPreviewGfxAnimation(): void {
+        this.previewGfxAnimation.restart(this.currentPreviewGfxBake()?.seqId ?? -1);
+    }
+
+    private currentPreviewGfxBake(): PreviewGfxBake | undefined {
+        if (this.previewGfxId === undefined) {
+            return undefined;
+        }
+        return this.actorBuffer?.actorData.previewGfx?.bakesByGfxId.get(this.previewGfxId);
+    }
+
+    // Computed straight from the spot anim/seq type loaders rather than from the (possibly not yet
+    // loaded) actor bake, so the Info line is accurate the instant the gfx id is selected.
+    private previewGfxInfo(gfxId: number): string {
+        const spotAnimTypeLoader = this.mapViewer.loaderFactory.getSpotAnimTypeLoader();
+        if (!spotAnimTypeLoader) {
+            return "spot anims unavailable in this cache";
+        }
+        const spotAnim = spotAnimTypeLoader.load(gfxId);
+        if (typeof spotAnim.modelId !== "number") {
+            return "no model";
+        }
+        if (spotAnim.sequenceId === -1) {
+            return `model ${spotAnim.modelId}, no seq (static), 1 frame, 0 ms`;
+        }
+        const seqTypeLoader = this.mapViewer.seqTypeLoader;
+        const seqFrameLoader = this.mapViewer.seqFrameLoader;
+        const frameCount = seqTypeLoader.load(spotAnim.sequenceId).frameIds?.length ?? 0;
+        const durationMs = Math.round(
+            sequenceDurationSeconds(spotAnim.sequenceId, seqTypeLoader, seqFrameLoader) * 1000,
+        );
+        return `model ${spotAnim.modelId}, seq ${spotAnim.sequenceId}, ${frameCount} frames, ${durationMs} ms`;
+    }
+
+    // Ticks the gfx preview's own animation state each frame (see advance()'s call site): unlike
+    // the npc seq preview, there's no Enemy/GameWorld tick to ride along with.
+    private advancePreviewGfx(deltaTimeSeconds: number): void {
+        const preview = this.mapViewer.animPreview;
+        if (!preview || preview.kind !== "SPOT_ANIMS") {
+            return;
+        }
+        this.previewGfxAnimation.advance(
+            deltaTimeSeconds,
+            this.mapViewer.seqTypeLoader,
+            this.mapViewer.seqFrameLoader,
+            this.previewGfxPlayback,
+        );
     }
 
     override async queueLoadMap(mapX: number, mapY: number): Promise<void> {
@@ -971,7 +1098,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
         this.loadingActors = true;
         try {
-            const animPreview = this.mapViewer.animPreview;
             const data = await this.mapViewer.workerPool.queueLoad<
                 ActorLoaderInput,
                 ActorBufferData,
@@ -979,10 +1105,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             >(this.actorLoader, {
                 encounterId: this.encounter.id,
                 loadedTextureIds: this.loadedTextureIds,
-                preview: animPreview && {
-                    npcTypeId: animPreview.npcTypeId,
-                    seqRange: animPreview.seqRange,
-                },
+                preview: this.mapViewer.animPreview,
             });
             if (this.isValidActorBufferData(data)) {
                 this.actorBufferToLoad = data;
@@ -1025,6 +1148,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.encounterCleared = false;
         this.bossPhaseLabel = undefined;
         this.hasPinnedCameraSinceSpawn = false;
+        this.previewGfxId = undefined;
     }
 
     // Uploads one chunk of the pending actor buffer's vertex/index data (bufferSubData, a few MB
@@ -1087,6 +1211,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             getStanceSeqIds(this.actorBuffer.actorData.player),
         );
         this.spawnPreviewEnemyIfNeeded();
+        this.initPreviewGfxIfNeeded();
         this.encounterSpawned = true;
         console.log(`[startup] encounter spawned at ${performance.now().toFixed(0)}ms`);
     }
@@ -1095,7 +1220,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // at enemySpawns[0], with previewSeqId pinned to the start of the requested range.
     private spawnPreviewEnemyIfNeeded(): void {
         const preview = this.mapViewer.animPreview;
-        if (!preview || this.encounter.spawnMode !== EncounterSpawnMode.PREVIEW) {
+        if (
+            !preview ||
+            preview.kind !== "NPC_SEQS" ||
+            this.encounter.spawnMode !== EncounterSpawnMode.PREVIEW
+        ) {
             return;
         }
         const npcType = this.mapViewer.npcTypeLoader.load(preview.npcTypeId);
@@ -1116,6 +1245,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (enemy) {
             enemy.previewSeqId = preview.seqRange.from;
         }
+    }
+
+    // The gfx preview's counterpart to spawnPreviewEnemyIfNeeded: no enemy to spawn, just pins the
+    // shown spot anim id to the start of the requested range.
+    private initPreviewGfxIfNeeded(): void {
+        const preview = this.mapViewer.animPreview;
+        if (
+            !preview ||
+            preview.kind !== "SPOT_ANIMS" ||
+            this.encounter.spawnMode !== EncounterSpawnMode.PREVIEW
+        ) {
+            return;
+        }
+        this.previewGfxId = preview.range.from;
+        this.restartPreviewGfxAnimation();
     }
 
     private resolveEnemyNpcType(enemy: Enemy): NpcType {
@@ -1256,6 +1400,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             chooseUpgrade: this.buildUpgradeChoiceInput(),
             pickupTarget: this.buildPickupInput(),
         });
+        this.advancePreviewGfx(deltaTime / 1000);
         this.updateRoofHiding();
         this.pinCameraToPlayer();
 
@@ -2222,7 +2367,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             world.enemies.length +
             world.projectiles.length +
             world.visualEffects.length +
-            world.groundItems.length;
+            world.groundItems.length +
+            (this.previewGfxId !== undefined ? 1 : 0);
 
         if (this.actorInstanceData.length / (4 * ACTOR_INSTANCE_TEXELS) < maxCount) {
             const newData = new Uint32Array(
@@ -2336,6 +2482,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     pitch: 0,
                 },
             );
+        }
+
+        if (this.previewGfxId !== undefined) {
+            const spawnPoint = this.encounter.enemySpawns[0];
+            const groundHeight = this.tryGetHeight(spawnPoint.level, spawnPoint.x, spawnPoint.y);
+            if (groundHeight !== undefined) {
+                push(
+                    { kind: "previewGfx" },
+                    {
+                        worldX: spawnPoint.x,
+                        worldY: spawnPoint.y,
+                        groundHeight: groundHeight + PREVIEW_GFX_HOVER_HEIGHT,
+                        rotation: 0,
+                        level: this.terrain.getRenderLevel(
+                            spawnPoint.level,
+                            spawnPoint.x,
+                            spawnPoint.y,
+                        ),
+                        interactType: InteractType.NONE,
+                        interactId: 0,
+                        pitch: 0,
+                    },
+                );
+            }
         }
 
         for (const item of world.groundItems) {
@@ -2531,6 +2701,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 const anim = getGroundItemAnimationFrames(actorData.groundItems, itemId);
                 const frames = alpha ? anim?.framesAlpha : anim?.frames;
                 return frames?.[0] ?? NULL_DRAW_RANGE;
+            }
+            case "previewGfx": {
+                const anim = this.currentPreviewGfxBake()?.anim;
+                if (!anim) {
+                    return NULL_DRAW_RANGE;
+                }
+                const frames = alpha ? anim.framesAlpha : anim.frames;
+                return frames?.[this.previewGfxAnimation.frame] ?? NULL_DRAW_RANGE;
             }
         }
     }

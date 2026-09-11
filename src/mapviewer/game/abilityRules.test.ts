@@ -17,6 +17,7 @@ const BASE_DEFINITION = {
     name: "Test",
     impactSeconds: 0,
     channelSeconds: 0,
+    animationSeconds: 0,
     castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,

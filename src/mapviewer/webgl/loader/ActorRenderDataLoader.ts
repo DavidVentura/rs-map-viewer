@@ -2,6 +2,7 @@ import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { Model } from "../../../rs/model/Model";
 import { WeaponStyle } from "../../game/Ability";
+import { AnimPreviewParams } from "../../game/AnimPreview";
 import { getEncounter } from "../../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../../game/EnemyType";
 import {
@@ -22,8 +23,6 @@ import {
     KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
     KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     ProjectileKind,
-    TOK_XIL_SHOT_HIT_SEQ_ID,
-    TOK_XIL_SHOT_TRAVEL_SEQ_ID,
 } from "../../game/Projectile";
 import {
     ICE_BARRAGE_HIT_SEQ_ID,
@@ -42,12 +41,14 @@ import {
     GroundItemActorData,
     ItemAnimationSet,
     PlayerActorData,
+    PreviewGfxAnimationSet,
+    PreviewGfxBake,
     ProjectileActorData,
     StanceAnimationSet,
 } from "../actor/ActorRenderData";
 import { SceneBuffer } from "../buffer/SceneBuffer";
 import { ActorBufferData } from "./ActorBufferData";
-import { ActorLoaderInput, PreviewAnimInput } from "./ActorLoaderInput";
+import { ActorLoaderInput } from "./ActorLoaderInput";
 import {
     addNpcAnimationFrames,
     addPlayerAnimationFrames,
@@ -352,7 +353,7 @@ function createPreviewEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
     sceneBuf: SceneBuffer,
-    preview: PreviewAnimInput,
+    preview: Extract<AnimPreviewParams, { kind: "NPC_SEQS" }>,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(preview.npcTypeId);
     const seqIds = new Set<number>([npcType.idleSeqId, npcType.walkSeqId]);
@@ -368,6 +369,48 @@ function createPreviewEnemyTypeAnimationSet(
         animationsBySeqId.set(seqId, anim);
     }
     return { idleAnim: animationsBySeqId.get(npcType.idleSeqId)!, animationsBySeqId };
+}
+
+// The animation viewer's gfx preview: bakes every spot anim id in the requested range, each into
+// its own model + (when it has one) its own sequence, so stepping through the range never needs a
+// fresh actor buffer load. An id with no model at all (spotAnim.modelId never decoded, since
+// SpotAnimType leaves it as the TS-asserted-but-actually-undefined default) bakes to a bare
+// { modelId: undefined } entry rather than being skipped, so the viewer's Info line can say
+// "no model" instead of silently showing nothing.
+function createPreviewGfxAnimationSet(
+    state: WorkerState,
+    sceneBuf: SceneBuffer,
+    preview: Extract<AnimPreviewParams, { kind: "SPOT_ANIMS" }>,
+): PreviewGfxAnimationSet {
+    const modelLoader = state.cacheLoaderFactory.getModelLoader();
+    const textureLoader = state.textureLoader;
+    const seqTypeLoader = state.seqTypeLoader;
+    const seqFrameLoader = state.seqFrameLoader;
+    const spotAnimTypeLoader = state.cacheLoaderFactory.getSpotAnimTypeLoader();
+    if (!spotAnimTypeLoader) {
+        throw new Error("Spot animations are not available in this cache");
+    }
+
+    const bakesByGfxId = new Map<number, PreviewGfxBake>();
+    for (let gfxId = preview.range.from; gfxId <= preview.range.to; gfxId++) {
+        const spotAnim = spotAnimTypeLoader.load(gfxId);
+        if (typeof spotAnim.modelId !== "number") {
+            bakesByGfxId.set(gfxId, {});
+            continue;
+        }
+        const model = buildSpotAnimModel(modelLoader, textureLoader, spotAnim);
+        if (!model) {
+            bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId });
+            continue;
+        }
+        const seqId = spotAnim.sequenceId !== -1 ? spotAnim.sequenceId : undefined;
+        const anim =
+            seqId !== undefined
+                ? addSpotAnimAnimationFrames(sceneBuf, seqTypeLoader, seqFrameLoader, model, seqId)
+                : addStaticModelAnimationFrames(sceneBuf, model);
+        bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
+    }
+    return { bakesByGfxId };
 }
 
 // Fire Bolt spell (SpotAnimType ids): 127 travels, 128 hits.
@@ -393,15 +436,13 @@ const TZHAAR_HEAL_SPOTANIM_ID = 444;
 // uses seq 11125 (MAUL_SMASH_HIT_SEQ_ID), immediately after it.
 const MAUL_SMASH_HIT_SPOTANIM_ID = 2804;
 
-// Tok-Xil's ranged shot (SpotAnimType ids): 446 travel / 445 hit, found next to the confirmed
-// TzHaar block above; medium confidence only, not visually confirmed through the animation viewer.
-const TOK_XIL_SHOT_TRAVEL_SPOTANIM_ID = 446;
-const TOK_XIL_SHOT_HIT_SPOTANIM_ID = 445;
+// Tok-Xil's ranged shot (SpotAnimType id): 443, a static spike model without a sequence.
+const TOK_XIL_SHOT_SPOTANIM_ID = 443;
 
-// Ket-Zek's fire blast (SpotAnimType ids): 452 travel / 453 hit, found next to the confirmed
-// TzHaar block above; medium confidence only, not visually confirmed through the animation viewer.
-const KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID = 452;
-const KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID = 453;
+// Ket-Zek's fire blast (SpotAnimType ids): 445 travel / 446 impact, the graphics whose sequences
+// follow Ket-Zek's own animation block.
+const KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID = 445;
+const KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID = 446;
 
 // A visually distinct, larger arrow model for the ranged Power Shot special.
 const POWER_SHOT_MODEL_SCALE = 200;
@@ -560,35 +601,12 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         MAUL_SMASH_HIT_SEQ_ID,
     );
 
-    const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_TRAVEL_SPOTANIM_ID);
+    const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_SPOTANIM_ID);
     const tokXilShotModel = buildSpotAnimModel(modelLoader, textureLoader, tokXilShotSpotAnim);
-    if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== TOK_XIL_SHOT_TRAVEL_SEQ_ID) {
-        throw new Error("Tok-Xil shot spot animation does not match the expected sequence");
+    if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== -1) {
+        throw new Error("Tok-Xil shot spot animation is expected to be a static model");
     }
-    const tokXilShotAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        tokXilShotModel,
-        TOK_XIL_SHOT_TRAVEL_SEQ_ID,
-    );
-
-    const tokXilShotHitSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_HIT_SPOTANIM_ID);
-    const tokXilShotHitModel = buildSpotAnimModel(
-        modelLoader,
-        textureLoader,
-        tokXilShotHitSpotAnim,
-    );
-    if (!tokXilShotHitModel || tokXilShotHitSpotAnim.sequenceId !== TOK_XIL_SHOT_HIT_SEQ_ID) {
-        throw new Error("Tok-Xil shot hit spot animation does not match the expected sequence");
-    }
-    const tokXilShotHitAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        tokXilShotHitModel,
-        TOK_XIL_SHOT_HIT_SEQ_ID,
-    );
+    const tokXilShotAnim = addStaticModelAnimationFrames(sceneBuf, tokXilShotModel);
 
     const ketZekBlastSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID);
     const ketZekBlastModel = buildSpotAnimModel(modelLoader, textureLoader, ketZekBlastSpotAnim);
@@ -640,7 +658,6 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
             [VisualEffectKind.JAD_FIRE_HIT]: jadFireHitAnim,
             [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
-            [VisualEffectKind.TOK_XIL_SHOT_HIT]: tokXilShotHitAnim,
             [VisualEffectKind.KET_ZEK_FIRE_BLAST_HIT]: ketZekBlastHitAnim,
             [VisualEffectKind.MAUL_SMASH_HIT]: maulSmashHitAnim,
         },
@@ -692,7 +709,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 enemyType,
             );
         }
-        if (preview) {
+        if (preview?.kind === "NPC_SEQS") {
             enemyTypes[EnemyTypeId.PREVIEW] = createPreviewEnemyTypeAnimationSet(
                 npcModelLoader,
                 npcTypeLoader,
@@ -700,6 +717,10 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 preview,
             );
         }
+        const previewGfx =
+            preview?.kind === "SPOT_ANIMS"
+                ? createPreviewGfxAnimationSet(state, sceneBuf, preview)
+                : undefined;
 
         const projectiles = createProjectileActorData(state, sceneBuf);
         const groundItems = createGroundItemActorData(state, sceneBuf);
@@ -733,7 +754,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 vertices,
                 indices,
 
-                actorData: { player, enemyTypes, projectiles, groundItems },
+                actorData: { player, enemyTypes, projectiles, groundItems, previewGfx },
 
                 loadedTextures,
             },
