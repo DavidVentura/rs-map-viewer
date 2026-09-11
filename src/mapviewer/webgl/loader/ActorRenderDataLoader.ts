@@ -1,8 +1,6 @@
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
-import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { Model } from "../../../rs/model/Model";
-import { AffineTransform, VertexLabelStats } from "../../../rs/model/animation/FramePalette";
-import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
+import { PoseSpace } from "../../../rs/model/animation/FramePalette";
 import { WeaponStyle } from "../../game/Ability";
 import { AnimPreviewParams } from "../../game/AnimPreview";
 import { getEncounter } from "../../game/Encounter";
@@ -37,10 +35,7 @@ import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/RenderDataWorker";
-import { ActorFaceSelection, ActorMeshBuilder } from "../actor/ActorMeshBuilder";
-import { ActorPaletteBuilder } from "../actor/ActorPaletteBuilder";
 import {
-    ActorAnimation,
     EnemyTypeAnimationSet,
     GroundItemActorData,
     PlayerActorData,
@@ -48,10 +43,12 @@ import {
     PreviewGfxBake,
     ProjectileActorData,
 } from "../actor/ActorRenderData";
-import { ActorRig } from "../actor/ActorRig";
+import { SkinAnimation } from "../skin/SkinAnimation";
+import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
+import { SkinFaceSelection, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
+import { SkinSeqFrames, Skinning } from "../skin/Skinning";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
-import { ActorSkinning } from "./ActorSkinning";
 import { brightenModel, buildSpotAnimModel } from "./AnimationBaking";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
 
@@ -127,7 +124,7 @@ function allStanceSeqIds(seqConfig: StanceSeqConfig): number[] {
 function createPlayerActorData(
     playerModelLoader: PlayerModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    skinning: ActorSkinning,
+    skinning: Skinning,
 ): PlayerActorData {
     const baseNpc = npcTypeLoader.load(3105);
     const bodyOnlyAppearance = new PlayerAppearance(
@@ -178,43 +175,40 @@ function createPlayerActorData(
         itemModels.set(itemId, model);
     }
     const seqIds = [...new Set(ALL_STYLES.flatMap((style) => seqIdsByStyle[style]))];
-    const framesBySeqId = new Map(seqIds.map((seqId) => [seqId, skinning.loadFrames(seqId)]));
-    const rig = ActorRig.oldStyle(
-        [bodyOnlyModel, ...itemModels.values()],
-        [...framesBySeqId.values()].flat().filter((frame): frame is SeqFrame => !!frame),
+    const itemEntries = [...itemModels];
+    const rig = skinning.addRig(
+        bodyOnlyModel,
+        [
+            { model: bodyOnlyModel, selection: SkinFaceSelection.all() },
+            ...itemEntries.map(([, model]) => ({
+                model,
+                selection: SkinFaceSelection.startingAt(bodyFaceCount),
+            })),
+        ],
+        new Map(seqIds.map((seqId) => [seqId, skinning.requireFrames(seqId)])),
+        PoseSpace.identity(),
     );
-    const bodyMesh = skinning.meshes.addModel(bodyOnlyModel, rig, ActorFaceSelection.all());
+    const [bodyMesh, ...itemMeshes] = rig.meshes;
     const itemsByItemId = new Map(
-        [...itemModels].map(([itemId, model]) => [
-            itemId,
-            skinning.meshes.addModel(model, rig, ActorFaceSelection.startingAt(bodyFaceCount)),
-        ]),
-    );
-    const bodyStats = VertexLabelStats.fromModel(bodyOnlyModel);
-    const animationsBySeqId = new Map(
-        [...framesBySeqId].map(([seqId, frames]) => [
-            seqId,
-            frames.map((frame) =>
-                skinning.palettes.addFrame(bodyStats, rig, frame, AffineTransform.identity()),
-            ),
-        ]),
+        itemEntries.map(([itemId], index) => [itemId, itemMeshes[index]]),
     );
     const stanceSeqIds = {} as StanceSeqIdsByStance;
     for (const style of ALL_STYLES) {
         stanceSeqIds[style] = STANCE_SEQ_CONFIG[style];
     }
-    return { stanceSeqIds, body: { mesh: bodyMesh, animationsBySeqId }, itemsByItemId };
+    return {
+        stanceSeqIds,
+        body: { mesh: bodyMesh, animationsBySeqId: rig.animationsBySeqId },
+        itemsByItemId,
+    };
 }
 
 // Bakes every OSRS item that can ever appear as a ground drop (every tier above tier 0 across
 // every equipment path; see Equipment.allDroppableItemIds) as a single static ground-lying frame,
 // the same way createProjectileActorData bakes the arrow model.
-function createGroundItemActorData(
-    state: WorkerState,
-    skinning: ActorSkinning,
-): GroundItemActorData {
+function createGroundItemActorData(state: WorkerState, skinning: Skinning): GroundItemActorData {
     const objModelLoader = state.objModelLoader;
-    const animationsByItemId = new Map<number, ActorAnimation>();
+    const animationsByItemId = new Map<number, SkinAnimation>();
     for (const itemId of allDroppableItemIds()) {
         if (animationsByItemId.has(itemId)) {
             continue;
@@ -223,7 +217,7 @@ function createGroundItemActorData(
         if (!model) {
             throw new Error(`Ground item model is missing from the cache for item ${itemId}`);
         }
-        animationsByItemId.set(itemId, skinning.addAnimation(model, undefined));
+        animationsByItemId.set(itemId, skinning.addStatic(model));
     }
     return { animationsByItemId };
 }
@@ -243,7 +237,7 @@ function enemyTypeSeqIds(enemyType: EnemyType): number[] {
 function createEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    skinning: ActorSkinning,
+    skinning: Skinning,
     enemyType: EnemyType,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(enemyType.npcTypeId);
@@ -253,9 +247,8 @@ function createEnemyTypeAnimationSet(
     }
     return skinning.addAnimationSet(
         rest.model,
-        enemyTypeSeqIds(enemyType),
-        ActorFaceSelection.all(),
-        npcScaleTransform(rest.npcType),
+        requireAllFrames(skinning, enemyTypeSeqIds(enemyType)),
+        rest.poseSpace,
     );
 }
 
@@ -264,7 +257,7 @@ function createEnemyTypeAnimationSet(
 function createPreviewEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    skinning: ActorSkinning,
+    skinning: Skinning,
     preview: Extract<AnimPreviewParams, { kind: "NPC_SEQS" }>,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(preview.npcTypeId);
@@ -278,16 +271,16 @@ function createPreviewEnemyTypeAnimationSet(
     }
     return skinning.addAnimationSet(
         rest.model,
-        [...seqIds],
-        ActorFaceSelection.all(),
-        npcScaleTransform(rest.npcType),
+        requireAllFrames(skinning, [...seqIds]),
+        rest.poseSpace,
     );
 }
 
-function npcScaleTransform(npcType: NpcType): AffineTransform {
-    const width = npcType.widthScale / 128;
-    const height = npcType.heightScale / 128;
-    return AffineTransform.fromRows([width, 0, 0, 0, 0, height, 0, 0, 0, 0, width, 0]);
+function requireAllFrames(
+    skinning: Skinning,
+    seqIds: readonly number[],
+): ReadonlyMap<number, SkinSeqFrames> {
+    return new Map(seqIds.map((seqId) => [seqId, skinning.requireFrames(seqId)]));
 }
 
 // The animation viewer's gfx preview: bakes every spot anim id in the requested range, each into
@@ -298,7 +291,7 @@ function npcScaleTransform(npcType: NpcType): AffineTransform {
 // "no model" instead of silently showing nothing.
 function createPreviewGfxAnimationSet(
     state: WorkerState,
-    skinning: ActorSkinning,
+    skinning: Skinning,
     preview: Extract<AnimPreviewParams, { kind: "SPOT_ANIMS" }>,
 ): PreviewGfxAnimationSet {
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
@@ -327,7 +320,7 @@ function createPreviewGfxAnimationSet(
         // than one such id in the range aborting the whole actor buffer load.
         const hasFrames =
             seqId !== undefined && (seqTypeLoader.load(seqId).frameIds?.length ?? 0) > 0;
-        const anim = skinning.addAnimation(model, hasFrames ? seqId : undefined);
+        const anim = hasFrames ? skinning.addAnimation(model, seqId!) : skinning.addStatic(model);
         bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
     }
     return { bakesByGfxId };
@@ -377,10 +370,7 @@ const ARROW_LIGHTNESS_BOOST = 45;
 // slow-moving projectile reads as a bigger, boss-scale attack.
 const JAD_MAGE_BLAST_MODEL_SCALE = 128 * 3;
 
-function createProjectileActorData(
-    state: WorkerState,
-    skinning: ActorSkinning,
-): ProjectileActorData {
+function createProjectileActorData(state: WorkerState, skinning: Skinning): ProjectileActorData {
     const objModelLoader = state.objModelLoader;
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
     const textureLoader = state.textureLoader;
@@ -400,7 +390,7 @@ function createProjectileActorData(
     visibleArrowModel.rotate180();
     visibleArrowModel.scale(ARROW_THICKNESS_SCALE, ARROW_THICKNESS_SCALE, ARROW_LENGTH_SCALE);
     brightenModel(visibleArrowModel, ARROW_LIGHTNESS_BOOST);
-    const arrowAnim = skinning.addAnimation(visibleArrowModel, undefined);
+    const arrowAnim = skinning.addStatic(visibleArrowModel);
 
     const powerShotModel = Model.copy(arrowModel);
     powerShotModel.rotate180();
@@ -410,7 +400,7 @@ function createProjectileActorData(
         POWER_SHOT_MODEL_SCALE,
     );
     brightenModel(powerShotModel, ARROW_LIGHTNESS_BOOST);
-    const powerShotAnim = skinning.addAnimation(powerShotModel, undefined);
+    const powerShotAnim = skinning.addStatic(powerShotModel);
 
     const boltSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_PROJECTILE_SPOTANIM_ID);
     const boltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
@@ -500,7 +490,7 @@ function createProjectileActorData(
     if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== -1) {
         throw new Error("Tok-Xil shot spot animation is expected to be a static model");
     }
-    const tokXilShotAnim = skinning.addAnimation(tokXilShotModel, undefined);
+    const tokXilShotAnim = skinning.addStatic(tokXilShotModel);
 
     const ketZekBlastSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID);
     const ketZekBlastModel = buildSpotAnimModel(modelLoader, textureLoader, ketZekBlastSpotAnim);
@@ -550,9 +540,9 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const npcModelLoader = state.npcModelLoader;
 
         const textureIdIndexMap = buildTextureIdIndexMap(textureLoader);
-        const meshBuilder = new ActorMeshBuilder(textureLoader, textureIdIndexMap);
-        const paletteBuilder = new ActorPaletteBuilder();
-        const skinning = new ActorSkinning(
+        const meshBuilder = new SkinnedMeshBuilder(textureLoader, textureIdIndexMap);
+        const paletteBuilder = new SkinPaletteBuilder();
+        const skinning = new Skinning(
             meshBuilder,
             paletteBuilder,
             state.seqTypeLoader,

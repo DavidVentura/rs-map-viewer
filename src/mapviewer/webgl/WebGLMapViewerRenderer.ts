@@ -67,9 +67,7 @@ import {
     ActorInstance,
     writeActorInstance,
 } from "./actor/ActorInstanceData";
-import { ActorMesh } from "./actor/ActorMeshBuilder";
 import {
-    ActorAnimation,
     EnemyTypeAnimationSet,
     PreviewGfxBake,
     getEnemyAnimation,
@@ -92,6 +90,8 @@ import {
     createMainProgram,
     createNpcProgram,
 } from "./shaders/Shaders";
+import { SkinAnimation } from "./skin/SkinAnimation";
+import { SkinnedMesh } from "./skin/SkinnedMeshBuilder";
 import { isWithinTickRange, worldToMapSquare } from "./tickRange";
 
 const MAX_TEXTURES = 2048;
@@ -295,7 +295,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     actorInstanceCount: number = 0;
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
     actorDataTextures?: DataTextureRing;
-    activeActorMeshes: ActorMesh[] = [];
+    activeActorMeshes: SkinnedMesh[] = [];
 
     // The gfx preview's currently shown spot anim id and playback mode (see AnimPreview.ts's
     // SPOT_ANIMS mode): unlike the npc seq preview, there's no Enemy to own this state on, since a
@@ -2588,7 +2588,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private getActorPose(
         actor: ActiveActor,
-    ): { readonly animation: ActorAnimation; readonly frameIndex: number } | undefined {
+    ): { readonly animation: SkinAnimation; readonly frameIndex: number } | undefined {
         if (!this.actorBuffer) {
             return undefined;
         }

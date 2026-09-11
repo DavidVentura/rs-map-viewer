@@ -2,44 +2,44 @@ import { Model } from "../../../rs/model/Model";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { DrawRange, newDrawRange } from "../DrawRange";
 import { packVertex } from "../buffer/VertexBuffer";
-import { ActorRig } from "./ActorRig";
+import { SkinRig } from "./SkinRig";
 
 const MAX_INFLUENCE_START = 2 ** 20 - 1;
 const MAX_INFLUENCE_COUNT = 16;
 
-interface ActorInfluence {
+interface SkinInfluence {
     readonly matrixIndex: number;
     readonly weight: number;
 }
 
-export interface ActorMesh {
+export interface SkinnedMesh {
     readonly opaque: DrawRange;
     readonly transparent: DrawRange;
 }
 
-export interface ActorMeshData {
+export interface SkinnedMeshData {
     readonly vertices: Uint8Array;
     readonly indices: Int32Array;
     readonly influences: Uint32Array;
     readonly usedTextureIds: ReadonlySet<number>;
 }
 
-export class ActorFaceSelection {
+export class SkinFaceSelection {
     private constructor(readonly firstFace: number) {}
 
-    static all(): ActorFaceSelection {
-        return new ActorFaceSelection(0);
+    static all(): SkinFaceSelection {
+        return new SkinFaceSelection(0);
     }
 
-    static startingAt(firstFace: number): ActorFaceSelection {
+    static startingAt(firstFace: number): SkinFaceSelection {
         if (!Number.isInteger(firstFace) || firstFace < 0) {
             throw new Error(`Invalid first actor face ${firstFace}`);
         }
-        return new ActorFaceSelection(firstFace);
+        return new SkinFaceSelection(firstFace);
     }
 }
 
-export class ActorMeshBuilder {
+export class SkinnedMeshBuilder {
     private readonly vertexWords: number[] = [];
     private readonly indices: number[] = [];
     private readonly influences: number[] = [];
@@ -52,7 +52,7 @@ export class ActorMeshBuilder {
         private readonly textureIdIndexMap: ReadonlyMap<number, number>,
     ) {}
 
-    addModel(model: Model, rig: ActorRig, selection: ActorFaceSelection): ActorMesh {
+    addModel(model: Model, rig: SkinRig, selection: SkinFaceSelection): SkinnedMesh {
         if (selection.firstFace > model.faceCount) {
             throw new Error(`First actor face ${selection.firstFace} exceeds ${model.faceCount}`);
         }
@@ -82,7 +82,7 @@ export class ActorMeshBuilder {
         };
     }
 
-    build(): ActorMeshData {
+    build(): SkinnedMeshData {
         const words = Uint32Array.from(this.vertexWords);
         return {
             vertices: new Uint8Array(words.buffer),
@@ -94,7 +94,7 @@ export class ActorMeshBuilder {
 
     private addFaces(
         model: Model,
-        rig: ActorRig,
+        rig: SkinRig,
         vertexLabels: Int32Array,
         faceLabels: Int32Array,
         faces: readonly number[],
@@ -150,7 +150,7 @@ export class ActorMeshBuilder {
         v: number,
         textureIndex: number,
         priority: number,
-        influences: readonly ActorInfluence[],
+        influences: readonly SkinInfluence[],
         alphaLabel: number,
     ): number {
         const influenceStart = this.internInfluences(influences);
@@ -180,7 +180,7 @@ export class ActorMeshBuilder {
         return index;
     }
 
-    private internInfluences(influences: readonly ActorInfluence[]): number {
+    private internInfluences(influences: readonly SkinInfluence[]): number {
         if (influences.length === 0 || influences.length > MAX_INFLUENCE_COUNT) {
             throw new Error(`Actor influence count ${influences.length} is outside 1..16`);
         }

@@ -26,11 +26,8 @@ uniform float u_timeLoaded;
 uniform int u_highlightId;
 
 uniform highp usampler2D u_actorDataTexture;
-uniform highp usampler2D u_actorInfluences;
-uniform highp sampler2D u_actorMatrices;
 
 layout(location = 0) in uvec3 a_vertex;
-layout(location = 1) in uint a_skinning;
 
 out vec4 v_color;
 out vec2 v_texCoord;
@@ -47,6 +44,7 @@ out float v_highlight;
 #include "./includes/material.glsl";
 
 #include "./includes/vertex.glsl";
+#include "./includes/skinning.glsl";
 
 // Keep in sync with ACTOR_INSTANCE_TEXELS in ActorInstanceData.ts: each instance occupies this
 // many consecutive RGBA32UI texels (a plain rotation/level/interactId/interactType texel, plus a
@@ -100,47 +98,6 @@ ActorInfo decodeActorInfo(int index) {
     return info;
 }
 
-ivec2 getActorTableCoord(uint index, int width) {
-    return ivec2(int(index % uint(width)), int(index / uint(width)));
-}
-
-vec3 skinPosition(vec3 position, ActorInfo actorInfo) {
-    uint influenceStart = a_skinning & 0xFFFFFu;
-    uint influenceCount = ((a_skinning >> 20u) & 0xFu) + 1u;
-    int influenceWidth = textureSize(u_actorInfluences, 0).x;
-    int matrixWidth = textureSize(u_actorMatrices, 0).x;
-    vec3 result = vec3(0.0);
-    for (uint index = 0u; index < influenceCount; index++) {
-        uint influence = texelFetch(u_actorInfluences, getActorTableCoord(influenceStart + index, influenceWidth), 0).r;
-        uint matrixIndex = influence & 0xFFFFu;
-        float weight = float((influence >> 16u) & 0xFFu) / 255.0;
-        uint matrixOffset = actorInfo.matrixOffset + matrixIndex * 3u;
-        vec4 row0 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset, matrixWidth), 0);
-        vec4 row1 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 1u, matrixWidth), 0);
-        vec4 row2 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 2u, matrixWidth), 0);
-        vec4 point = vec4(position, 1.0);
-        result += vec3(dot(row0, point), dot(row1, point), dot(row2, point)) * weight;
-    }
-    return result;
-}
-
-float animatedAlpha(float renderedAlpha, ActorInfo actorInfo) {
-    uint alphaLabel = a_skinning >> 24u;
-    if (alphaLabel == 0u) {
-        return renderedAlpha;
-    }
-    vec3 transform = texelFetch(
-        u_actorMatrices,
-        getActorTableCoord(
-            actorInfo.alphaOffset + alphaLabel - 1u,
-            textureSize(u_actorMatrices, 0).x
-        ),
-        0
-    ).rgb;
-    float sourceAlpha = 255.0 - renderedAlpha * 255.0;
-    return (255.0 - clamp(sourceAlpha + transform.x, transform.y, transform.z)) / 255.0;
-}
-
 mat4 rotationY( in float angle ) {
     return mat4(cos(angle),		0,		sin(angle),	0,
                          0,		1.0,			 0,	0,
@@ -175,8 +132,8 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     ActorInfo actorInfo = decodeActorInfo(DRAW_ID);
-    vertex.pos = skinPosition(vertex.pos, actorInfo);
-    vertex.color.a = animatedAlpha(vertex.color.a, actorInfo);
+    vertex.pos = skinPosition(vertex.pos, actorInfo.matrixOffset);
+    vertex.color.a = skinAlpha(vertex.color.a, actorInfo.alphaOffset);
     v_color = vertex.color;
 
     v_highlight = float(
@@ -212,7 +169,5 @@ void main() {
     gl_Position = u_viewMatrix * localPos;
     gl_Position.z += float(actorInfo.level) * 0.005 + (float(vertex.priority) + 20.0) * 0.0007;
     gl_Position = u_projectionMatrix * gl_Position;
-    if (vertex.color.a <= (1.0 / 255.0)) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    }
+    gl_Position = hideFadedSkinnedVertex(gl_Position, vertex.color.a);
 }

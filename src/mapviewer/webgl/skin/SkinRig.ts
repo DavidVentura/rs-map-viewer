@@ -2,7 +2,7 @@ import { Model } from "../../../rs/model/Model";
 import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqTransformType } from "../../../rs/model/seq/SeqTransformType";
 
-export class ActorRig {
+export class SkinRig {
     static readonly REST_MATRIX_SOURCE_LABEL = -1;
 
     private constructor(
@@ -12,7 +12,7 @@ export class ActorRig {
         private readonly alphaIndices: ReadonlyMap<number, number>,
     ) {}
 
-    static oldStyle(models: readonly Model[], frames: readonly SeqFrame[]): ActorRig {
+    static oldStyle(models: readonly Model[], frames: readonly SeqFrame[]): SkinRig {
         const matrixLabels = new Set<number>();
         const alphaLabels = new Set<number>();
         for (const model of models) {
@@ -50,11 +50,11 @@ export class ActorRig {
             );
         }
         const matrixSourceLabels = [
-            ActorRig.REST_MATRIX_SOURCE_LABEL,
+            SkinRig.REST_MATRIX_SOURCE_LABEL,
             ...[...matrixLabels].sort((a, b) => a - b),
         ];
         const alphaSourceLabels = [...alphaLabels].sort((a, b) => a - b);
-        return new ActorRig(
+        return new SkinRig(
             matrixSourceLabels,
             alphaSourceLabels,
             compactIndices(matrixSourceLabels, 0),
@@ -63,7 +63,7 @@ export class ActorRig {
     }
 
     matrixIndex(sourceLabel: number): number {
-        if (sourceLabel === ActorRig.REST_MATRIX_SOURCE_LABEL) {
+        if (sourceLabel === SkinRig.REST_MATRIX_SOURCE_LABEL) {
             return 0;
         }
         const index = this.matrixIndices.get(sourceLabel);

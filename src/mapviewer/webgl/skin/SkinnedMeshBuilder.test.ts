@@ -3,8 +3,8 @@ import { SeqBase } from "../../../rs/model/seq/SeqBase";
 import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqTransformType } from "../../../rs/model/seq/SeqTransformType";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
-import { ActorFaceSelection, ActorMeshBuilder } from "./ActorMeshBuilder";
-import { ActorRig } from "./ActorRig";
+import { SkinRig } from "./SkinRig";
+import { SkinFaceSelection, SkinnedMeshBuilder } from "./SkinnedMeshBuilder";
 
 const textureLoader = {
     isTransparent: (id: number) => id === 5,
@@ -45,13 +45,13 @@ function actorModel(): Model {
     return model;
 }
 
-describe("ActorMeshBuilder", () => {
+describe("SkinnedMeshBuilder", () => {
     it("writes fixed opaque and transparent ranges with packed rig metadata", () => {
         const model = actorModel();
-        const rig = ActorRig.oldStyle([model], [alphaFrame(7)]);
-        const builder = new ActorMeshBuilder(textureLoader, new Map([[5, 9]]));
+        const rig = SkinRig.oldStyle([model], [alphaFrame(7)]);
+        const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
 
-        const mesh = builder.addModel(model, rig, ActorFaceSelection.all());
+        const mesh = builder.addModel(model, rig, SkinFaceSelection.all());
         const data = builder.build();
 
         expect(mesh.opaque).toEqual([0, 3, 1]);
@@ -74,10 +74,10 @@ describe("ActorMeshBuilder", () => {
 
     it("keeps invisible alpha-animated faces and drops other invisible faces", () => {
         const model = actorModel();
-        const builder = new ActorMeshBuilder(textureLoader, new Map([[5, 9]]));
-        const rig = ActorRig.oldStyle([model], [alphaFrame(7)]);
+        const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
+        const rig = SkinRig.oldStyle([model], [alphaFrame(7)]);
 
-        const mesh = builder.addModel(model, rig, ActorFaceSelection.startingAt(2));
+        const mesh = builder.addModel(model, rig, SkinFaceSelection.startingAt(2));
 
         expect(mesh.opaque).toEqual([0, 0, 1]);
         expect(mesh.transparent).toEqual([0, 6, 1]);
@@ -94,10 +94,10 @@ describe("ActorMeshBuilder", () => {
         model.faceLabels = Array.from({ length: 10 }, () => new Int32Array());
         model.faceLabels[7] = new Int32Array([0]);
         model.faceLabels[9] = new Int32Array([1]);
-        const builder = new ActorMeshBuilder(textureLoader, new Map());
-        const rig = ActorRig.oldStyle([model], [alphaFrame(7, 9)]);
+        const builder = new SkinnedMeshBuilder(textureLoader, new Map());
+        const rig = SkinRig.oldStyle([model], [alphaFrame(7, 9)]);
 
-        builder.addModel(model, rig, ActorFaceSelection.all());
+        builder.addModel(model, rig, SkinFaceSelection.all());
         const data = builder.build();
 
         expect(data.vertices.byteLength / 16).toBe(6);
@@ -106,10 +106,10 @@ describe("ActorMeshBuilder", () => {
     it("maps unlabeled vertices to the reserved rest-pose matrix", () => {
         const model = actorModel();
         model.vertexLabels[10] = new Int32Array([0]);
-        const builder = new ActorMeshBuilder(textureLoader, new Map([[5, 9]]));
-        const rig = ActorRig.oldStyle([model], []);
+        const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
+        const rig = SkinRig.oldStyle([model], []);
 
-        builder.addModel(model, rig, ActorFaceSelection.all());
+        builder.addModel(model, rig, SkinFaceSelection.all());
         expect(builder.build().influences).toContain(0x00ff0000);
     });
 });

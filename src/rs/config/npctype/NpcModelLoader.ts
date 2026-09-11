@@ -1,6 +1,7 @@
 import { Model } from "../../model/Model";
 import { ModelData } from "../../model/ModelData";
 import { ModelLoader } from "../../model/ModelLoader";
+import { AffineTransform, PoseSpace } from "../../model/animation/FramePalette";
 import { SeqFrameLoader } from "../../model/seq/SeqFrameLoader";
 import { SkeletalSeqLoader } from "../../model/skeletal/SkeletalSeqLoader";
 import { TextureLoader } from "../../texture/TextureLoader";
@@ -13,6 +14,7 @@ import { NpcTypeLoader } from "./NpcTypeLoader";
 export interface NpcRestModel {
     readonly npcType: NpcType;
     readonly model: Model;
+    readonly poseSpace: PoseSpace;
 }
 
 export class NpcModelLoader {
@@ -104,7 +106,7 @@ export class NpcModelLoader {
             this.modelCache.set(npcType.id, model);
         }
 
-        return { npcType, model };
+        return { npcType, model, poseSpace: npcPoseSpace(npcType) };
     }
 
     transformNpcModel(model: Model, seqType: SeqType, frame: number): Model {
@@ -140,4 +142,14 @@ export class NpcModelLoader {
     clearCache(): void {
         this.modelCache.clear();
     }
+}
+
+// The width/height scale is applied after posing (see getModel).
+function npcPoseSpace(npcType: NpcType): PoseSpace {
+    const width = npcType.widthScale / 128;
+    const height = npcType.heightScale / 128;
+    return PoseSpace.between(
+        AffineTransform.identity(),
+        AffineTransform.fromRows([width, 0, 0, 0, 0, height, 0, 0, 0, 0, width, 0]),
+    );
 }

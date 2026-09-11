@@ -10,6 +10,7 @@ import PicoGL, {
 import { DrawRange, newDrawRange } from "../DrawRange";
 import { DrawCallRange } from "../WebGLMapSquare";
 import { ActorBufferData } from "../loader/ActorBufferData";
+import { SKINNED_VERTEX_STRIDE, SkinTables, createSkinnedVertexArray } from "../skin/SkinGpu";
 import { ActorRenderData } from "./ActorRenderData";
 
 export class WebGLActorBuffer {
@@ -30,7 +31,10 @@ export class WebGLActorBuffer {
         capacity: number,
         time: number,
     ): WebGLActorBuffer {
-        const interleavedBuffer = app.createInterleavedBuffer(16, data.vertices.byteLength);
+        const interleavedBuffer = app.createInterleavedBuffer(
+            SKINNED_VERTEX_STRIDE,
+            data.vertices.byteLength,
+        );
         // picogl's own type declarations only accept an ArrayBufferView here, but the
         // implementation also accepts an element count to allocate an empty (zero-filled) buffer
         // without copying any data - the fast path uploadNextChunk then fills incrementally.
@@ -40,38 +44,19 @@ export class WebGLActorBuffer {
             data.indices.length,
         );
 
-        const vertexArray = app
-            .createVertexArray()
-            .vertexAttributeBuffer(0, interleavedBuffer, {
-                type: PicoGL.UNSIGNED_INT,
-                size: 3,
-                stride: 16,
-                integer: true as any,
-            })
-            .vertexAttributeBuffer(1, interleavedBuffer, {
-                type: PicoGL.UNSIGNED_INT,
-                size: 1,
-                stride: 16,
-                offset: 12,
-                integer: true as any,
-            })
-            .indexBuffer(indexBuffer);
-
-        const influenceTexture = createUintTexture(app, data.influences);
-        const matrixTexture = createFloatTexture(app, data.matrixTable);
+        const vertexArray = createSkinnedVertexArray(app, interleavedBuffer, indexBuffer);
+        const skinTables = SkinTables.create(app, data.influences, data.matrixTable);
 
         const drawRanges: DrawRange[] = Array.from({ length: capacity }, () =>
             newDrawRange(0, 0, 1),
         );
 
-        const drawCall = app
-            .createDrawCall(actorProgram, vertexArray)
+        const drawCall = skinTables
+            .bind(app.createDrawCall(actorProgram, vertexArray))
             .uniformBlock("SceneUniforms", sceneUniformBuffer)
             .uniform("u_timeLoaded", time)
             .texture("u_textures", textureArray)
             .texture("u_textureMaterials", textureMaterials)
-            .texture("u_actorInfluences", influenceTexture)
-            .texture("u_actorMatrices", matrixTexture)
             .drawRanges(...drawRanges);
 
         return new WebGLActorBuffer(
@@ -81,8 +66,7 @@ export class WebGLActorBuffer {
             interleavedBuffer,
             indexBuffer,
             vertexArray,
-            influenceTexture,
-            matrixTexture,
+            skinTables,
             { drawCall, drawRanges },
             capacity,
             new Uint8Array(
@@ -105,8 +89,7 @@ export class WebGLActorBuffer {
         readonly interleavedBuffer: VertexBuffer,
         readonly indexBuffer: VertexBuffer,
         readonly vertexArray: VertexArray,
-        readonly influenceTexture: Texture,
-        readonly matrixTexture: Texture,
+        private readonly skinTables: SkinTables,
 
         readonly drawCall: DrawCallRange,
         public capacity: number,
@@ -169,35 +152,6 @@ export class WebGLActorBuffer {
         this.vertexArray.delete();
         this.interleavedBuffer.delete();
         this.indexBuffer.delete();
-        this.influenceTexture.delete();
-        this.matrixTexture.delete();
+        this.skinTables.delete();
     }
-}
-
-// WebGL2 only guarantees 2048-texel textures; the shader reads the width back with textureSize.
-const ACTOR_TABLE_WIDTH = 2048;
-
-function createUintTexture(app: PicoApp, source: Uint32Array): Texture {
-    const height = Math.max(Math.ceil(source.length / ACTOR_TABLE_WIDTH), 1);
-    const data = new Uint32Array(ACTOR_TABLE_WIDTH * height);
-    data.set(source);
-    return app.createTexture2D(data, ACTOR_TABLE_WIDTH, height, {
-        internalFormat: PicoGL.R32UI,
-        type: PicoGL.UNSIGNED_INT,
-        minFilter: PicoGL.NEAREST,
-        magFilter: PicoGL.NEAREST,
-    });
-}
-
-function createFloatTexture(app: PicoApp, source: Float32Array): Texture {
-    const texelCount = Math.ceil(source.length / 4);
-    const height = Math.max(Math.ceil(texelCount / ACTOR_TABLE_WIDTH), 1);
-    const data = new Float32Array(ACTOR_TABLE_WIDTH * height * 4);
-    data.set(source);
-    return app.createTexture2D(data, ACTOR_TABLE_WIDTH, height, {
-        internalFormat: PicoGL.RGBA32F,
-        type: PicoGL.FLOAT,
-        minFilter: PicoGL.NEAREST,
-        magFilter: PicoGL.NEAREST,
-    });
 }

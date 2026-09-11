@@ -2,7 +2,7 @@ import { Model } from "../Model";
 import { SeqBase } from "../seq/SeqBase";
 import { SeqFrame } from "../seq/SeqFrame";
 import { SeqTransformType } from "../seq/SeqTransformType";
-import { AffineTransform, VertexLabelStats, buildFramePalette } from "./FramePalette";
+import { AffineTransform, PoseSpace, VertexLabelStats, buildFramePalette } from "./FramePalette";
 
 function modelWithLabels(): Model {
     const model = new Model();
@@ -80,7 +80,7 @@ describe("frame palettes", () => {
         const palette = buildFramePalette(
             VertexLabelStats.fromModel(rest),
             animation,
-            AffineTransform.identity(),
+            PoseSpace.identity(),
         );
 
         for (let label = 0; label < rest.vertexLabels.length; label++) {
@@ -109,6 +109,44 @@ describe("frame palettes", () => {
         }
     });
 
+    it("poses in a rotated space the way the loc loader rotates, animates and rotates back", () => {
+        const rest = modelWithLabels();
+        const animated = Model.copyAnimated(rest, true, true);
+        const animation = frame(
+            [SeqTransformType.ORIGIN, SeqTransformType.ROTATE, SeqTransformType.TRANSLATE],
+            [[0], [0, 1], [2]],
+            [
+                [0, 0, 0],
+                [0, 40, 0],
+                [7, 0, -3],
+            ],
+        );
+        animated.rotate270();
+        animated.animate(animation, undefined, false);
+        animated.rotate90();
+
+        const toPose = AffineTransform.fromRows([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+        const fromPose = AffineTransform.fromRows([0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0]);
+        const palette = buildFramePalette(
+            VertexLabelStats.fromModel(rest),
+            animation,
+            PoseSpace.between(toPose, fromPose),
+        );
+
+        for (let label = 0; label < rest.vertexLabels.length; label++) {
+            for (const vertex of rest.vertexLabels[label]) {
+                const actual = palette.matrices[label].transformPoint(
+                    rest.verticesX[vertex],
+                    rest.verticesY[vertex],
+                    rest.verticesZ[vertex],
+                );
+                expect(Math.abs(actual[0] - animated.verticesX[vertex])).toBeLessThanOrEqual(2);
+                expect(Math.abs(actual[1] - animated.verticesY[vertex])).toBeLessThanOrEqual(2);
+                expect(Math.abs(actual[2] - animated.verticesZ[vertex])).toBeLessThanOrEqual(2);
+            }
+        }
+    });
+
     it("folds repeated saturation into one exact alpha clamp", () => {
         const animation = frame(
             [SeqTransformType.ALPHA, SeqTransformType.ALPHA, SeqTransformType.ALPHA],
@@ -119,11 +157,8 @@ describe("frame palettes", () => {
                 [5, 0, 0],
             ],
         );
-        const alpha = buildFramePalette(
-            new VertexLabelStats([]),
-            animation,
-            AffineTransform.identity(),
-        ).alphaTransforms[0];
+        const alpha = buildFramePalette(new VertexLabelStats([]), animation, PoseSpace.identity())
+            .alphaTransforms[0];
 
         for (let initial = 0; initial <= 255; initial++) {
             const sequential = clamp(
@@ -149,7 +184,10 @@ describe("frame palettes", () => {
         const palette = buildFramePalette(
             new VertexLabelStats([{ positionSum: [0, 0, 0], vertexCount: 1 }]),
             animation,
-            AffineTransform.fromRows([2, 0, 0, 10, 0, 2, 0, 20, 0, 0, 2, 30]),
+            PoseSpace.between(
+                AffineTransform.identity(),
+                AffineTransform.fromRows([2, 0, 0, 10, 0, 2, 0, 20, 0, 0, 2, 30]),
+            ),
         );
 
         expect(palette.matrices[0].transformPoint(1, 1, 1)).toEqual([16, 28, 40]);
@@ -183,7 +221,7 @@ describe("frame palettes", () => {
             return buildFramePalette(
                 stats,
                 animation,
-                AffineTransform.identity(),
+                PoseSpace.identity(),
             ).matrices[1].transformPoint(20, 0, 0)[0];
         };
 

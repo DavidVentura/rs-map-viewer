@@ -71,6 +71,37 @@ export class VertexLabelStats {
         });
         return new VertexLabelStats(labels);
     }
+
+    transformed(transform: AffineTransform): VertexLabelStats {
+        return new VertexLabelStats(
+            this.labels.map(({ positionSum, vertexCount }) => ({
+                positionSum: transformSum(transform, positionSum, vertexCount),
+                vertexCount,
+            })),
+        );
+    }
+}
+
+// Frames pose a model in the space its sequence was authored in, which can differ from the space
+// its rest mesh is stored in: a loc is stored rotated to its orientation but animated unrotated,
+// and an npc is animated before its width/height scale is applied.
+export class PoseSpace {
+    private constructor(
+        readonly toPose: AffineTransform,
+        readonly fromPose: AffineTransform,
+    ) {}
+
+    static identity(): PoseSpace {
+        return new PoseSpace(AffineTransform.identity(), AffineTransform.identity());
+    }
+
+    static between(toPose: AffineTransform, fromPose: AffineTransform): PoseSpace {
+        return new PoseSpace(toPose, fromPose);
+    }
+
+    restTransform(): AffineTransform {
+        return this.toPose.then(this.fromPose);
+    }
 }
 
 export interface AlphaTransform {
@@ -84,11 +115,14 @@ export interface FramePalette {
     readonly alphaTransforms: readonly AlphaTransform[];
 }
 
+// Matrices map rest-mesh positions straight to posed positions: into the pose space, through the
+// frame, and back out.
 export function buildFramePalette(
-    stats: VertexLabelStats,
+    restStats: VertexLabelStats,
     frame: SeqFrame,
-    postTransform: AffineTransform,
+    space: PoseSpace,
 ): FramePalette {
+    const stats = restStats.transformed(space.toPose);
     const labelCount = Math.max(
         stats.labels.length,
         ...frame.base.labels.flat().map((label) => label + 1),
@@ -139,7 +173,7 @@ export function buildFramePalette(
     }
 
     return {
-        matrices: matrices.map((matrix) => matrix.then(postTransform)),
+        matrices: matrices.map((matrix) => space.toPose.then(matrix).then(space.fromPose)),
         alphaTransforms,
     };
 }
@@ -161,11 +195,10 @@ function calculateOrigin(
         if (!stat || stat.vertexCount === 0) {
             continue;
         }
-        const transformed = matrices[label].transformPoint(...stat.positionSum);
-        const translation = matrices[label].transformPoint(0, 0, 0);
-        sumX += transformed[0] + translation[0] * (stat.vertexCount - 1);
-        sumY += transformed[1] + translation[1] * (stat.vertexCount - 1);
-        sumZ += transformed[2] + translation[2] * (stat.vertexCount - 1);
+        const [x, y, z] = transformSum(matrices[label], stat.positionSum, stat.vertexCount);
+        sumX += x;
+        sumY += y;
+        sumZ += z;
         count += stat.vertexCount;
     }
     if (count === 0) {
@@ -175,6 +208,22 @@ function calculateOrigin(
         x + Math.trunc(sumX / count),
         y + Math.trunc(sumY / count),
         z + Math.trunc(sumZ / count),
+    ];
+}
+
+// The sum of `count` transformed points: the linear part applies to the sum once, the translation
+// once per point.
+function transformSum(
+    transform: AffineTransform,
+    sum: readonly [number, number, number],
+    count: number,
+): [number, number, number] {
+    const transformed = transform.transformPoint(...sum);
+    const translation = transform.transformPoint(0, 0, 0);
+    return [
+        transformed[0] + translation[0] * (count - 1),
+        transformed[1] + translation[1] * (count - 1),
+        transformed[2] + translation[2] * (count - 1),
     ];
 }
 
