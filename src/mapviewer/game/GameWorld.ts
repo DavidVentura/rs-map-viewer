@@ -5,7 +5,6 @@ import {
     AbilityTarget,
     AbilityTargetKind,
     ConeDelivery,
-    DelayedCircleDelivery,
     DeliveryKind,
     ProjectileDelivery,
     WeaponStyle,
@@ -15,14 +14,8 @@ import {
 } from "./Ability";
 import { CombatEvent, CombatEventKind } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import {
-    HitEffect,
-    applyPayloads,
-    combatantsInCircle,
-    hitEffectHoldSeconds,
-    matchesAffects,
-} from "./Effect";
-import { PendingDelayedDelivery, affectedCombatants, coneTileSpawns } from "./EffectResolution";
+import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
+import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
@@ -48,6 +41,7 @@ import {
     ProjectileLanding,
     ProjectileOutcome,
     ProjectileTarget,
+    travelSeconds,
 } from "./Projectile";
 import { SpatialGrid } from "./SpatialGrid";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -109,7 +103,6 @@ export class GameWorld {
     static readonly MAX_PROJECTILES = 32;
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 64;
-    static readonly MAX_DELAYED_DELIVERIES = 16;
     static readonly BASIC_ATTACK_SLOT = 0;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
     static readonly CORPSE_SECONDS = 6;
@@ -127,7 +120,6 @@ export class GameWorld {
     // Effects due to start later (see landCone's outward ripple), holding their share of the
     // MAX_VISUAL_EFFECTS budget from the moment they're scheduled.
     pendingVisualEffects: ScheduledVisualEffect[] = [];
-    pendingDelayedDeliveries: PendingDelayedDelivery[] = [];
     groundItems: GroundItem[] = [];
     private events: CombatEvent[] = [];
 
@@ -312,7 +304,6 @@ export class GameWorld {
         this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
-        this.resolveDelayedDeliveries();
         this.startDueVisualEffects();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
@@ -763,18 +754,15 @@ export class GameWorld {
     }
 
     // The one resolution path for every cast, player or enemy: the delivery picks who is affected
-    // (or spawns projectiles / schedules a delayed circle that pick later), the payloads land on
-    // each of them, and the hit graphic is anchored per combatant for combatant deliveries or at
-    // the landing point for point deliveries (see AbilityEffect.hitEffect).
+    // (or spawns projectiles, picked later on arrival), the payloads land on each of them, and the
+    // hit graphic is anchored per combatant for combatant deliveries or at the landing point for
+    // point deliveries (see AbilityEffect.hitEffect).
     private resolveEffect(caster: Combatant, effect: AbilityEffect, target: AbilityTarget): void {
         const aim = liveAbilityTarget(target, caster.level);
         const delivery = effect.delivery;
         switch (delivery.kind) {
             case DeliveryKind.PROJECTILE:
                 this.spawnProjectiles(caster, effect, delivery, aim);
-                return;
-            case DeliveryKind.DELAYED_CIRCLE:
-                this.scheduleDelayedDelivery(caster, effect, delivery, aim);
                 return;
             case DeliveryKind.CONE:
                 this.landCone(caster, effect, delivery, aim);
@@ -853,65 +841,6 @@ export class GameWorld {
         }
     }
 
-    private scheduleDelayedDelivery(
-        caster: Combatant,
-        effect: AbilityEffect,
-        delivery: DelayedCircleDelivery,
-        aim: AbilityTarget,
-    ): void {
-        if (this.pendingDelayedDeliveries.length >= GameWorld.MAX_DELAYED_DELIVERIES) {
-            return;
-        }
-        const point = abilityTargetPoint(aim);
-        this.pendingDelayedDeliveries.push({
-            x: point.x,
-            y: point.y,
-            level: caster.level,
-            caster,
-            effect: { ...effect, delivery },
-            startSeconds: this.timeSeconds,
-            strikeAtSeconds: this.timeSeconds + delivery.telegraphSeconds,
-        });
-    }
-
-    private resolveDelayedDeliveries(): void {
-        const ready = this.pendingDelayedDeliveries.filter(
-            (pending) => this.timeSeconds >= pending.strikeAtSeconds,
-        );
-        if (ready.length === 0) {
-            return;
-        }
-        this.pendingDelayedDeliveries = this.pendingDelayedDeliveries.filter(
-            (pending) => this.timeSeconds < pending.strikeAtSeconds,
-        );
-        const combatants = this.combatants();
-        for (const pending of ready) {
-            const { caster, effect } = pending;
-            const radius = effect.delivery.radiusTiles * TILE_SIZE;
-            const hits = combatantsInCircle(pending, radius, combatants).filter((combatant) =>
-                matchesAffects(caster, effect.affects, combatant),
-            );
-            for (const hit of hits) {
-                applyPayloads(hit, effect.payloads, this.timeSeconds, this.random, this.events);
-            }
-            if (effect.hitEffect) {
-                this.spawnVisualEffect(effect.hitEffect, {
-                    kind: "POINT",
-                    x: pending.x,
-                    y: pending.y,
-                    level: pending.level,
-                });
-            }
-            this.events.push({
-                kind: CombatEventKind.GROUND_STRIKE_LANDED,
-                x: pending.x,
-                y: pending.y,
-                level: pending.level,
-                radius,
-            });
-        }
-    }
-
     // A free-flight spec fans count shots across the spread around the aim direction, each flying
     // to max range along its own line; any other landing rule is a single shot that tracks the
     // aimed combatant (or flies to the bare aimed point, to expire harmlessly, when there is none)
@@ -972,6 +901,14 @@ export class GameWorld {
             spec.landing.kind === "TRACKED_COMBATANT" && aim.kind === AbilityTargetKind.COMBATANT
                 ? { kind: "COMBATANT", combatant: aim.combatant }
                 : { kind: "POINT", x: aimPoint.x, y: aimPoint.y };
+        if (spec.landing.kind === "FIXED_POINT" && spec.landing.telegraph) {
+            const distance = Math.hypot(aimPoint.x - start.x, aimPoint.y - start.y);
+            this.spawnVisualEffect(
+                spec.landing.telegraph,
+                { kind: "POINT", x: aimPoint.x, y: aimPoint.y, level: caster.level },
+                travelSeconds(spec.travelTime, distance),
+            );
+        }
         this.projectiles.push(new Projectile(spec, impact, start, target));
     }
 

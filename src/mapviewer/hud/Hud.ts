@@ -1,4 +1,4 @@
-import { worldRadiusToScreenPx, worldToScreen } from "../webgl/groundPoint";
+import { worldToScreen } from "../webgl/groundPoint";
 import { HudFrame, PickupFlashEvent, SplatEvent, SplatKind } from "./HudFrame";
 import {
     computeHudLayout,
@@ -7,9 +7,7 @@ import {
     drawBottomPanel,
     drawDamageSplat,
     drawGodModeLabel,
-    drawGroundImpactFlash,
     drawGroundItemLabel,
-    drawGroundShadow,
     drawHealSplat,
     drawHealthGlobe,
     drawManaGlobe,
@@ -22,17 +20,7 @@ import {
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
-const GROUND_IMPACT_LIFETIME_SECONDS = 0.25;
 const PICKUP_FLASH_LIFETIME_SECONDS = 2;
-
-function splatLifetimeSeconds(kind: SplatKind): number {
-    switch (kind) {
-        case SplatKind.GROUND_IMPACT:
-            return GROUND_IMPACT_LIFETIME_SECONDS;
-        default:
-            return SPLAT_LIFETIME_SECONDS;
-    }
-}
 
 type LiveSplat = SplatEvent & { ageSeconds: number };
 type LivePickupFlash = PickupFlashEvent & { ageSeconds: number };
@@ -53,7 +41,6 @@ export class Hud {
         const { width, height } = frame.screenSize;
         ctx.clearRect(0, 0, width, height);
 
-        this.drawGroundShadows(frame);
         this.drawGroundItemLabels(frame);
 
         const layout = computeHudLayout(
@@ -102,7 +89,7 @@ export class Hud {
     private tickSplats(deltaSeconds: number): void {
         this.splats = this.splats
             .map((splat) => ({ ...splat, ageSeconds: splat.ageSeconds + deltaSeconds }))
-            .filter((splat) => splat.ageSeconds < splatLifetimeSeconds(splat.kind));
+            .filter((splat) => splat.ageSeconds < SPLAT_LIFETIME_SECONDS);
     }
 
     private spawnPickupFlashes(events: PickupFlashEvent[]): void {
@@ -128,17 +115,6 @@ export class Hud {
         }
     }
 
-    private drawGroundShadows(frame: HudFrame): void {
-        for (const shadow of frame.groundShadows) {
-            drawGroundShadow(
-                this.ctx,
-                { x: shadow.screenX, y: shadow.screenY },
-                shadow.radiusPx,
-                shadow.progress,
-            );
-        }
-    }
-
     private drawGroundItemLabels(frame: HudFrame): void {
         for (const item of frame.groundItems) {
             drawGroundItemLabel(this.ctx, { x: item.screenX, y: item.screenY }, item);
@@ -159,7 +135,7 @@ export class Hud {
             if (!screen) {
                 continue;
             }
-            const progress = splat.ageSeconds / splatLifetimeSeconds(splat.kind);
+            const progress = splat.ageSeconds / SPLAT_LIFETIME_SECONDS;
             switch (splat.kind) {
                 case SplatKind.HEAL:
                     drawHealSplat(this.ctx, screen, splat.amount, progress);
@@ -167,21 +143,6 @@ export class Hud {
                 case SplatKind.DAMAGE:
                     drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
                     break;
-                case SplatKind.GROUND_IMPACT: {
-                    const radiusPx = worldRadiusToScreenPx(
-                        frame.viewProjMatrix,
-                        splat.worldX,
-                        splat.worldY,
-                        splat.groundHeight,
-                        splat.radius,
-                        width,
-                        height,
-                    );
-                    if (radiusPx !== undefined) {
-                        drawGroundImpactFlash(this.ctx, screen, radiusPx, progress);
-                    }
-                    break;
-                }
             }
         }
     }

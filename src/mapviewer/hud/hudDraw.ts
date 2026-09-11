@@ -791,65 +791,6 @@ export function drawUpgradeOverlay(
     }
 }
 
-const GROUND_SHADOW_MIN_SCALE = 0.45;
-const GROUND_SHADOW_VERTICAL_SQUASH = 0.55;
-const GROUND_SHADOW_ALPHA = 0.6;
-const GROUND_SHADOW_RIM_COLOR = "225, 215, 190";
-const GROUND_SHADOW_RIM_ALPHA = 0.45;
-const GROUND_IMPACT_CORE_COLOR = "255, 232, 196";
-const GROUND_IMPACT_MID_COLOR = "255, 178, 96";
-const GROUND_IMPACT_EDGE_COLOR = "255, 140, 60";
-
-function drawGroundDisc(
-    ctx: CanvasRenderingContext2D,
-    screen: { x: number; y: number },
-    radiusPx: number,
-    addStops: (gradient: CanvasGradient) => void,
-): void {
-    if (radiusPx <= 0) {
-        return;
-    }
-    ctx.save();
-    ctx.translate(screen.x, screen.y);
-    ctx.scale(1, GROUND_SHADOW_VERTICAL_SQUASH);
-    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radiusPx);
-    addStops(gradient);
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(0, 0, radiusPx, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-}
-
-export function drawGroundShadow(
-    ctx: CanvasRenderingContext2D,
-    screen: { x: number; y: number },
-    finalRadiusPx: number,
-    progress: number,
-): void {
-    const scale = GROUND_SHADOW_MIN_SCALE + (1 - GROUND_SHADOW_MIN_SCALE) * clamp(progress, 0, 1);
-    drawGroundDisc(ctx, screen, finalRadiusPx * scale, (gradient) => {
-        gradient.addColorStop(0, `rgba(0, 0, 0, ${GROUND_SHADOW_ALPHA})`);
-        gradient.addColorStop(0.6, `rgba(0, 0, 0, ${GROUND_SHADOW_ALPHA * 0.7})`);
-        gradient.addColorStop(0.78, `rgba(${GROUND_SHADOW_RIM_COLOR}, ${GROUND_SHADOW_RIM_ALPHA})`);
-        gradient.addColorStop(1, `rgba(${GROUND_SHADOW_RIM_COLOR}, 0)`);
-    });
-}
-
-export function drawGroundImpactFlash(
-    ctx: CanvasRenderingContext2D,
-    screen: { x: number; y: number },
-    radiusPx: number,
-    progress: number,
-): void {
-    const alpha = 1 - clamp(progress, 0, 1);
-    drawGroundDisc(ctx, screen, radiusPx, (gradient) => {
-        gradient.addColorStop(0, `rgba(${GROUND_IMPACT_CORE_COLOR}, ${0.9 * alpha})`);
-        gradient.addColorStop(0.5, `rgba(${GROUND_IMPACT_MID_COLOR}, ${0.6 * alpha})`);
-        gradient.addColorStop(1, `rgba(${GROUND_IMPACT_EDGE_COLOR}, 0)`);
-    });
-}
-
 const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
 const GROUND_ITEM_LABEL_TAG_COLOR = "#8fe88f";
 const GROUND_ITEM_LABEL_BG_COLOR = "rgba(6, 6, 10, 0.78)";

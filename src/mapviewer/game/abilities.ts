@@ -25,8 +25,8 @@ import {
     VOLLEY_ARROW_SPEC,
 } from "./Projectile";
 import {
-    DUST_WAVE_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
+    MAUL_IMPACT_SPARK_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
 } from "./VisualEffect";
@@ -408,9 +408,14 @@ export const MAUL_SMASH: AbilityDefinition = {
         delivery: { kind: DeliveryKind.CONE, angleRadians: (2 * Math.PI) / 3, reach: 3 * 128 },
         affects: Affects.HOSTILE,
         payloads: [MELEE_SPECIAL_DAMAGE],
-        // Swap to MAUL_IMPACT_SPARK / MAUL_IMPACT_SPARK_SEQ_ID to compare the spark impact in the
-        // same per-tile placement.
-        hitEffect: { kind: VisualEffectKind.DUST_WAVE, seqId: DUST_WAVE_SEQ_ID, height: 0 },
+        // Two impact graphics both read well in the per-tile placement and the owner has not
+        // picked one yet: MAUL_IMPACT_SPARK (2805, the elder maul special's own ground sparks)
+        // and DUST_WAVE (2184, Zebak's roar dust, swap in with DUST_WAVE_SEQ_ID). Both stay baked.
+        hitEffect: {
+            kind: VisualEffectKind.MAUL_IMPACT_SPARK,
+            seqId: MAUL_IMPACT_SPARK_SEQ_ID,
+            height: 0,
+        },
     },
 };
 

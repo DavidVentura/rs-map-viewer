@@ -12,6 +12,7 @@ import {
     matchesAffects,
 } from "./Effect";
 import { TILE_SIZE, Terrain } from "./Terrain";
+import { FALLING_SHADOW_SEQ_ID, VisualEffectKind } from "./VisualEffect";
 import { RandomSource } from "./abilityRules";
 import {
     FlightOrigin,
@@ -63,6 +64,9 @@ export type ProjectileLanding =
           readonly endHeight: number;
           readonly hitRadius: number;
           readonly origin: ProjectileOrigin;
+          // A ground-anchored visual effect held under the flight path from launch to arrival, so
+          // a slow fixed-point projectile (e.g. a dropped rock) telegraphs where it will land.
+          readonly telegraph?: HitEffect;
       }
     | { readonly kind: "FREE_FLIGHT"; readonly hitRadius: number; readonly piercing: boolean };
 
@@ -145,6 +149,9 @@ const JAD_RANGED_ROCK_FALL_HEIGHT = 3000;
 const JAD_RANGED_ROCK_FALL_SECONDS = 1.6;
 export const JAD_RANGED_ROCK_SEQ_ID = 2660;
 
+// Grotesque Guardians' falling debris shadow (SpotAnimType id 1446, FALLING_SHADOW_SEQ_ID): the
+// closest-duration match (1.8s) to the rock's 1.6s fall among the 1446/1447/2776 candidates,
+// telegraphing where it's about to land.
 export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
     kind: ProjectileKind.JAD_RANGED_ROCK,
     launchAngleRadians: 0,
@@ -155,6 +162,11 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
         endHeight: 0,
         hitRadius: 1.5 * TILE_SIZE,
         origin: { kind: "ABOVE_TARGET", height: JAD_RANGED_ROCK_FALL_HEIGHT },
+        telegraph: {
+            kind: VisualEffectKind.FALLING_SHADOW,
+            seqId: FALLING_SHADOW_SEQ_ID,
+            height: 0,
+        },
     },
     travelSeqId: JAD_RANGED_ROCK_SEQ_ID,
 };

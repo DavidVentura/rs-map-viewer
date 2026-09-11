@@ -11,10 +11,8 @@ import {
     CONE_TILE_MAX_JITTER,
     CONE_TILE_STAGGER_SECONDS,
     DirectDelivery,
-    PendingDelayedDelivery,
     affectedCombatants,
     coneTileSpawns,
-    delayedDeliveryProgress,
 } from "./EffectResolution";
 import { TILE_SIZE } from "./Terrain";
 import { directionToRotation } from "./projectileMath";
@@ -190,24 +188,6 @@ describe("affectedCombatants: CIRCLE", () => {
         expect(
             affectedCombatants(enemy, CIRCLE_AT_CASTER, Affects.HOSTILE, point(0, 0), combatants),
         ).toEqual([player]);
-    });
-});
-
-describe("delayedDeliveryProgress", () => {
-    const pending: Pick<PendingDelayedDelivery, "startSeconds" | "strikeAtSeconds"> = {
-        startSeconds: 10,
-        strikeAtSeconds: 11,
-    };
-
-    it("runs from 0 at the telegraph's start to 1 at the strike time, clamped past it", () => {
-        expect(delayedDeliveryProgress(pending, 10)).toBe(0);
-        expect(delayedDeliveryProgress(pending, 10.5)).toBeCloseTo(0.5);
-        expect(delayedDeliveryProgress(pending, 11)).toBe(1);
-        expect(delayedDeliveryProgress(pending, 20)).toBe(1);
-    });
-
-    it("is complete immediately for a zero-length telegraph", () => {
-        expect(delayedDeliveryProgress({ startSeconds: 5, strikeAtSeconds: 5 }, 5)).toBe(1);
     });
 });
 

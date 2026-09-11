@@ -15,6 +15,7 @@ import {
     VOLLEY_ARROW_SPEC,
     travelSeconds,
 } from "./Projectile";
+import { VisualEffectKind } from "./VisualEffect";
 
 class FakeCombatant implements Combatant {
     readonly hitRadius = 32;
@@ -113,6 +114,7 @@ describe("Projectile specs", () => {
         }
         expect(JAD_RANGED_ROCK_SPEC.landing.origin).toEqual({ kind: "ABOVE_TARGET", height: 3000 });
         expect(JAD_RANGED_ROCK_SPEC.travelTime.secondsPerTile).toBe(0);
+        expect(JAD_RANGED_ROCK_SPEC.landing.telegraph?.kind).toBe(VisualEffectKind.FALLING_SHADOW);
     });
 
     it("gives the arrow no real travel sequence and magic a real one", () => {

@@ -105,14 +105,6 @@ describe("aimModeFor", () => {
         expect(aimModeFor(SCIMITAR_SLASH.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
         expect(aimModeFor(ICE_BARRAGE.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
         expect(aimModeFor(HEALING_POTION.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
-        expect(
-            aimModeFor({
-                kind: DeliveryKind.DELAYED_CIRCLE,
-                radiusTiles: 1,
-                telegraphSeconds: 1,
-                range: 1,
-            }),
-        ).toBe(AimMode.COMBATANT_OR_POINT);
         for (const spec of [ARROW_SPEC, JAD_RANGED_ROCK_SPEC]) {
             expect(
                 aimModeFor({

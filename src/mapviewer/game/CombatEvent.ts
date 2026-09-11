@@ -9,7 +9,6 @@ export enum CombatEventKind {
     ENEMY_DIED = 4,
     ENEMY_RESPAWNED = 5,
     ENCOUNTER_CLEARED = 6,
-    GROUND_STRIKE_LANDED = 7,
     ITEM_DROPPED = 8,
     ITEM_PICKED_UP = 9,
     BOSS_PHASE = 10,
@@ -52,14 +51,6 @@ export type EncounterClearedEvent = {
     kind: CombatEventKind.ENCOUNTER_CLEARED;
 };
 
-export type GroundStrikeLandedEvent = {
-    kind: CombatEventKind.GROUND_STRIKE_LANDED;
-    x: number;
-    y: number;
-    level: number;
-    radius: number;
-};
-
 export type ItemDroppedEvent = {
     kind: CombatEventKind.ITEM_DROPPED;
     path: EquipmentPath;
@@ -89,7 +80,6 @@ export type CombatEvent =
     | EnemyDiedEvent
     | EnemyRespawnedEvent
     | EncounterClearedEvent
-    | GroundStrikeLandedEvent
     | ItemDroppedEvent
     | ItemPickedUpEvent
     | BossPhaseEvent;

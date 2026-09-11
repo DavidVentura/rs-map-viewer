@@ -25,6 +25,7 @@ import {
 } from "../../game/Projectile";
 import {
     DUST_WAVE_SEQ_ID,
+    FALLING_SHADOW_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
     MAUL_IMPACT_SPARK_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
@@ -440,6 +441,10 @@ const DUST_WAVE_SPOTANIM_ID = 2184;
 // Elder maul special impact (SpotAnimType id): 2805, driven by seq 11126.
 const MAUL_IMPACT_SPARK_SPOTANIM_ID = 2805;
 
+// Grotesque Guardians' falling debris shadow (SpotAnimType id): 1446, driven by seq 7816
+// (FALLING_SHADOW_SEQ_ID).
+const FALLING_SHADOW_SPOTANIM_ID = 1446;
+
 // Tok-Xil's ranged shot (SpotAnimType id): 443, a static spike model without a sequence.
 const TOK_XIL_SHOT_SPOTANIM_ID = 443;
 
@@ -617,6 +622,23 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         MAUL_IMPACT_SPARK_SEQ_ID,
     );
 
+    const fallingShadowSpotAnim = spotAnimTypeLoader.load(FALLING_SHADOW_SPOTANIM_ID);
+    const fallingShadowModel = buildSpotAnimModel(
+        modelLoader,
+        textureLoader,
+        fallingShadowSpotAnim,
+    );
+    if (!fallingShadowModel || fallingShadowSpotAnim.sequenceId !== FALLING_SHADOW_SEQ_ID) {
+        throw new Error("Falling shadow spot animation does not match the expected sequence");
+    }
+    const fallingShadowAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        fallingShadowModel,
+        FALLING_SHADOW_SEQ_ID,
+    );
+
     const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_SPOTANIM_ID);
     const tokXilShotModel = buildSpotAnimModel(modelLoader, textureLoader, tokXilShotSpotAnim);
     if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== -1) {
@@ -654,6 +676,7 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
             [VisualEffectKind.DUST_WAVE]: dustWaveAnim,
             [VisualEffectKind.MAUL_IMPACT_SPARK]: maulSparkAnim,
+            [VisualEffectKind.FALLING_SHADOW]: fallingShadowAnim,
         },
     };
 }

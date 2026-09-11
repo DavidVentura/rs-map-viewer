@@ -30,7 +30,6 @@ import { AbilityTargetKind, AimMode, Delivery, WeaponStyle, aimModeFor } from ".
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
 import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
-import { delayedDeliveryProgress } from "../game/EffectResolution";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour } from "../game/EnemyType";
@@ -39,7 +38,7 @@ import { AbilityInput, AbilitySlotInput, GameWorld, PickupTarget } from "../game
 import { GroundItem } from "../game/GroundItem";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
-import { TILE_SIZE, Terrain } from "../game/Terrain";
+import { Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
 import { EnemyScreenCandidate, ScreenPoint, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
 import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
@@ -49,7 +48,6 @@ import {
     AbilitySlotHudInfo,
     BossHudInfo,
     GroundItemHudInfo,
-    GroundShadowHudInfo,
     HudFrame,
     PickupFlashEvent,
     SplatEvent,
@@ -79,7 +77,7 @@ import {
     getStanceSeqIds,
 } from "./actor/ActorRenderData";
 import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
-import { screenToGroundPoint, worldRadiusToScreenPx, worldToScreen } from "./groundPoint";
+import { screenToGroundPoint, worldToScreen } from "./groundPoint";
 import { ActorBufferData } from "./loader/ActorBufferData";
 import { ActorLoaderInput } from "./loader/ActorLoaderInput";
 import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
@@ -1935,16 +1933,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.encounterCleared = true;
                 continue;
             }
-            if (event.kind === CombatEventKind.GROUND_STRIKE_LANDED) {
-                splatEvents.push({
-                    kind: SplatKind.GROUND_IMPACT,
-                    radius: event.radius,
-                    worldX: event.x,
-                    worldY: event.y,
-                    groundHeight: this.terrain.getHeight(event.level, event.x, event.y),
-                });
-                continue;
-            }
             if (event.kind === CombatEventKind.BOSS_PHASE) {
                 this.bossPhaseLabel = event.phaseLabel;
                 continue;
@@ -1986,37 +1974,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     });
                     break;
             }
-        }
-
-        const groundShadows: GroundShadowHudInfo[] = [];
-        for (const pending of world.pendingDelayedDeliveries) {
-            const groundHeight = this.terrain.getHeight(pending.level, pending.x, pending.y);
-            const screen = worldToScreen(
-                camera.viewProjMatrix,
-                pending.x,
-                pending.y,
-                groundHeight,
-                this.canvas.clientWidth,
-                this.canvas.clientHeight,
-            );
-            const radiusPx = worldRadiusToScreenPx(
-                camera.viewProjMatrix,
-                pending.x,
-                pending.y,
-                groundHeight,
-                pending.effect.delivery.radiusTiles * TILE_SIZE,
-                this.canvas.clientWidth,
-                this.canvas.clientHeight,
-            );
-            if (!screen || radiusPx === undefined) {
-                continue;
-            }
-            groundShadows.push({
-                screenX: screen.x,
-                screenY: screen.y,
-                radiusPx,
-                progress: delayedDeliveryProgress(pending, world.timeSeconds),
-            });
         }
 
         const groundItems: GroundItemHudInfo[] = [];
@@ -2081,7 +2038,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             activeStyle: player?.style,
             godMode: world.godMode,
             splatEvents,
-            groundShadows,
             groundItems,
             pickupFlashEvents,
             wave: waveProgress && {

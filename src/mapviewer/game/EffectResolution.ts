@@ -1,12 +1,9 @@
-import { clamp } from "../../util/MathUtil";
 import {
-    AbilityEffect,
     AbilityTarget,
     AbilityTargetKind,
     CircleCenter,
     CircleDelivery,
     ConeDelivery,
-    DelayedCircleDelivery,
     DeliveryKind,
     TargetDelivery,
     abilityTargetPoint,
@@ -17,8 +14,8 @@ import { TILE_SIZE } from "./Terrain";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import { isPointInCone } from "./projectileMath";
 
-// The deliveries that pick their affected set at cast impact, as opposed to PROJECTILE (picked on
-// arrival) and DELAYED_CIRCLE (picked once the telegraph elapses).
+// The deliveries that pick their affected set at cast impact, as opposed to PROJECTILE, which
+// picks its set on arrival.
 export type DirectDelivery = TargetDelivery | ConeDelivery | CircleDelivery;
 
 export function affectedCombatants<T extends Combatant>(
@@ -128,25 +125,4 @@ export function coneTileSpawns(
             delaySeconds: tile.distanceTiles * CONE_TILE_STAGGER_SECONDS,
         };
     });
-}
-
-export type PendingDelayedDelivery = {
-    readonly x: number;
-    readonly y: number;
-    readonly level: number;
-    readonly caster: Combatant;
-    readonly effect: AbilityEffect<DelayedCircleDelivery>;
-    readonly startSeconds: number;
-    readonly strikeAtSeconds: number;
-};
-
-export function delayedDeliveryProgress(
-    pending: Pick<PendingDelayedDelivery, "startSeconds" | "strikeAtSeconds">,
-    timeSeconds: number,
-): number {
-    const totalSeconds = pending.strikeAtSeconds - pending.startSeconds;
-    if (totalSeconds <= 0) {
-        return 1;
-    }
-    return clamp((timeSeconds - pending.startSeconds) / totalSeconds, 0, 1);
 }

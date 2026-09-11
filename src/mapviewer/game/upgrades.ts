@@ -108,7 +108,6 @@ function applyDeliveryModifiers(delivery: Delivery, modifiers: AbilityModifiers)
                 : delivery;
         case DeliveryKind.TARGET:
         case DeliveryKind.CIRCLE:
-        case DeliveryKind.DELAYED_CIRCLE:
             return delivery;
     }
 }

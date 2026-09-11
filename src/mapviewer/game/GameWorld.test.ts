@@ -20,7 +20,7 @@ import { EnemyState } from "./Enemy";
 import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
 import { AbilitySlotInput, GameWorld, ScheduledVisualEffect, SimInput } from "./GameWorld";
 import { Player, StanceSeqIdsByStance } from "./Player";
-import { ARROW_SPEC } from "./Projectile";
+import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 import {
@@ -29,10 +29,12 @@ import {
     GOBLIN_MELEE,
     HEALING_POTION,
     ICE_BARRAGE,
+    JAD_RANGED_STOMP,
     MAGIC_BOLT,
     MAUL_SMASH,
     POWER_SHOT,
     SCIMITAR_SLASH,
+    TOK_XIL_RANGED_SHOT,
     VOLLEY,
     YT_MEJKOT_HEAL_PULSE,
 } from "./abilities";
@@ -379,7 +381,7 @@ describe("Maul Smash ground dust", () => {
         expect(expectedTiles.length).toBeGreaterThan(1);
         expect(scheduled.length + world.visualEffects.length).toBe(expectedTiles.length);
         for (const pending of scheduled) {
-            expect(pending.hitEffect.kind).toBe(VisualEffectKind.DUST_WAVE);
+            expect(pending.hitEffect.kind).toBe(MAUL_SMASH.effect.hitEffect!.kind);
             expect(pending.hitEffect.height).toBe(0);
             expect(pending.anchor.kind).toBe("POINT");
         }
@@ -660,9 +662,44 @@ describe("Player death and respawn", () => {
     });
 });
 
-const GROUND_STRIKE_TEST: AbilityDefinition = {
-    id: "test_ground_strike",
-    name: "Test Ground Strike",
+describe("Projectile telegraph", () => {
+    it("spawns a falling shadow at the rock's landing point that disappears once it lands", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [JAD_RANGED_STOMP]));
+        const player = world.player!;
+
+        advanceSeconds(world, idleInput(), impactOf(JAD_RANGED_STOMP) + 0.05);
+
+        expect(world.projectiles.length).toBe(1);
+        expect(world.visualEffects.length).toBe(1);
+        expect(world.visualEffects[0].kind).toBe(VisualEffectKind.FALLING_SHADOW);
+        expect(world.visualEffects[0].x).toBe(player.x);
+        expect(world.visualEffects[0].y).toBe(player.y);
+
+        advanceSeconds(world, idleInput(), JAD_RANGED_ROCK_SPEC.travelTime.baseSeconds - 0.1);
+        expect(world.visualEffects.length).toBe(1);
+
+        advanceSeconds(world, idleInput(), 0.2);
+        expect(world.visualEffects.length).toBe(0);
+    });
+
+    it("spawns no telegraph for a fixed-point spec without one", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [TOK_XIL_RANGED_SHOT]));
+
+        advanceSeconds(world, idleInput(), impactOf(TOK_XIL_RANGED_SHOT) + 0.05);
+
+        expect(world.projectiles.length).toBe(1);
+        expect(world.visualEffects.length).toBe(0);
+    });
+});
+
+// A hostile circle around the caster, the same definition cast by either side below.
+const NOVA_TEST: AbilityDefinition = {
+    id: "test_nova",
+    name: "Test Nova",
     castSeqId: 5,
     contactFrame: 2,
     castSpeed: 1,
@@ -672,105 +709,6 @@ const GROUND_STRIKE_TEST: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [],
     locks: [],
-    effect: {
-        delivery: {
-            kind: DeliveryKind.DELAYED_CIRCLE,
-            radiusTiles: 1,
-            telegraphSeconds: 0.5,
-            range: 1000,
-        },
-        affects: Affects.HOSTILE,
-        payloads: [damagePayload(10)],
-    },
-};
-
-const GROUND_STRIKE_TELEGRAPH_SECONDS = 0.5;
-
-describe("Ground strike", () => {
-    it("does not damage on cast, only after the telegraph elapses", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(50, 0, 0, makeEnemyType(1, 2, 3));
-        const player = world.player!;
-        const enemy = world.enemies[0];
-
-        player.beginCast(resolve(GROUND_STRIKE_TEST), at(enemy), world.timeSeconds);
-        advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
-
-        expect(enemy.health).toBe(enemy.maxHealth);
-        expect(world.pendingDelayedDeliveries.length).toBe(1);
-        expect(world.pendingDelayedDeliveries[0].x).toBe(enemy.x);
-        expect(world.pendingDelayedDeliveries[0].y).toBe(enemy.y);
-
-        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
-
-        expect(enemy.health).toBe(enemy.maxHealth - 10);
-        expect(world.pendingDelayedDeliveries.length).toBe(0);
-    });
-
-    it("emits GROUND_STRIKE_LANDED with position and radius when a strike lands", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        const player = world.player!;
-
-        player.beginCast(resolve(GROUND_STRIKE_TEST), point(200, 300), world.timeSeconds);
-        advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
-        world.drainEvents();
-
-        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
-        const events = world.drainEvents();
-
-        const landed = events.find((event) => event.kind === CombatEventKind.GROUND_STRIKE_LANDED);
-        expect(landed).toBeDefined();
-        if (landed && landed.kind === CombatEventKind.GROUND_STRIKE_LANDED) {
-            expect(landed.x).toBe(200);
-            expect(landed.y).toBe(300);
-            expect(landed.radius).toBe(128);
-        }
-    });
-
-    it("does not hit combatants outside the strike radius", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(1000, 0, 0, makeEnemyType(1, 2, 3));
-        const player = world.player!;
-        const enemy = world.enemies[0];
-
-        player.beginCast(resolve(GROUND_STRIKE_TEST), point(0, 0), world.timeSeconds);
-        advanceSeconds(
-            world,
-            idleInput(),
-            impactOf(GROUND_STRIKE_TEST) + GROUND_STRIKE_TELEGRAPH_SECONDS + 0.1,
-        );
-
-        expect(enemy.health).toBe(enemy.maxHealth);
-    });
-
-    it("lets an enemy ground-strike the player", () => {
-        const enemyGroundStrike: AbilityDefinition = {
-            ...GROUND_STRIKE_TEST,
-            id: "test_enemy_ground_strike",
-        };
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [enemyGroundStrike]));
-        const player = world.player!;
-
-        // +0.05 (not +0.01, as other enemy-cast tests in this file use) to cover the tick the
-        // enemy spends going IDLE -> CHASE before it can even start winding up.
-        advanceSeconds(world, idleInput(), impactOf(enemyGroundStrike) + 0.05);
-        expect(world.pendingDelayedDeliveries.length).toBe(1);
-
-        advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
-
-        expect(player.health).toBe(player.maxHealth - 10);
-    });
-});
-
-// A hostile circle around the caster, the same definition cast by either side below.
-const NOVA_TEST: AbilityDefinition = {
-    ...GROUND_STRIKE_TEST,
-    id: "test_nova",
     effect: {
         delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 2, center: CircleCenter.CASTER },
         affects: Affects.HOSTILE,

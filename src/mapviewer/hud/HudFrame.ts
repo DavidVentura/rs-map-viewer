@@ -25,7 +25,6 @@ export type TargetHudInfo = {
 export enum SplatKind {
     DAMAGE = 0,
     HEAL = 1,
-    GROUND_IMPACT = 3,
 }
 
 export type SplatPosition = {
@@ -45,19 +44,7 @@ export type HealSplatEvent = SplatPosition & {
     amount: number;
 };
 
-export type GroundImpactSplatEvent = SplatPosition & {
-    kind: SplatKind.GROUND_IMPACT;
-    radius: number;
-};
-
-export type SplatEvent = DamageSplatEvent | HealSplatEvent | GroundImpactSplatEvent;
-
-export type GroundShadowHudInfo = {
-    readonly screenX: number;
-    readonly screenY: number;
-    readonly radiusPx: number;
-    readonly progress: number;
-};
+export type SplatEvent = DamageSplatEvent | HealSplatEvent;
 
 export enum AbilitySlotBlockReason {
     NONE = 0,
@@ -134,7 +121,6 @@ export type HudFrame = {
     activeStyle?: WeaponStyle;
     godMode: boolean;
     splatEvents: SplatEvent[];
-    groundShadows: GroundShadowHudInfo[];
     wave?: WaveHudInfo;
     upgradeOffer?: UpgradeOfferHudInfo;
     previewSeqId?: number;

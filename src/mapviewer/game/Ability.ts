@@ -25,7 +25,6 @@ export enum DeliveryKind {
     TARGET = 0,
     CONE = 1,
     CIRCLE = 2,
-    DELAYED_CIRCLE = 3,
     PROJECTILE = 4,
 }
 
@@ -54,16 +53,6 @@ export type CircleDelivery = {
     readonly center: CircleCenter;
 };
 
-// A CIRCLE at the aimed point that lands only once the telegraph has elapsed, so moving off the
-// point dodges it. range is the casting range, i.e. how far from the target the caster may be to
-// start this attack: not used by the landing itself, only by enemyAttackRange's engage check.
-export type DelayedCircleDelivery = {
-    readonly kind: DeliveryKind.DELAYED_CIRCLE;
-    readonly radiusTiles: number;
-    readonly telegraphSeconds: number;
-    readonly range: number;
-};
-
 // count projectiles fanned across spreadAngleRadians around the aim (a single aimed shot is count
 // 1); each carries the effect's payloads and lands them under the spec's landing rule.
 export type ProjectileDelivery = {
@@ -73,16 +62,10 @@ export type ProjectileDelivery = {
     readonly spreadAngleRadians: number;
 };
 
-export type Delivery =
-    | TargetDelivery
-    | ConeDelivery
-    | CircleDelivery
-    | DelayedCircleDelivery
-    | ProjectileDelivery;
+export type Delivery = TargetDelivery | ConeDelivery | CircleDelivery | ProjectileDelivery;
 
 // hitEffect is spawned on each affected combatant for TARGET/CIRCLE deliveries and tracked
-// projectiles, and once at the landing point for CONE/DELAYED_CIRCLE deliveries and fixed-point
-// projectiles.
+// projectiles, and once at the landing point for CONE deliveries and fixed-point projectiles.
 export type AbilityEffect<D extends Delivery = Delivery> = {
     readonly delivery: D;
     readonly affects: Affects;
@@ -208,7 +191,6 @@ export function aimModeFor(delivery: Delivery): AimMode {
                 : AimMode.COMBATANT_OR_POINT;
         case DeliveryKind.TARGET:
         case DeliveryKind.CIRCLE:
-        case DeliveryKind.DELAYED_CIRCLE:
             return AimMode.COMBATANT_OR_POINT;
     }
 }

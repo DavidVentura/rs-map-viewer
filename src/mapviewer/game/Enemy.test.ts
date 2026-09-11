@@ -185,24 +185,6 @@ describe("enemyAttackRange", () => {
         expect(enemyAttackRange(rangedDefinition, 64, 64)).toBe(ARROW_SPEC.range);
     });
 
-    it("uses a delayed circle's own cast range, ignoring hit radii", () => {
-        const groundStrikeDefinition: AbilityDefinition = {
-            ...GOBLIN_MELEE,
-            id: "enemy_ground_strike",
-            effect: {
-                delivery: {
-                    kind: DeliveryKind.DELAYED_CIRCLE,
-                    radiusTiles: 1,
-                    telegraphSeconds: 1,
-                    range: 10 * 128,
-                },
-                affects: Affects.HOSTILE,
-                payloads: [damagePayload(1)],
-            },
-        };
-        expect(enemyAttackRange(groundStrikeDefinition, 128, 64)).toBe(10 * 128);
-    });
-
     it("puts no range limit on a caster-centred circle such as the heal pulse", () => {
         expect(enemyAttackRange(YT_MEJKOT_HEAL_PULSE, 128, 64)).toBe(Infinity);
     });

@@ -10,6 +10,7 @@ export enum VisualEffectKind {
     TZHAAR_HEAL = 3,
     DUST_WAVE = 4,
     MAUL_IMPACT_SPARK = 5,
+    FALLING_SHADOW = 6,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
@@ -21,6 +22,10 @@ export const DUST_WAVE_SEQ_ID = 9647;
 // Elder maul special ground impact (SpotAnimType 2805): the spark alternative to the dust wave
 // for the smash's per-tile impact.
 export const MAUL_IMPACT_SPARK_SEQ_ID = 11126;
+// Grotesque Guardians' falling debris shadow (SpotAnimType id 1446): a growing ground disc that
+// telegraphs a delayed fall. Its own 1.8s duration is the closest of the 1446/1447/2776 candidates
+// to Jad's 1.6s rock fall (see JAD_RANGED_ROCK_SPEC's landing.telegraph).
+export const FALLING_SHADOW_SEQ_ID = 7816;
 
 // A COMBATANT anchor reads the combatant's current position whenever the effect is drawn, so an
 // impact or buff graphic stays on a moving body instead of freezing where it was spawned.

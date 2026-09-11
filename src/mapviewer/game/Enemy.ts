@@ -80,8 +80,6 @@ export function enemyAttackRange(
             return delivery.reach + casterHitRadius + targetHitRadius;
         case DeliveryKind.PROJECTILE:
             return delivery.spec.range;
-        case DeliveryKind.DELAYED_CIRCLE:
-            return delivery.range;
         case DeliveryKind.CIRCLE:
             return Infinity;
     }
