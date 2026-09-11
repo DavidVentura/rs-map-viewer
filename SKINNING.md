@@ -63,9 +63,11 @@ the fallback.
 - Per-face-label alpha. A chain of `clamp(a + d, 0, 255)` steps collapses into one
   `clamp(a + D, lo, hi)`, so each (frame, face label) is three numbers and exact.
 - Unit tests on synthetic frames: origin chains, rotate/scale about an origin, alpha folding.
-- `scripts/cache/verify-skinning.ts`: poses every seq the game ships (player body, each item on
-  the body's matrices, each enemy, each gfx) and compares against the CPU pose. Passes at <= 8
-  units of position error, with every face's visible/transparent state matching exactly.
+- Representative parity tests compare the palette against the CPU pose for the significant
+  operation and alpha combinations.
+- TODO: `scripts/cache/verify-skinning.ts` poses every seq the game ships (player body, each item
+  on the body's matrices, each enemy, each gfx) and compares against the CPU pose. It passes at
+  <= 8 units of position error, with every face's visible/transparent state matching exactly.
 
 ### Phase 1: actor mesh format and builder
 - Every vertex is posed as a weighted sum of matrices: `pos = sum_i(w_i / 255 * M[m_i]) * rest`.
