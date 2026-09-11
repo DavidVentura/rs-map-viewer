@@ -67,6 +67,7 @@ import {
     ActorInstance,
     writeActorInstance,
 } from "./actor/ActorInstanceData";
+import { ActorMesh } from "./actor/ActorMeshBuilder";
 import {
     ActorAnimation,
     EnemyTypeAnimationSet,
@@ -294,7 +295,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     actorInstanceCount: number = 0;
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
     actorDataTextures?: DataTextureRing;
-    activeActors: ActiveActor[] = [];
+    activeActorMeshes: ActorMesh[] = [];
 
     // The gfx preview's currently shown spot anim id and playback mode (see AnimPreview.ts's
     // SPOT_ANIMS mode): unlike the npc seq preview, there's no Enemy to own this state on, since a
@@ -2285,7 +2286,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     buildActorInstanceData(): void {
-        this.activeActors.length = 0;
+        this.activeActorMeshes.length = 0;
         this.actorInstanceCount = 0;
 
         const actorBuffer = this.actorBuffer;
@@ -2339,7 +2340,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 alphaOffset: frame.alphaOffset,
             });
             this.actorInstanceCount++;
-            this.activeActors.push(actor);
+            this.activeActorMeshes.push(pose.animation.mesh);
         };
 
         const player = world.player;
@@ -2596,11 +2597,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             case "playerBody": {
                 const { player } = actor;
                 return {
-                    animation: getPlayerBodyAnimation(
-                        actorData.player,
-                        player.style,
-                        player.animation.seqId,
-                    ),
+                    animation: getPlayerBodyAnimation(actorData.player, player.animation.seqId),
                     frameIndex: player.animation.frame,
                 };
             }
@@ -2651,17 +2648,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    private getActorFrame(actor: ActiveActor, alpha: boolean): DrawRange {
-        const pose = this.getActorPose(actor);
-        if (!pose) {
-            return NULL_DRAW_RANGE;
-        }
-        return alpha ? pose.animation.mesh.transparent : pose.animation.mesh.opaque;
-    }
-
     private drawActorPass(actorDataTexture: Texture, alpha: boolean): void {
         const actorBuffer = this.actorBuffer;
-        if (!actorBuffer || this.activeActors.length === 0) {
+        if (!actorBuffer || this.activeActorMeshes.length === 0) {
             return;
         }
 
@@ -2670,13 +2659,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         drawCall.texture("u_actorDataTexture", actorDataTexture);
         drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
 
-        for (let i = 0; i < this.activeActors.length; i++) {
-            const frame = this.getActorFrame(this.activeActors[i], alpha);
+        for (let i = 0; i < this.activeActorMeshes.length; i++) {
+            const mesh = this.activeActorMeshes[i];
+            const frame = alpha ? mesh.transparent : mesh.opaque;
             (drawCall as any).offsets[i] = frame[0];
             (drawCall as any).numElements[i] = frame[1];
             drawRanges[i] = frame;
         }
-        for (let i = this.activeActors.length; i < drawRanges.length; i++) {
+        for (let i = this.activeActorMeshes.length; i < drawRanges.length; i++) {
             (drawCall as any).offsets[i] = NULL_DRAW_RANGE[0];
             (drawCall as any).numElements[i] = NULL_DRAW_RANGE[1];
             drawRanges[i] = NULL_DRAW_RANGE;

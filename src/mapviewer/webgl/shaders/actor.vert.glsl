@@ -100,22 +100,24 @@ ActorInfo decodeActorInfo(int index) {
     return info;
 }
 
-ivec2 getActorTableCoord(uint index) {
-    return ivec2(int(index % 4096u), int(index / 4096u));
+ivec2 getActorTableCoord(uint index, int width) {
+    return ivec2(int(index % uint(width)), int(index / uint(width)));
 }
 
 vec3 skinPosition(vec3 position, ActorInfo actorInfo) {
     uint influenceStart = a_skinning & 0xFFFFFu;
     uint influenceCount = ((a_skinning >> 20u) & 0xFu) + 1u;
+    int influenceWidth = textureSize(u_actorInfluences, 0).x;
+    int matrixWidth = textureSize(u_actorMatrices, 0).x;
     vec3 result = vec3(0.0);
     for (uint index = 0u; index < influenceCount; index++) {
-        uint influence = texelFetch(u_actorInfluences, getActorTableCoord(influenceStart + index), 0).r;
+        uint influence = texelFetch(u_actorInfluences, getActorTableCoord(influenceStart + index, influenceWidth), 0).r;
         uint matrixIndex = influence & 0xFFFFu;
         float weight = float((influence >> 16u) & 0xFFu) / 255.0;
         uint matrixOffset = actorInfo.matrixOffset + matrixIndex * 3u;
-        vec4 row0 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset), 0);
-        vec4 row1 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 1u), 0);
-        vec4 row2 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 2u), 0);
+        vec4 row0 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset, matrixWidth), 0);
+        vec4 row1 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 1u, matrixWidth), 0);
+        vec4 row2 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 2u, matrixWidth), 0);
         vec4 point = vec4(position, 1.0);
         result += vec3(dot(row0, point), dot(row1, point), dot(row2, point)) * weight;
     }
@@ -129,7 +131,10 @@ float animatedAlpha(float renderedAlpha, ActorInfo actorInfo) {
     }
     vec3 transform = texelFetch(
         u_actorMatrices,
-        getActorTableCoord(actorInfo.alphaOffset + alphaLabel - 1u),
+        getActorTableCoord(
+            actorInfo.alphaOffset + alphaLabel - 1u,
+            textureSize(u_actorMatrices, 0).x
+        ),
         0
     ).rgb;
     float sourceAlpha = 255.0 - renderedAlpha * 255.0;

@@ -1,4 +1,3 @@
-import { WeaponStyle } from "../../game/Ability";
 import { EnemyTypeId } from "../../game/EnemyType";
 import { StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
@@ -26,11 +25,7 @@ export interface PlayerActorData {
     readonly itemsByItemId: ReadonlyMap<number, ActorMesh>;
 }
 
-export function getPlayerBodyAnimation(
-    data: PlayerActorData,
-    _style: WeaponStyle,
-    seqId: number,
-): ActorAnimation {
+export function getPlayerBodyAnimation(data: PlayerActorData, seqId: number): ActorAnimation {
     return { mesh: data.body.mesh, frames: requiredFrames(data.body, seqId) };
 }
 

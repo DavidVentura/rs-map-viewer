@@ -174,7 +174,8 @@ export class WebGLActorBuffer {
     }
 }
 
-const ACTOR_TABLE_WIDTH = 4096;
+// WebGL2 only guarantees 2048-texel textures; the shader reads the width back with textureSize.
+const ACTOR_TABLE_WIDTH = 2048;
 
 function createUintTexture(app: PicoApp, source: Uint32Array): Texture {
     const height = Math.max(Math.ceil(source.length / ACTOR_TABLE_WIDTH), 1);
