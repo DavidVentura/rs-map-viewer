@@ -1,4 +1,11 @@
-import { AbilityDefinition, AbilityEffectKind, ResolvedAbility } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffect,
+    Delivery,
+    DeliveryKind,
+    ResolvedAbility,
+} from "./Ability";
+import { Payload, PayloadKind } from "./Effect";
 import { RandomSource } from "./abilityRules";
 
 export type AbilityModifiers = {
@@ -13,8 +20,8 @@ export type AbilityModifiers = {
     readonly maxHealthBonus: number;
     readonly maxManaBonus: number;
     readonly moveSpeedMultiplier: number;
-    // Flat damage added on top of damageMultiplier, e.g. equipped arrows. Applied to every effect
-    // kind that deals damage; callers gate it to 0 for styles/specs it shouldn't touch (see
+    // Flat damage added on top of damageMultiplier, e.g. equipped arrows. Applied to every DAMAGE
+    // payload; callers gate it to 0 for styles/specs it shouldn't touch (see
     // Equipment.equipmentAbilityModifiers) rather than this transform special-casing sources.
     readonly flatDamageBonus: number;
 };
@@ -63,69 +70,55 @@ function isIdentityModifiers(modifiers: AbilityModifiers): boolean {
 }
 
 function potionChargeBonus(definition: AbilityDefinition, modifiers: AbilityModifiers): number {
-    return definition.effect.kind === AbilityEffectKind.HEAL ? modifiers.potionMaxChargesBonus : 0;
+    const heals = definition.effect.payloads.some((payload) => payload.kind === PayloadKind.HEAL);
+    return heals ? modifiers.potionMaxChargesBonus : 0;
 }
 
-function applyEffectModifiers(
-    effect: AbilityDefinition["effect"],
-    modifiers: AbilityModifiers,
-): AbilityDefinition["effect"] {
-    switch (effect.kind) {
-        case AbilityEffectKind.PROJECTILE:
+function applyPayloadModifiers(payload: Payload, modifiers: AbilityModifiers): Payload {
+    switch (payload.kind) {
+        case PayloadKind.DAMAGE:
             return {
-                ...effect,
-                spec: {
-                    ...effect.spec,
-                    damage:
-                        effect.spec.damage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                kind: PayloadKind.DAMAGE,
+                roll: {
+                    min: payload.roll.min * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                    max: payload.roll.max * modifiers.damageMultiplier + modifiers.flatDamageBonus,
                 },
             };
-        case AbilityEffectKind.HEAL:
-            return effect;
-        case AbilityEffectKind.MELEE:
+        case PayloadKind.FREEZE:
             return {
-                ...effect,
-                minDamage:
-                    effect.minDamage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-                maxDamage:
-                    effect.maxDamage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
+                kind: PayloadKind.FREEZE,
+                seconds: payload.seconds + modifiers.freezeSecondsBonus,
             };
-        case AbilityEffectKind.CONE_MELEE:
-            return {
-                ...effect,
-                damageMultiplier: effect.damageMultiplier * modifiers.damageMultiplier,
-                angleRadians: effect.angleRadians + modifiers.coneAngleBonusRadians,
-            };
-        case AbilityEffectKind.AREA:
-            return {
-                ...effect,
-                damageMin:
-                    effect.damageMin * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-                damageMax:
-                    effect.damageMax * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-                freezeSeconds: effect.freezeSeconds + modifiers.freezeSecondsBonus,
-            };
-        case AbilityEffectKind.MULTI_PROJECTILE:
-            return {
-                ...effect,
-                spec: {
-                    ...effect.spec,
-                    damage:
-                        effect.spec.damage * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-                },
-                count: effect.count + modifiers.extraVolleyArrows,
-            };
-        case AbilityEffectKind.GROUND_STRIKE:
-            return {
-                ...effect,
-                damageMin:
-                    effect.damageMin * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-                damageMax:
-                    effect.damageMax * modifiers.damageMultiplier + modifiers.flatDamageBonus,
-            };
-        case AbilityEffectKind.HEAL_ALLIES:
-            return effect;
+        case PayloadKind.HEAL:
+            return payload;
     }
+}
+
+function applyDeliveryModifiers(delivery: Delivery, modifiers: AbilityModifiers): Delivery {
+    switch (delivery.kind) {
+        case DeliveryKind.CONE:
+            return {
+                ...delivery,
+                angleRadians: delivery.angleRadians + modifiers.coneAngleBonusRadians,
+            };
+        case DeliveryKind.PROJECTILE:
+            // Extra arrows widen an existing volley; a single aimed or piercing shot stays single.
+            return delivery.count > 1
+                ? { ...delivery, count: delivery.count + modifiers.extraVolleyArrows }
+                : delivery;
+        case DeliveryKind.TARGET:
+        case DeliveryKind.CIRCLE:
+        case DeliveryKind.DELAYED_CIRCLE:
+            return delivery;
+    }
+}
+
+function applyEffectModifiers(effect: AbilityEffect, modifiers: AbilityModifiers): AbilityEffect {
+    return {
+        ...effect,
+        delivery: applyDeliveryModifiers(effect.delivery, modifiers),
+        payloads: effect.payloads.map((payload) => applyPayloadModifiers(payload, modifiers)),
+    };
 }
 
 // Pure derivation of an ability's effective definition from the player's accumulated upgrades.

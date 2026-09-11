@@ -64,9 +64,10 @@ export function consumeCharge(
     return { level: currentChargeLevel(state, maxCharges, rechargeSeconds, time) - 1, time };
 }
 
-// FREE is the debug god mode: mana, cooldown groups and charges are ignored so skills can be
-// spammed while tuning their feel. The busy gate still applies, since overlapping casts would
-// restart the cast animation mid-swing.
+// FREE is the debug god mode: mana and charges are ignored so skills can be spammed while tuning
+// their feel. The busy gate and the group locks still apply: they are the attack cadence, and
+// without them a held key would restart the swing at every impact instead of attacking at the
+// weapon's maximum rate.
 export enum CastCosts {
     CHARGED = 0,
     FREE = 1,
@@ -88,13 +89,13 @@ export function canUseAbility(
     if (state.busyUntil !== undefined && time < state.busyUntil) {
         return false;
     }
+    if (!areGroupsUnlocked(definition.requires, state.groupCooldownUntil, time)) {
+        return false;
+    }
     if (costs === CastCosts.FREE) {
         return true;
     }
     if (state.mana < definition.manaCost) {
-        return false;
-    }
-    if (!areGroupsUnlocked(definition.requires, state.groupCooldownUntil, time)) {
         return false;
     }
     return (

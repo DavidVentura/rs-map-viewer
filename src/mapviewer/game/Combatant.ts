@@ -6,6 +6,8 @@ export enum Faction {
 export interface Combatant {
     x: number;
     y: number;
+    // Facing, in the client's 2048-unit rotation (see projectileMath.directionToRotation).
+    rotation: number;
     readonly level: number;
     readonly faction: Faction;
     readonly hitRadius: number;

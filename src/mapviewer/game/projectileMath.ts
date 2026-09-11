@@ -1,5 +1,5 @@
 import { RS_TO_RADIANS } from "../../rs/MathConstants";
-import { Combatant, Faction } from "./Combatant";
+import { Combatant } from "./Combatant";
 
 export function directionToRotation(directionX: number, directionY: number): number {
     return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
@@ -145,18 +145,12 @@ export function findSweepHit<T extends Combatant>(
     nextY: number,
     projectileRadius: number,
     level: number,
-    sourceFaction: Faction,
     combatants: readonly T[],
     excluded?: ReadonlySet<T>,
 ): { combatant: T; fraction: number } | undefined {
     let closest: { combatant: T; fraction: number } | undefined;
     for (const combatant of combatants) {
-        if (
-            combatant.level !== level ||
-            combatant.faction === sourceFaction ||
-            combatant.health <= 0 ||
-            excluded?.has(combatant)
-        ) {
+        if (combatant.level !== level || combatant.health <= 0 || excluded?.has(combatant)) {
             continue;
         }
         const fraction = sweepCircleHitFraction(

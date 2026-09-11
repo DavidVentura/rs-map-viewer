@@ -26,20 +26,20 @@ import { MapSquareCoord } from "../MapSquareCoord";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
-import { AbilityTarget, WeaponStyle } from "../game/Ability";
+import { AbilityTargetKind, AimMode, Delivery, WeaponStyle, aimModeFor } from "../game/Ability";
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
 import { AnimationPlayback, AnimationState, sequenceDurationSeconds } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
+import { delayedDeliveryProgress } from "../game/EffectResolution";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour } from "../game/EnemyType";
 import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import { AbilityInput, AbilitySlotInput, PickupTarget } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
-import { groundStrikeProgress } from "../game/GroundStrike";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
-import { Terrain } from "../game/Terrain";
+import { TILE_SIZE, Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
 import { EnemyScreenCandidate, ScreenPoint, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
 import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
@@ -1654,21 +1654,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const inputManager = this.mapViewer.inputManager;
         const pointerOverHud = this.isPointerOverHud();
         const hoveredEnemy = pointerOverHud ? undefined : this.getHoveredEnemy();
-        const hoverTarget = hoveredEnemy
-            ? { x: hoveredEnemy.x, y: hoveredEnemy.y, enemyId: hoveredEnemy.id }
-            : undefined;
         const isDragging = !pointerOverHud && inputManager.isDragging();
 
         const keySlot = (
             key: string | undefined,
             extraHeld: boolean,
-            target: AbilityTarget | undefined,
+            delivery: Delivery,
         ): AbilitySlotInput => {
             if (!extraHeld && (!key || !inputManager.isKeyDown(key))) {
                 return { held: false };
             }
-            if (target) {
-                return { held: true, target };
+            if (hoveredEnemy && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
+                return {
+                    held: true,
+                    target: { kind: AbilityTargetKind.COMBATANT, combatant: hoveredEnemy },
+                };
             }
             if (pointerOverHud) {
                 return { held: true, target: undefined };
@@ -1678,15 +1678,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 inputManager.mouseX,
                 inputManager.mouseY,
             );
-            return groundPoint ? { held: true, target: groundPoint } : { held: false };
+            return groundPoint
+                ? { held: true, target: { kind: AbilityTargetKind.POINT, ...groundPoint } }
+                : { held: false };
         };
 
         const barLength = player.abilityBar.length;
-        return player.abilityBar.map((_, index) => {
+        return player.abilityBar.map((definition, index) => {
             const key = keyForAbilitySlot(index, barLength);
             const isBasicAttackSlot = index === 0;
-            const mouseHeld = isBasicAttackSlot && isDragging && hoverTarget !== undefined;
-            return keySlot(key, mouseHeld, hoverTarget);
+            const mouseHeld = isBasicAttackSlot && isDragging && hoveredEnemy !== undefined;
+            return keySlot(key, mouseHeld, definition.effect.delivery);
         });
     }
 
@@ -1939,22 +1941,22 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         const groundShadows: GroundShadowHudInfo[] = [];
-        for (const strike of world.pendingGroundStrikes) {
-            const groundHeight = this.terrain.getHeight(strike.level, strike.x, strike.y);
+        for (const pending of world.pendingDelayedDeliveries) {
+            const groundHeight = this.terrain.getHeight(pending.level, pending.x, pending.y);
             const screen = worldToScreen(
                 camera.viewProjMatrix,
-                strike.x,
-                strike.y,
+                pending.x,
+                pending.y,
                 groundHeight,
                 this.canvas.clientWidth,
                 this.canvas.clientHeight,
             );
             const radiusPx = worldRadiusToScreenPx(
                 camera.viewProjMatrix,
-                strike.x,
-                strike.y,
+                pending.x,
+                pending.y,
                 groundHeight,
-                strike.radius,
+                pending.effect.delivery.radiusTiles * TILE_SIZE,
                 this.canvas.clientWidth,
                 this.canvas.clientHeight,
             );
@@ -1965,7 +1967,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 screenX: screen.x,
                 screenY: screen.y,
                 radiusPx,
-                progress: groundStrikeProgress(strike, world.timeSeconds),
+                progress: delayedDeliveryProgress(pending, world.timeSeconds),
             });
         }
 

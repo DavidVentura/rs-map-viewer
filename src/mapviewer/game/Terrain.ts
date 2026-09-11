@@ -4,3 +4,5 @@ export interface Terrain {
     getWallFlag(level: number, tileX: number, tileY: number): number;
     getHeight(level: number, x: number, y: number): number;
 }
+
+export const TILE_SIZE = 128;

@@ -1,6 +1,21 @@
-import { AbilityDefinition, AbilityEffectKind, ResolvedAbility, resolveAbility } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffect,
+    DeliveryKind,
+    ResolvedAbility,
+    resolveAbility,
+} from "./Ability";
+import { Affects, DamageRoll, PayloadKind, damagePayload } from "./Effect";
 import { ARROW_SPEC } from "./Projectile";
-import { BOW_SHOT, CLEAVE, HEALING_POTION, ICE_BARRAGE, VOLLEY } from "./abilities";
+import {
+    BOW_SHOT,
+    CLEAVE,
+    HEALING_POTION,
+    ICE_BARRAGE,
+    POWER_SHOT,
+    SCIMITAR_SLASH,
+    VOLLEY,
+} from "./abilities";
 import { stubSequenceLoaders } from "./testLoaders";
 import {
     DAMAGE_UP,
@@ -19,6 +34,36 @@ const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
 
 function resolve(definition: AbilityDefinition): ResolvedAbility {
     return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+}
+
+function damageRoll(effect: AbilityEffect): DamageRoll {
+    const payload = effect.payloads.find((candidate) => candidate.kind === PayloadKind.DAMAGE);
+    if (!payload || payload.kind !== PayloadKind.DAMAGE) {
+        throw new Error("expected a DAMAGE payload");
+    }
+    return payload.roll;
+}
+
+function freezeSeconds(effect: AbilityEffect): number {
+    const payload = effect.payloads.find((candidate) => candidate.kind === PayloadKind.FREEZE);
+    if (!payload || payload.kind !== PayloadKind.FREEZE) {
+        throw new Error("expected a FREEZE payload");
+    }
+    return payload.seconds;
+}
+
+function projectileCount(effect: AbilityEffect): number {
+    if (effect.delivery.kind !== DeliveryKind.PROJECTILE) {
+        throw new Error("expected a PROJECTILE delivery");
+    }
+    return effect.delivery.count;
+}
+
+function coneAngle(effect: AbilityEffect): number {
+    if (effect.delivery.kind !== DeliveryKind.CONE) {
+        throw new Error("expected a CONE delivery");
+    }
+    return effect.delivery.angleRadians;
 }
 
 describe("Upgrade.apply", () => {
@@ -64,60 +109,70 @@ describe("applyModifiers", () => {
         );
     });
 
-    it("scales a projectile ability's spec damage by the damage multiplier", () => {
-        const modifiers = DAMAGE_UP.apply(DEFAULT_ABILITY_MODIFIERS);
-        const definition = applyModifiers(resolve(BOW_SHOT), modifiers);
-        expect(definition.effect.kind).toBe(AbilityEffectKind.PROJECTILE);
-        if (definition.effect.kind === AbilityEffectKind.PROJECTILE) {
-            expect(definition.effect.spec.damage).toBeCloseTo(ARROW_SPEC.damage * 1.2);
-        }
+    it("scales every DAMAGE payload by the multiplier and adds the flat bonus, whatever the delivery", () => {
+        const modifiers = {
+            ...DAMAGE_UP.apply(DEFAULT_ABILITY_MODIFIERS),
+            flatDamageBonus: 3,
+        };
+        const bow = damageRoll(applyModifiers(resolve(BOW_SHOT), modifiers).effect);
+        expect(bow).toEqual({ min: 8 * 1.2 + 3, max: 8 * 1.2 + 3 });
+        const slash = damageRoll(applyModifiers(resolve(SCIMITAR_SLASH), modifiers).effect);
+        const base = damageRoll(SCIMITAR_SLASH.effect);
+        expect(slash.min).toBeCloseTo(base.min * 1.2 + 3);
+        expect(slash.max).toBeCloseTo(base.max * 1.2 + 3);
+        const cleave = damageRoll(applyModifiers(resolve(CLEAVE), modifiers).effect);
+        expect(cleave.min).toBeCloseTo(base.min * 2 * 1.2 + 3);
+        expect(cleave.max).toBeCloseTo(base.max * 2 * 1.2 + 3);
     });
 
-    it("widens Cleave's cone angle without touching its damage multiplier", () => {
+    it("leaves HEAL payloads and the projectile spec untouched by damage modifiers", () => {
+        const modifiers = DAMAGE_UP.apply(DEFAULT_ABILITY_MODIFIERS);
+        expect(applyModifiers(resolve(HEALING_POTION), modifiers).effect.payloads).toEqual(
+            HEALING_POTION.effect.payloads,
+        );
+        const bow = applyModifiers(resolve(BOW_SHOT), modifiers).effect;
+        expect(bow.delivery.kind === DeliveryKind.PROJECTILE && bow.delivery.spec).toBe(ARROW_SPEC);
+    });
+
+    it("widens Cleave's cone angle without touching its damage", () => {
         const modifiers = WIDER_CLEAVE.apply(DEFAULT_ABILITY_MODIFIERS);
         const definition = applyModifiers(resolve(CLEAVE), modifiers);
-        expect(definition.effect.kind).toBe(AbilityEffectKind.CONE_MELEE);
-        if (definition.effect.kind === AbilityEffectKind.CONE_MELEE) {
-            expect(definition.effect.angleRadians).toBeCloseTo(
-                CLEAVE.effect.kind === AbilityEffectKind.CONE_MELEE
-                    ? CLEAVE.effect.angleRadians + (25 * Math.PI) / 180
-                    : 0,
-            );
-            expect(definition.effect.damageMultiplier).toBe(
-                CLEAVE.effect.kind === AbilityEffectKind.CONE_MELEE
-                    ? CLEAVE.effect.damageMultiplier
-                    : 0,
-            );
-        }
+        expect(coneAngle(definition.effect)).toBeCloseTo(
+            coneAngle(CLEAVE.effect) + (25 * Math.PI) / 180,
+        );
+        expect(damageRoll(definition.effect)).toEqual(damageRoll(CLEAVE.effect));
     });
 
-    it("adds extra arrows to Volley's spread count", () => {
+    it("adds extra arrows to Volley's spread but never to a single shot", () => {
         const modifiers = MORE_ARROWS.apply(DEFAULT_ABILITY_MODIFIERS);
-        const definition = applyModifiers(resolve(VOLLEY), modifiers);
-        expect(definition.effect.kind).toBe(AbilityEffectKind.MULTI_PROJECTILE);
-        if (definition.effect.kind === AbilityEffectKind.MULTI_PROJECTILE) {
-            expect(definition.effect.count).toBe(
-                VOLLEY.effect.kind === AbilityEffectKind.MULTI_PROJECTILE
-                    ? VOLLEY.effect.count + 2
-                    : 0,
-            );
-        }
+        expect(projectileCount(applyModifiers(resolve(VOLLEY), modifiers).effect)).toBe(
+            projectileCount(VOLLEY.effect) + 2,
+        );
+        expect(projectileCount(applyModifiers(resolve(BOW_SHOT), modifiers).effect)).toBe(1);
+        expect(projectileCount(applyModifiers(resolve(POWER_SHOT), modifiers).effect)).toBe(1);
     });
 
     it("extends Ice Barrage's freeze duration", () => {
         const modifiers = LONGER_FREEZE.apply(DEFAULT_ABILITY_MODIFIERS);
         const definition = applyModifiers(resolve(ICE_BARRAGE), modifiers);
-        expect(definition.effect.kind).toBe(AbilityEffectKind.AREA);
-        if (definition.effect.kind === AbilityEffectKind.AREA) {
-            expect(definition.effect.freezeSeconds).toBeCloseTo(
-                ICE_BARRAGE.effect.kind === AbilityEffectKind.AREA
-                    ? ICE_BARRAGE.effect.freezeSeconds + 1.5
-                    : 0,
-            );
-        }
+        expect(freezeSeconds(definition.effect)).toBeCloseTo(
+            freezeSeconds(ICE_BARRAGE.effect) + 1.5,
+        );
     });
 
-    it("grants an extra potion charge only to heal-effect abilities", () => {
+    it("keeps the delivery, affects and hit effect of a modified ability", () => {
+        const modifiers = LONGER_FREEZE.apply(DAMAGE_UP.apply(DEFAULT_ABILITY_MODIFIERS));
+        const definition = applyModifiers(resolve(ICE_BARRAGE), modifiers);
+        expect(definition.effect.delivery).toEqual(ICE_BARRAGE.effect.delivery);
+        expect(definition.effect.affects).toBe(Affects.HOSTILE);
+        expect(definition.effect.hitEffect).toEqual(ICE_BARRAGE.effect.hitEffect);
+        expect(definition.effect.payloads).toEqual([
+            damagePayload(12 * 1.2),
+            { kind: PayloadKind.FREEZE, seconds: 4.5 },
+        ]);
+    });
+
+    it("grants an extra potion charge only to abilities with a HEAL payload", () => {
         const modifiers = POTION_CHARGE.apply(DEFAULT_ABILITY_MODIFIERS);
         expect(applyModifiers(resolve(HEALING_POTION), modifiers).maxCharges).toBe(
             HEALING_POTION.maxCharges + 1,

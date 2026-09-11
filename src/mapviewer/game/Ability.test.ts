@@ -1,6 +1,20 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityDefinition, AbilityEffectKind, resolveAbility, resolveCastTiming } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityTargetKind,
+    AimMode,
+    DeliveryKind,
+    aimAtCombatant,
+    aimModeFor,
+    liveAbilityTarget,
+    resolveAbility,
+    resolveCastTiming,
+} from "./Ability";
+import { Combatant, Faction } from "./Combatant";
+import { Affects, damagePayload } from "./Effect";
+import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC, POWER_SHOT_SPEC } from "./Projectile";
+import { CLEAVE, HEALING_POTION, ICE_BARRAGE, SCIMITAR_SLASH } from "./abilities";
 
 const seqFrameLoader = {} as SeqFrameLoader;
 
@@ -25,7 +39,11 @@ const BOW_LIKE: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [],
     locks: [],
-    effect: { kind: AbilityEffectKind.MELEE, minDamage: 1, maxDamage: 1, reach: 0 },
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: 0 },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(1)],
+    },
 };
 
 describe("resolveCastTiming", () => {
@@ -53,5 +71,96 @@ describe("resolveAbility", () => {
         const resolved = resolveAbility(BOW_LIKE, bowLoader, seqFrameLoader);
         expect(resolved).toMatchObject(BOW_LIKE);
         expect(resolved.timing.impactSeconds).toBeCloseTo(0.31);
+    });
+});
+
+function makeCombatant(level: number, health: number): Combatant {
+    return {
+        x: 100,
+        y: 200,
+        rotation: 0,
+        level,
+        faction: Faction.ENEMY,
+        hitRadius: 16,
+        projectileLaunchHeight: 40,
+        health,
+        maxHealth: 10,
+    };
+}
+
+describe("aimModeFor", () => {
+    it("aims line skills (free-flight projectiles and cones) at the ground point only", () => {
+        expect(aimModeFor(CLEAVE.effect.delivery)).toBe(AimMode.POINT_ONLY);
+        expect(
+            aimModeFor({
+                kind: DeliveryKind.PROJECTILE,
+                spec: POWER_SHOT_SPEC,
+                count: 1,
+                spreadAngleRadians: 0,
+            }),
+        ).toBe(AimMode.POINT_ONLY);
+    });
+
+    it("lets everything else prefer the hovered combatant", () => {
+        expect(aimModeFor(SCIMITAR_SLASH.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
+        expect(aimModeFor(ICE_BARRAGE.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
+        expect(aimModeFor(HEALING_POTION.effect.delivery)).toBe(AimMode.COMBATANT_OR_POINT);
+        expect(
+            aimModeFor({
+                kind: DeliveryKind.DELAYED_CIRCLE,
+                radiusTiles: 1,
+                telegraphSeconds: 1,
+                range: 1,
+            }),
+        ).toBe(AimMode.COMBATANT_OR_POINT);
+        for (const spec of [ARROW_SPEC, JAD_RANGED_ROCK_SPEC]) {
+            expect(
+                aimModeFor({
+                    kind: DeliveryKind.PROJECTILE,
+                    spec,
+                    count: 1,
+                    spreadAngleRadians: 0,
+                }),
+            ).toBe(AimMode.COMBATANT_OR_POINT);
+        }
+    });
+});
+
+describe("aimAtCombatant", () => {
+    it("aims a point-only delivery at the ground under the combatant", () => {
+        const combatant = makeCombatant(0, 10);
+        expect(aimAtCombatant(CLEAVE.effect.delivery, combatant)).toEqual({
+            kind: AbilityTargetKind.POINT,
+            x: 100,
+            y: 200,
+        });
+        expect(aimAtCombatant(SCIMITAR_SLASH.effect.delivery, combatant)).toEqual({
+            kind: AbilityTargetKind.COMBATANT,
+            combatant,
+        });
+    });
+});
+
+describe("liveAbilityTarget", () => {
+    it("keeps a live, same-level aimed combatant", () => {
+        const combatant = makeCombatant(0, 10);
+        const target = { kind: AbilityTargetKind.COMBATANT, combatant } as const;
+        expect(liveAbilityTarget(target, 0)).toBe(target);
+    });
+
+    it("degrades a dead or off-level aimed combatant to the point it stands on", () => {
+        const expected = { kind: AbilityTargetKind.POINT, x: 100, y: 200 };
+        expect(
+            liveAbilityTarget(
+                { kind: AbilityTargetKind.COMBATANT, combatant: makeCombatant(0, 0) },
+                0,
+            ),
+        ).toEqual(expected);
+        expect(
+            liveAbilityTarget(
+                { kind: AbilityTargetKind.COMBATANT, combatant: makeCombatant(1, 10) },
+                0,
+            ),
+        ).toEqual(expected);
     });
 });

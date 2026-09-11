@@ -1,7 +1,9 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
-import { ProjectileHitEffect, ProjectileSpec } from "./Projectile";
+import { Combatant } from "./Combatant";
+import { Affects, HitEffect, Payload } from "./Effect";
+import { ProjectileSpec } from "./Projectile";
 
 export enum CooldownGroup {
     ATTACK = 0,
@@ -19,90 +21,74 @@ export enum WeaponStyle {
     MAGIC = 2,
 }
 
-export enum AbilityEffectKind {
-    PROJECTILE = 0,
-    HEAL = 1,
-    MELEE = 2,
-    CONE_MELEE = 3,
-    AREA = 4,
-    MULTI_PROJECTILE = 5,
-    GROUND_STRIKE = 6,
-    HEAL_ALLIES = 7,
+export enum DeliveryKind {
+    TARGET = 0,
+    CONE = 1,
+    CIRCLE = 2,
+    DELAYED_CIRCLE = 3,
+    PROJECTILE = 4,
 }
 
-export type ProjectileEffect = {
-    readonly kind: AbilityEffectKind.PROJECTILE;
-    readonly spec: ProjectileSpec;
-    // Rolled fresh per cast in place of spec.damage; unset for the fixed-damage player projectiles.
-    readonly damageMin?: number;
-    readonly damageMax?: number;
-};
+export enum CircleCenter {
+    TARGET = 0,
+    CASTER = 1,
+}
 
-export type HealEffect = {
-    readonly kind: AbilityEffectKind.HEAL;
-    readonly amount: number;
-};
-
-export type MeleeEffect = {
-    readonly kind: AbilityEffectKind.MELEE;
-    readonly minDamage: number;
-    readonly maxDamage: number;
+// The aimed combatant, if within reach (plus both hit radii).
+export type TargetDelivery = {
+    readonly kind: DeliveryKind.TARGET;
     readonly reach: number;
 };
 
-export type ConeMeleeEffect = {
-    readonly kind: AbilityEffectKind.CONE_MELEE;
-    readonly damageMultiplier: number;
+// Everything in the cone in front of the caster.
+export type ConeDelivery = {
+    readonly kind: DeliveryKind.CONE;
     readonly angleRadians: number;
     readonly reach: number;
-    // Spawned once at impact, at a ground point in front of the caster (not per enemy hit); unset
-    // for cone melees with no distinct impact graphic (e.g. Cleave).
-    readonly hitEffect?: ProjectileHitEffect;
 };
 
-export type AreaEffect = {
-    readonly kind: AbilityEffectKind.AREA;
+// Everything within the radius (plus its hit radius) of the aimed point/combatant or the caster.
+export type CircleDelivery = {
+    readonly kind: DeliveryKind.CIRCLE;
     readonly radiusTiles: number;
-    readonly damageMin: number;
-    readonly damageMax: number;
-    readonly freezeSeconds: number;
-    readonly hitEffect: ProjectileHitEffect;
+    readonly center: CircleCenter;
 };
 
-export type GroundStrikeEffect = {
-    readonly kind: AbilityEffectKind.GROUND_STRIKE;
+// A CIRCLE at the aimed point that lands only once the telegraph has elapsed, so moving off the
+// point dodges it. range is the casting range, i.e. how far from the target the caster may be to
+// start this attack: not used by the landing itself, only by enemyAttackRange's engage check.
+export type DelayedCircleDelivery = {
+    readonly kind: DeliveryKind.DELAYED_CIRCLE;
     readonly radiusTiles: number;
     readonly telegraphSeconds: number;
-    readonly damageMin: number;
-    readonly damageMax: number;
-    // Casting range, i.e. how far from the target the caster may be to start this attack. Not
-    // used by the strike resolution itself, only by enemyAttackRange's engage-distance check.
     readonly range: number;
 };
 
-export type HealAlliesEffect = {
-    readonly kind: AbilityEffectKind.HEAL_ALLIES;
-    readonly radiusTiles: number;
-    readonly amount: number;
-    readonly hitEffect: ProjectileHitEffect;
-};
-
-export type MultiProjectileEffect = {
-    readonly kind: AbilityEffectKind.MULTI_PROJECTILE;
+// count projectiles fanned across spreadAngleRadians around the aim (a single aimed shot is count
+// 1); each carries the effect's payloads and lands them under the spec's landing rule.
+export type ProjectileDelivery = {
+    readonly kind: DeliveryKind.PROJECTILE;
     readonly spec: ProjectileSpec;
     readonly count: number;
     readonly spreadAngleRadians: number;
 };
 
-export type AbilityEffect =
-    | ProjectileEffect
-    | HealEffect
-    | MeleeEffect
-    | ConeMeleeEffect
-    | AreaEffect
-    | MultiProjectileEffect
-    | GroundStrikeEffect
-    | HealAlliesEffect;
+export type Delivery =
+    | TargetDelivery
+    | ConeDelivery
+    | CircleDelivery
+    | DelayedCircleDelivery
+    | ProjectileDelivery;
+
+// hitEffect is spawned on each affected combatant for TARGET/CIRCLE deliveries and tracked
+// projectiles, and once at the landing point for CONE/DELAYED_CIRCLE deliveries and fixed-point
+// projectiles.
+export type AbilityEffect<D extends Delivery = Delivery> = {
+    readonly delivery: D;
+    readonly affects: Affects;
+    readonly payloads: readonly Payload[];
+    readonly hitEffect?: HitEffect;
+};
 
 export type AbilityDefinition = {
     readonly id: string;
@@ -174,8 +160,63 @@ export function attackLockSeconds(definition: AbilityDefinition): number {
     return definition.locks.find((lock) => lock.group === CooldownGroup.ATTACK)?.seconds ?? 0;
 }
 
-export type AbilityTarget = {
-    readonly x: number;
-    readonly y: number;
-    readonly enemyId?: number;
-};
+export enum AbilityTargetKind {
+    COMBATANT = 0,
+    POINT = 1,
+}
+
+export type AbilityTarget =
+    | { readonly kind: AbilityTargetKind.COMBATANT; readonly combatant: Combatant }
+    | { readonly kind: AbilityTargetKind.POINT; readonly x: number; readonly y: number };
+
+export function abilityTargetPoint(target: AbilityTarget): { x: number; y: number } {
+    return target.kind === AbilityTargetKind.COMBATANT ? target.combatant : target;
+}
+
+// A cast's aim as it stands at impact: an aimed combatant that has since died or is off the
+// caster's level degrades to the point it stands on.
+export function liveAbilityTarget(target: AbilityTarget, level: number): AbilityTarget {
+    if (target.kind === AbilityTargetKind.POINT) {
+        return target;
+    }
+    const combatant = target.combatant;
+    if (combatant.level === level && combatant.health > 0) {
+        return target;
+    }
+    return { kind: AbilityTargetKind.POINT, x: combatant.x, y: combatant.y };
+}
+
+export function aimedCombatant(target: AbilityTarget, level: number): Combatant | undefined {
+    const live = liveAbilityTarget(target, level);
+    return live.kind === AbilityTargetKind.COMBATANT ? live.combatant : undefined;
+}
+
+// POINT_ONLY deliveries are line/arc skills that read wrong when snapped onto a hovered body, so
+// they always aim at the ground point; the rest prefer the hovered combatant and fall back to it.
+export enum AimMode {
+    COMBATANT_OR_POINT = 0,
+    POINT_ONLY = 1,
+}
+
+export function aimModeFor(delivery: Delivery): AimMode {
+    switch (delivery.kind) {
+        case DeliveryKind.CONE:
+            return AimMode.POINT_ONLY;
+        case DeliveryKind.PROJECTILE:
+            return delivery.spec.landing.kind === "FREE_FLIGHT"
+                ? AimMode.POINT_ONLY
+                : AimMode.COMBATANT_OR_POINT;
+        case DeliveryKind.TARGET:
+        case DeliveryKind.CIRCLE:
+        case DeliveryKind.DELAYED_CIRCLE:
+            return AimMode.COMBATANT_OR_POINT;
+    }
+}
+
+// The aim for a cast at `combatant` under the delivery's aim mode: the combatant itself, or the
+// ground under it.
+export function aimAtCombatant(delivery: Delivery, combatant: Combatant): AbilityTarget {
+    return aimModeFor(delivery) === AimMode.POINT_ONLY
+        ? { kind: AbilityTargetKind.POINT, x: combatant.x, y: combatant.y }
+        : { kind: AbilityTargetKind.COMBATANT, combatant };
+}

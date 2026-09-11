@@ -1,6 +1,6 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityDefinition, AbilityEffectKind, ResolvedAbility } from "./Ability";
+import { AbilityDefinition, DeliveryKind, ResolvedAbility, aimAtCombatant } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
@@ -12,8 +12,7 @@ import {
     isBossEnemyType,
     resolveEnemyStats,
 } from "./EnemyType";
-import { TILE_SIZE } from "./GroundStrike";
-import { Terrain } from "./Terrain";
+import { TILE_SIZE, Terrain } from "./Terrain";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
 import { SteeringBody, steerChase } from "./steering";
@@ -74,15 +73,17 @@ export function enemyAttackRange(
     casterHitRadius: number,
     targetHitRadius: number,
 ): number {
-    switch (definition.effect.kind) {
-        case AbilityEffectKind.MELEE:
-            return definition.effect.reach + casterHitRadius + targetHitRadius;
-        case AbilityEffectKind.PROJECTILE:
-            return definition.effect.spec.range;
-        case AbilityEffectKind.GROUND_STRIKE:
-            return definition.effect.range;
-        default:
-            throw new Error(`Unsupported enemy attack effect: ${definition.effect.kind}`);
+    const delivery = definition.effect.delivery;
+    switch (delivery.kind) {
+        case DeliveryKind.TARGET:
+        case DeliveryKind.CONE:
+            return delivery.reach + casterHitRadius + targetHitRadius;
+        case DeliveryKind.PROJECTILE:
+            return delivery.spec.range;
+        case DeliveryKind.DELAYED_CIRCLE:
+            return delivery.range;
+        case DeliveryKind.CIRCLE:
+            return Infinity;
     }
 }
 
@@ -281,7 +282,11 @@ export class Enemy implements Combatant, SteeringBody {
             player &&
             readyAbility
         ) {
-            this.abilityRuntime.use(readyAbility, { x: player.x, y: player.y }, timeSeconds);
+            this.abilityRuntime.use(
+                readyAbility,
+                aimAtCombatant(readyAbility.effect.delivery, player),
+                timeSeconds,
+            );
             if (patternSelection) {
                 this.patternIndex = patternSelection.nextIndex;
             }
@@ -412,9 +417,6 @@ export class Enemy implements Combatant, SteeringBody {
     }
 
     private attackWindowFor(ability: AbilityDefinition, player: Combatant): AttackWindow {
-        if (ability.effect.kind === AbilityEffectKind.HEAL_ALLIES) {
-            return { min: 0, max: Infinity };
-        }
         const max = enemyAttackRange(ability, this.hitRadius, player.hitRadius);
         const min = isBandedEnemyType(this.type) ? this.type.engagement.minRange : 0;
         return { min, max };

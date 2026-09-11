@@ -1,4 +1,5 @@
-import { AbilityEffectKind, CooldownGroup } from "./Ability";
+import { CooldownGroup } from "./Ability";
+import { HEALING_POTION } from "./abilities";
 import {
     CastCosts,
     areGroupsUnlocked,
@@ -196,7 +197,7 @@ describe("computeSlotReadiness", () => {
     const definition = {
         ...BASE_DEFINITION,
         manaCost: 10,
-        effect: { kind: AbilityEffectKind.HEAL, amount: 10 } as const,
+        effect: HEALING_POTION.effect,
     };
 
     it("reports mana-blocked alongside cooldown/charges", () => {
@@ -214,39 +215,42 @@ describe("free casting (god mode)", () => {
         ...BASE_DEFINITION,
         manaCost: 50,
         requires: [CooldownGroup.ATTACK],
-        effect: { kind: AbilityEffectKind.HEAL, amount: 10 } as const,
+        effect: HEALING_POTION.effect,
     };
-    const lockedAndSpent = {
+    const spent = {
         busyUntil: undefined,
-        groupCooldownUntil: lockGroups(
-            [{ group: CooldownGroup.ATTACK, seconds: 10 }],
-            new Map(),
-            0,
-            0,
-        ),
+        groupCooldownUntil: new Map(),
         chargeState: consumeCharge(initialChargeState(1), 1, 100, 0),
         mana: 0,
     };
 
-    it("ignores mana, group cooldowns and charges", () => {
-        expect(canUseAbility(definition, lockedAndSpent, 1)).toBe(false);
-        expect(canUseAbility(definition, lockedAndSpent, 1, CastCosts.FREE)).toBe(true);
+    it("ignores mana and charges", () => {
+        expect(canUseAbility(definition, spent, 1)).toBe(false);
+        expect(canUseAbility(definition, spent, 1, CastCosts.FREE)).toBe(true);
     });
 
     it("still waits for a cast in progress", () => {
-        const busy = { ...lockedAndSpent, busyUntil: 5 };
+        const busy = { ...spent, busyUntil: 5 };
         expect(canUseAbility(definition, busy, 4, CastCosts.FREE)).toBe(false);
         expect(canUseAbility(definition, busy, 5, CastCosts.FREE)).toBe(true);
     });
 
+    it("still respects group locks so a held key attacks at the weapon's rate", () => {
+        const locked = {
+            ...spent,
+            groupCooldownUntil: lockGroups(
+                [{ group: CooldownGroup.ATTACK, seconds: 10 }],
+                new Map(),
+                0,
+                0,
+            ),
+        };
+        expect(canUseAbility(definition, locked, 9, CastCosts.FREE)).toBe(false);
+        expect(canUseAbility(definition, locked, 10, CastCosts.FREE)).toBe(true);
+    });
+
     it("reports every slot as ready", () => {
-        const readiness = computeSlotReadiness(
-            definition,
-            lockedAndSpent.chargeState,
-            0,
-            1,
-            CastCosts.FREE,
-        );
+        const readiness = computeSlotReadiness(definition, spent.chargeState, 0, 1, CastCosts.FREE);
         expect(readiness).toEqual({
             cooldownFraction: 0,
             charges: 1,

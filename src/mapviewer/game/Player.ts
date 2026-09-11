@@ -1,6 +1,6 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityTarget, ResolvedAbility, WeaponStyle } from "./Ability";
+import { AbilityTarget, ResolvedAbility, WeaponStyle, abilityTargetPoint } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
@@ -293,8 +293,9 @@ export class Player implements Combatant, ManaPool {
             this.mana -= ability.manaCost;
         }
         this.abilityRuntime.use(ability, target, timeSeconds);
-        const deltaX = target.x - this.x;
-        const deltaY = target.y - this.y;
+        const aim = abilityTargetPoint(target);
+        const deltaX = aim.x - this.x;
+        const deltaY = aim.y - this.y;
         if (deltaX !== 0 || deltaY !== 0) {
             this.rotation = directionToRotation(deltaX, deltaY);
         }

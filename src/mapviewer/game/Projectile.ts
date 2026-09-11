@@ -1,11 +1,18 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AnimationPlayback, AnimationState } from "./Animation";
-import { CombatEvent, applyDamage } from "./CombatEvent";
-import { Combatant, Faction } from "./Combatant";
-import { TILE_SIZE, combatantsHitByGroundStrike } from "./GroundStrike";
-import { Terrain } from "./Terrain";
-import { VisualEffectKind } from "./VisualEffect";
+import { CombatEvent } from "./CombatEvent";
+import { Combatant } from "./Combatant";
+import {
+    Affects,
+    HitEffect,
+    Payload,
+    applyPayloads,
+    combatantsInCircle,
+    matchesAffects,
+} from "./Effect";
+import { TILE_SIZE, Terrain } from "./Terrain";
+import { RandomSource } from "./abilityRules";
 import {
     FlightOrigin,
     FlightPoint,
@@ -31,12 +38,6 @@ export enum ProjectileKind {
 export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
 export const FIRE_BOLT_HIT_SEQ_ID = 662;
 
-export type ProjectileHitEffect = {
-    readonly kind: VisualEffectKind;
-    readonly seqId: number;
-    readonly height: number;
-};
-
 // Arrival is baseSeconds + secondsPerTile * distance-in-tiles after launch, the way the OSRS client
 // schedules a projectile's end cycle from its start cycle and the tile distance.
 export type ProjectileTravelTime = {
@@ -50,8 +51,8 @@ export type ProjectileOrigin =
     | { readonly kind: "CASTER" }
     | { readonly kind: "ABOVE_TARGET"; readonly height: number };
 
-// TRACKED_COMBATANT follows its target every step and always arrives on it, damaging only it.
-// FIXED_POINT flies to the point fixed at cast time and damages everything of the other faction
+// TRACKED_COMBATANT follows its target every step and always arrives on it, landing only on it.
+// FIXED_POINT flies to the point fixed at cast time and lands on everything the projectile affects
 // within hitRadius on arrival, so moving off the point dodges it. FREE_FLIGHT flies toward the
 // point at max range with the swept-circle collision along its path; piercing keeps it flying
 // through everything it hits.
@@ -65,15 +66,15 @@ export type ProjectileLanding =
       }
     | { readonly kind: "FREE_FLIGHT"; readonly hitRadius: number; readonly piercing: boolean };
 
+// Purely how a projectile flies and looks; what it does on arrival is the ability's payloads,
+// carried per instance (see ProjectileImpact).
 export type ProjectileSpec = {
     kind: ProjectileKind;
     launchAngleRadians: number;
     travelTime: ProjectileTravelTime;
     range: number;
-    damage: number;
     landing: ProjectileLanding;
     travelSeqId: number;
-    hitEffect?: ProjectileHitEffect;
 };
 
 const ARROW_LAUNCH_ANGLE_RADIANS = (20 * Math.PI) / 180;
@@ -83,7 +84,6 @@ export const ARROW_SPEC: ProjectileSpec = {
     launchAngleRadians: ARROW_LAUNCH_ANGLE_RADIANS,
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 16 },
     range: 4096,
-    damage: 8,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 60 },
     travelSeqId: -1,
 };
@@ -102,10 +102,8 @@ export const MAGIC_SPEC: ProjectileSpec = {
     launchAngleRadians: 0,
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 24 },
     range: 4096,
-    damage: 12,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 80 },
     travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
-    hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
 };
 
 export const POWER_SHOT_SPEC: ProjectileSpec = {
@@ -113,7 +111,6 @@ export const POWER_SHOT_SPEC: ProjectileSpec = {
     launchAngleRadians: 0,
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 14 },
     range: 4096,
-    damage: 20,
     landing: { kind: "FREE_FLIGHT", hitRadius: 24, piercing: true },
     travelSeqId: -1,
 };
@@ -123,8 +120,7 @@ export const POWER_SHOT_SPEC: ProjectileSpec = {
 // travelling 8 tiles in 1.5s so it can be sidestepped (the landing point is fixed at cast end, not
 // tracked, so moving away from it dodges the hit). Uses Jad's own fire graphic (SpotAnimType ids
 // 449 travel / 450 impact, both driven by sequence JAD_FIRE_SEQ_ID) rather than the player's fire
-// bolt spell graphic. damage is overridden per cast by JadMageBlastEffect.damageMin/Max; this
-// fixed value is never actually applied.
+// bolt spell graphic.
 const JAD_MAGE_BLAST_TRAVEL_TILES = 8;
 const JAD_MAGE_BLAST_TRAVEL_SECONDS = 1.5;
 export const JAD_FIRE_SEQ_ID = 2659;
@@ -137,17 +133,14 @@ export const JAD_MAGE_BLAST_SPEC: ProjectileSpec = {
         secondsPerTile: JAD_MAGE_BLAST_TRAVEL_SECONDS / JAD_MAGE_BLAST_TRAVEL_TILES,
     },
     range: 12 * TILE_SIZE,
-    damage: 32,
     landing: { kind: "FIXED_POINT", endHeight: 40, hitRadius: 48, origin: { kind: "CASTER" } },
     travelSeqId: JAD_FIRE_SEQ_ID,
-    hitEffect: { kind: VisualEffectKind.JAD_FIRE_HIT, seqId: JAD_FIRE_SEQ_ID, height: 124 },
 };
 
 // TzTok-Jad's ranged attack: a boulder (SpotAnimType id 451) that spawns high above the target and
-// falls straight down over a fixed time, damaging every combatant in radius on landing. damage is
-// overridden per cast by JAD_RANGED_STOMP's damageMin/Max; this fixed value is never actually
-// applied. range matches the old ground-strike's cast range so Jad still engages at the same
-// distance (see Enemy.enemyAttackRange).
+// falls straight down over a fixed time, landing on every combatant in radius. range matches the
+// old ground-strike's cast range so Jad still engages at the same distance (see
+// Enemy.enemyAttackRange).
 const JAD_RANGED_ROCK_FALL_HEIGHT = 3000;
 const JAD_RANGED_ROCK_FALL_SECONDS = 1.6;
 export const JAD_RANGED_ROCK_SEQ_ID = 2660;
@@ -157,7 +150,6 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
     launchAngleRadians: 0,
     travelTime: { baseSeconds: JAD_RANGED_ROCK_FALL_SECONDS, secondsPerTile: 0 },
     range: 10 * TILE_SIZE,
-    damage: 30,
     landing: {
         kind: "FIXED_POINT",
         endHeight: 0,
@@ -169,7 +161,7 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
 
 // Both TzHaar casters throw level (angle 0) from the top of their tall bodies, so the shot only
 // descends from their launch height onto the player's position at cast time: no in-flight
-// collision, damage only in radius at the landing point (moving away dodges it).
+// collision, it lands only in radius at the landing point (moving away dodges it).
 const TZHAAR_CASTER_LANDING: ProjectileLanding = {
     kind: "FIXED_POINT",
     endHeight: 40,
@@ -179,14 +171,12 @@ const TZHAAR_CASTER_LANDING: ProjectileLanding = {
 
 // Tok-Xil's ranged shot: SpotAnimType id 443, a static spike model with no sequence and no impact
 // graphic (picked by the user by eye). range matches the old ground-strike's cast range so Tok-Xil
-// still engages at the same distance (see Enemy.enemyAttackRange). damage is overridden per cast
-// by TOK_XIL_RANGED_SHOT's damageMin/Max; this fixed value is never actually applied.
+// still engages at the same distance (see Enemy.enemyAttackRange).
 export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
     kind: ProjectileKind.TOK_XIL_SHOT,
     launchAngleRadians: 0,
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 16 },
     range: 11 * TILE_SIZE,
-    damage: 6,
     landing: TZHAAR_CASTER_LANDING,
     travelSeqId: -1,
 };
@@ -194,8 +184,7 @@ export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
 // Ket-Zek's fire blast: SpotAnimType id 445 (picked by the user by eye; its sequence 2648 sits
 // directly after Ket-Zek's own animation block 2642-2647), with no impact graphic. Slower than
 // Tok-Xil's shot for a heavier-feeling cast. range matches the old ground-strike's cast range (see
-// Enemy.enemyAttackRange). damage is overridden per cast by KET_ZEK_FIRE_BLAST's damageMin/Max;
-// this fixed value is never actually applied.
+// Enemy.enemyAttackRange).
 export const KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID = 2648;
 
 export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
@@ -203,7 +192,6 @@ export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
     launchAngleRadians: 0,
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 8 },
     range: 10 * TILE_SIZE,
-    damage: 18,
     landing: TZHAAR_CASTER_LANDING,
     travelSeqId: KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
 };
@@ -228,6 +216,14 @@ export type ProjectileOutcome =
     | { readonly kind: "LANDED"; readonly x: number; readonly y: number }
     | { readonly kind: "EXPIRED" };
 
+// What the projectile does to whoever it lands on, carried over from the ability that fired it.
+export type ProjectileImpact = {
+    readonly caster: Combatant;
+    readonly affects: Affects;
+    readonly payloads: readonly Payload[];
+    readonly hitEffect?: HitEffect;
+};
+
 export class Projectile {
     x: number;
     y: number;
@@ -247,8 +243,7 @@ export class Projectile {
     // the terrain it passes over.
     constructor(
         readonly spec: ProjectileSpec,
-        readonly sourceFaction: Faction,
-        readonly level: number,
+        readonly impact: ProjectileImpact,
         start: FlightOrigin,
         target: ProjectileTarget,
     ) {
@@ -270,10 +265,16 @@ export class Projectile {
         this.animation = new AnimationState(spec.travelSeqId);
     }
 
+    get level(): number {
+        return this.impact.caster.level;
+    }
+
     update(
         dtSeconds: number,
+        timeSeconds: number,
         combatants: readonly Combatant[],
         events: CombatEvent[],
+        random: RandomSource,
         terrain: Terrain,
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
@@ -294,12 +295,11 @@ export class Projectile {
                 step.state.y,
                 this.spec.landing.hitRadius,
                 this.level,
-                this.sourceFaction,
-                combatants,
+                this.affectedCandidates(combatants),
                 this.piercedCombatants,
             );
             if (hit) {
-                applyDamage(hit.combatant, this.spec.damage, events);
+                this.land(hit.combatant, timeSeconds, random, events);
                 if (!this.spec.landing.piercing) {
                     this.x += (step.state.x - this.x) * hit.fraction;
                     this.y += (step.state.y - this.y) * hit.fraction;
@@ -313,7 +313,22 @@ export class Projectile {
         if (!step.arrived) {
             return { kind: "ALIVE" };
         }
-        return this.resolveArrival(combatants, events);
+        return this.resolveArrival(combatants, timeSeconds, random, events);
+    }
+
+    private affectedCandidates(combatants: readonly Combatant[]): Combatant[] {
+        return combatants.filter((combatant) =>
+            matchesAffects(this.impact.caster, this.impact.affects, combatant),
+        );
+    }
+
+    private land(
+        target: Combatant,
+        timeSeconds: number,
+        random: RandomSource,
+        events: CombatEvent[],
+    ): void {
+        applyPayloads(target, this.impact.payloads, timeSeconds, random, events);
     }
 
     private endHeightAt(aim: FlightPoint, terrain: Terrain): number {
@@ -334,29 +349,29 @@ export class Projectile {
 
     private resolveArrival(
         combatants: readonly Combatant[],
+        timeSeconds: number,
+        random: RandomSource,
         events: CombatEvent[],
     ): ProjectileOutcome {
         switch (this.spec.landing.kind) {
             case "TRACKED_COMBATANT": {
-                if (this.target.kind !== "COMBATANT") {
+                if (
+                    this.target.kind !== "COMBATANT" ||
+                    !matchesAffects(this.impact.caster, this.impact.affects, this.target.combatant)
+                ) {
                     return { kind: "EXPIRED" };
                 }
-                applyDamage(this.target.combatant, this.spec.damage, events);
+                this.land(this.target.combatant, timeSeconds, random, events);
                 return { kind: "HIT_COMBATANT", combatant: this.target.combatant };
             }
             case "FIXED_POINT": {
-                const hits = combatantsHitByGroundStrike(
-                    {
-                        x: this.x,
-                        y: this.y,
-                        level: this.level,
-                        radius: this.spec.landing.hitRadius,
-                        sourceFaction: this.sourceFaction,
-                    },
-                    combatants,
+                const hits = combatantsInCircle(
+                    { x: this.x, y: this.y, level: this.level },
+                    this.spec.landing.hitRadius,
+                    this.affectedCandidates(combatants),
                 );
                 for (const hit of hits) {
-                    applyDamage(hit, this.spec.damage, events);
+                    this.land(hit, timeSeconds, random, events);
                 }
                 return { kind: "LANDED", x: this.x, y: this.y };
             }

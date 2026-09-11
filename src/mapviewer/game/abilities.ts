@@ -2,19 +2,25 @@ import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
     AbilityDefinition,
-    AbilityEffectKind,
+    CircleCenter,
     CooldownGroup,
+    DeliveryKind,
+    ProjectileDelivery,
     ResolvedAbility,
     WeaponStyle,
     resolveAbility,
 } from "./Ability";
+import { Affects, DamageRoll, PayloadKind, damagePayload } from "./Effect";
 import {
     ARROW_SPEC,
+    FIRE_BOLT_HIT_SEQ_ID,
+    JAD_FIRE_SEQ_ID,
     JAD_MAGE_BLAST_SPEC,
     JAD_RANGED_ROCK_SPEC,
     KET_ZEK_FIRE_BLAST_SPEC,
     MAGIC_SPEC,
     POWER_SHOT_SPEC,
+    ProjectileSpec,
     TOK_XIL_SHOT_SPEC,
     VOLLEY_ARROW_SPEC,
 } from "./Projectile";
@@ -34,6 +40,15 @@ export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
 export const CLEAVE_CAST_SEQ_ID = 1203;
 export const HEALING_POTION_CAST_SEQ_ID = 829;
 
+function singleShot(spec: ProjectileSpec): ProjectileDelivery {
+    return { kind: DeliveryKind.PROJECTILE, spec, count: 1, spreadAngleRadians: 0 };
+}
+
+const ARROW_DAMAGE = 8;
+const MAGIC_BOLT_DAMAGE = 12;
+const SCIMITAR_SLASH_DAMAGE: DamageRoll = { min: 4, max: 9 };
+const MELEE_REACH = 48;
+
 // Player castSpeeds keep each basic attack's whole sequence inside its old windup+lock cadence,
 // so the swing plays as one continuous motion with the recovery under the ATTACK lock.
 // Bow shot's release is the string-snap frame.
@@ -49,7 +64,11 @@ export const BOW_SHOT: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.19 }],
-    effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
+    effect: {
+        delivery: singleShot(ARROW_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(ARROW_DAMAGE)],
+    },
 };
 
 // Release at the second cast-hold, not the first (the raise).
@@ -65,7 +84,12 @@ export const MAGIC_BOLT: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.19 }],
-    effect: { kind: AbilityEffectKind.PROJECTILE, spec: MAGIC_SPEC },
+    effect: {
+        delivery: singleShot(MAGIC_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
+        hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
+    },
 };
 
 // Contact at the extended-arm hold right after the fast downswing.
@@ -81,7 +105,11 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
-    effect: { kind: AbilityEffectKind.MELEE, minDamage: 4, maxDamage: 9, reach: 48 },
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
+    },
 };
 
 export function getStyleAttack(style: WeaponStyle): AbilityDefinition {
@@ -97,6 +125,12 @@ export function getStyleAttack(style: WeaponStyle): AbilityDefinition {
 
 const SPECIAL_RECHARGE_SECONDS = 6;
 
+// Both melee specials hit for twice the basic slash.
+const MELEE_SPECIAL_DAMAGE = damagePayload(
+    SCIMITAR_SLASH_DAMAGE.min * 2,
+    SCIMITAR_SLASH_DAMAGE.max * 2,
+);
+
 // The wide sweep's most-held frame reads as contact across the arc.
 export const CLEAVE: AbilityDefinition = {
     id: "cleave",
@@ -111,10 +145,9 @@ export const CLEAVE: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.55 }],
     effect: {
-        kind: AbilityEffectKind.CONE_MELEE,
-        damageMultiplier: 2,
-        angleRadians: Math.PI / 2,
-        reach: 2.5 * 128,
+        delivery: { kind: DeliveryKind.CONE, angleRadians: Math.PI / 2, reach: 2.5 * 128 },
+        affects: Affects.HOSTILE,
+        payloads: [MELEE_SPECIAL_DAMAGE],
     },
 };
 
@@ -132,11 +165,9 @@ export const ICE_BARRAGE: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.675 }],
     effect: {
-        kind: AbilityEffectKind.AREA,
-        radiusTiles: 1,
-        damageMin: MAGIC_SPEC.damage,
-        damageMax: MAGIC_SPEC.damage,
-        freezeSeconds: 3,
+        delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 1, center: CircleCenter.TARGET },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(MAGIC_BOLT_DAMAGE), { kind: PayloadKind.FREEZE, seconds: 3 }],
         hitEffect: {
             kind: VisualEffectKind.ICE_BARRAGE_HIT,
             seqId: ICE_BARRAGE_HIT_SEQ_ID,
@@ -160,10 +191,14 @@ export const VOLLEY: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.38 }],
     effect: {
-        kind: AbilityEffectKind.MULTI_PROJECTILE,
-        spec: VOLLEY_ARROW_SPEC,
-        count: 8,
-        spreadAngleRadians: Math.PI / 3,
+        delivery: {
+            kind: DeliveryKind.PROJECTILE,
+            spec: VOLLEY_ARROW_SPEC,
+            count: 8,
+            spreadAngleRadians: Math.PI / 3,
+        },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(ARROW_DAMAGE)],
     },
 };
 
@@ -179,7 +214,11 @@ export const POWER_SHOT: AbilityDefinition = {
     rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.38 }],
-    effect: { kind: AbilityEffectKind.PROJECTILE, spec: POWER_SHOT_SPEC },
+    effect: {
+        delivery: singleShot(POWER_SHOT_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(20)],
+    },
 };
 
 // The heal lands on the drink's last frame, as the bottle comes down; the HEAL lock is a pure
@@ -200,7 +239,11 @@ export const HEALING_POTION: AbilityDefinition = {
         { group: CooldownGroup.HEAL, seconds: 3 },
         { group: CooldownGroup.ATTACK, seconds: 1.5 },
     ],
-    effect: { kind: AbilityEffectKind.HEAL, amount: 30 },
+    effect: {
+        delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 0, center: CircleCenter.CASTER },
+        affects: Affects.SELF,
+        payloads: [{ kind: PayloadKind.HEAL, amount: 30 }],
+    },
 };
 
 // Enemy abilities play their cast sequence at natural speed: slowing them down to fill the attack
@@ -229,7 +272,11 @@ function chaffMelee(
         rechargeSeconds: 0,
         requires: [CooldownGroup.ATTACK],
         locks: [{ group: CooldownGroup.ATTACK, seconds: 1.84 }],
-        effect: { kind: AbilityEffectKind.MELEE, minDamage: 2, maxDamage: 5, reach: 48 },
+        effect: {
+            delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+            affects: Affects.HOSTILE,
+            payloads: [damagePayload(2, 5)],
+        },
     };
 }
 
@@ -257,10 +304,9 @@ export const TOK_XIL_RANGED_SHOT: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.46 }],
     effect: {
-        kind: AbilityEffectKind.PROJECTILE,
-        spec: TOK_XIL_SHOT_SPEC,
-        damageMin: 4,
-        damageMax: 8,
+        delivery: singleShot(TOK_XIL_SHOT_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(4, 8)],
     },
 };
 
@@ -282,10 +328,9 @@ export const KET_ZEK_FIRE_BLAST: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 3.63 }],
     effect: {
-        kind: AbilityEffectKind.PROJECTILE,
-        spec: KET_ZEK_FIRE_BLAST_SPEC,
-        damageMin: 14,
-        damageMax: 22,
+        delivery: singleShot(KET_ZEK_FIRE_BLAST_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(14, 22)],
     },
 };
 
@@ -304,7 +349,11 @@ export const YT_MEJKOT_MELEE: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 2.4 }],
-    effect: { kind: AbilityEffectKind.MELEE, minDamage: 5, maxDamage: 9, reach: 48 },
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(5, 9)],
+    },
 };
 
 // Uses the HEAL cooldown group (not ATTACK) so the pulse recurs on its own 6s timer independently
@@ -327,9 +376,9 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
     requires: [CooldownGroup.HEAL],
     locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
     effect: {
-        kind: AbilityEffectKind.HEAL_ALLIES,
-        radiusTiles: 4,
-        amount: 15,
+        delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 4, center: CircleCenter.CASTER },
+        affects: Affects.ALLIED,
+        payloads: [{ kind: PayloadKind.HEAL, amount: 15 }],
         hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
     },
 };
@@ -340,14 +389,14 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
 export const MAUL_SMASH_CAST_SEQ_ID = 11124;
 const MAUL_SMASH_RECHARGE_SECONDS = 10;
 
-// The fast, short frame right after the raise is the downswing snapping through into impact; the
-// rest is recovery under the ATTACK lock, so the hit lands as the maul comes down instead of after
-// it's already back up.
+// Frame 10 is only the 40 ms downswing transient (the maul snapping through); frame 11, held for
+// 100 ms from 1.02 s in, is the impact pose, so contact lands there. The rest is recovery under
+// the ATTACK lock, so the hit lands as the maul comes down instead of after it's already back up.
 export const MAUL_SMASH: AbilityDefinition = {
     id: "maul_smash",
     name: "Maul Smash",
     castSeqId: MAUL_SMASH_CAST_SEQ_ID,
-    contactFrame: 10,
+    contactFrame: 11,
     castSpeed: 1,
     channelSeconds: 0,
     manaCost: 0,
@@ -356,10 +405,9 @@ export const MAUL_SMASH: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 1.6 }],
     effect: {
-        kind: AbilityEffectKind.CONE_MELEE,
-        damageMultiplier: 2,
-        angleRadians: (2 * Math.PI) / 3,
-        reach: 3 * 128,
+        delivery: { kind: DeliveryKind.CONE, angleRadians: (2 * Math.PI) / 3, reach: 3 * 128 },
+        affects: Affects.HOSTILE,
+        payloads: [MELEE_SPECIAL_DAMAGE],
         hitEffect: {
             kind: VisualEffectKind.MAUL_SMASH_HIT,
             seqId: MAUL_SMASH_HIT_SEQ_ID,
@@ -388,7 +436,11 @@ export const JAD_MELEE_BITE: AbilityDefinition = {
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 2.92 }],
-    effect: { kind: AbilityEffectKind.MELEE, minDamage: 20, maxDamage: 35, reach: 48 },
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(20, 35)],
+    },
 };
 
 export const JAD_RANGED_STOMP_CAST_SEQ_ID = 2652;
@@ -407,10 +459,9 @@ export const JAD_RANGED_STOMP: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 3.14 }],
     effect: {
-        kind: AbilityEffectKind.PROJECTILE,
-        spec: JAD_RANGED_ROCK_SPEC,
-        damageMin: 30,
-        damageMax: 45,
+        delivery: singleShot(JAD_RANGED_ROCK_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(30, 45)],
     },
 };
 
@@ -431,10 +482,10 @@ export const JAD_MAGE_BLAST: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 3.29 }],
     effect: {
-        kind: AbilityEffectKind.PROJECTILE,
-        spec: JAD_MAGE_BLAST_SPEC,
-        damageMin: 25,
-        damageMax: 40,
+        delivery: singleShot(JAD_MAGE_BLAST_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(25, 40)],
+        hitEffect: { kind: VisualEffectKind.JAD_FIRE_HIT, seqId: JAD_FIRE_SEQ_ID, height: 124 },
     },
 };
 
@@ -453,9 +504,9 @@ export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
     requires: [CooldownGroup.HEAL],
     locks: [{ group: CooldownGroup.HEAL, seconds: 6 }],
     effect: {
-        kind: AbilityEffectKind.HEAL_ALLIES,
-        radiusTiles: 4,
-        amount: 30,
+        delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 4, center: CircleCenter.CASTER },
+        affects: Affects.ALLIED,
+        payloads: [{ kind: PayloadKind.HEAL, amount: 30 }],
         hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
     },
 };

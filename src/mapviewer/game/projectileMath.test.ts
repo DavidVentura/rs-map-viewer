@@ -20,6 +20,7 @@ class FakeCombatant {
     readonly projectileLaunchHeight = 40;
     readonly maxHealth = 100;
     health = 100;
+    rotation = 0;
 
     constructor(
         public x: number,
@@ -211,35 +212,29 @@ describe("sweepCircleHitFraction", () => {
 });
 
 describe("findSweepHit", () => {
-    it("returns the closest hostile combatant along the segment", () => {
+    it("returns the closest combatant along the segment", () => {
         const far = new FakeCombatant(900, 0, 0, Faction.ENEMY);
         const near = new FakeCombatant(300, 0, 0, Faction.ENEMY);
-        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [far, near]);
+        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, [far, near]);
         expect(hit?.combatant).toBe(near);
-    });
-
-    it("ignores combatants sharing the projectile's faction", () => {
-        const ally = new FakeCombatant(300, 0, 0, Faction.PLAYER);
-        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [ally]);
-        expect(hit).toBeUndefined();
     });
 
     it("ignores combatants on a different level", () => {
         const other = new FakeCombatant(300, 0, 1, Faction.ENEMY);
-        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [other]);
+        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, [other]);
         expect(hit).toBeUndefined();
     });
 
     it("ignores combatants that are already dead", () => {
         const dead = new FakeCombatant(300, 0, 0, Faction.ENEMY);
         dead.health = 0;
-        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [dead]);
+        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, [dead]);
         expect(hit).toBeUndefined();
     });
 
     it("ignores combatants present in the excluded set", () => {
         const enemy = new FakeCombatant(300, 0, 0, Faction.ENEMY);
-        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, Faction.PLAYER, [enemy], new Set([enemy]));
+        const hit = findSweepHit(0, 0, 1000, 0, 10, 0, [enemy], new Set([enemy]));
         expect(hit).toBeUndefined();
     });
 });

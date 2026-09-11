@@ -1,5 +1,7 @@
 import {
     AbilityDefinition,
+    AbilityTarget,
+    AbilityTargetKind,
     ResolvedAbility,
     WeaponStyle,
     attackLockSeconds,
@@ -28,6 +30,10 @@ const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
     [WeaponStyle.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
     [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
 };
+
+function point(x: number, y: number): AbilityTarget {
+    return { kind: AbilityTargetKind.POINT, x, y };
+}
 
 function makePlayer(): Player {
     return new Player(
@@ -97,7 +103,7 @@ describe("Player.beginCast", () => {
     it("deducts mana and starts the ability's wind-up", () => {
         const player = makePlayer();
         const bolt = resolve(MAGIC_BOLT);
-        player.beginCast(bolt, { x: 100, y: 0 }, 10);
+        player.beginCast(bolt, point(100, 0), 10);
         expect(player.mana).toBe(player.maxMana - MAGIC_BOLT.manaCost);
         expect(player.abilityRuntime.isBusy(10)).toBe(true);
         expect(player.abilityRuntime.isBusy(10 + bolt.timing.impactSeconds)).toBe(false);
@@ -105,7 +111,7 @@ describe("Player.beginCast", () => {
 
     it("faces the caster toward the target", () => {
         const player = makePlayer();
-        player.beginCast(resolve(BOW_SHOT), { x: 0, y: 500 }, 0);
+        player.beginCast(resolve(BOW_SHOT), point(0, 500), 0);
         expect(player.rotation).toBe(1024);
     });
 });
@@ -114,7 +120,7 @@ describe("Player cast animation duration", () => {
     it("keeps the cast animation active for the cast sequence's own duration, not the ATTACK lock", () => {
         const player = makePlayer();
         const bow = resolve(BOW_SHOT);
-        player.beginCast(bow, { x: 100, y: 0 }, 0);
+        player.beginCast(bow, point(100, 0), 0);
         const played = bow.timing.animationSeconds;
         expect(player.abilityRuntime.activeCastAnimation(played - 0.01)).toBeDefined();
         expect(player.abilityRuntime.activeCastAnimation(played)).toBeUndefined();
@@ -123,7 +129,7 @@ describe("Player cast animation duration", () => {
     it("returns to idle once the drink animation itself finishes, even though the heal/attack locks are still recovering", () => {
         const player = makePlayer();
         const potion = resolve(HEALING_POTION);
-        player.beginCast(potion, { x: 0, y: 0 }, 0);
+        player.beginCast(potion, point(0, 0), 0);
         const played = potion.timing.animationSeconds;
         expect(played).toBeLessThan(potion.timing.impactSeconds + attackLockSeconds(potion));
 
@@ -152,7 +158,7 @@ describe("Player cast animation duration", () => {
 describe("Player movement while busy", () => {
     it("does not move while an ability is winding up", () => {
         const player = makePlayer();
-        player.beginCast(resolve(BOW_SHOT), { x: 100, y: 0 }, 0);
+        player.beginCast(resolve(BOW_SHOT), point(100, 0), 0);
         player.update(
             { x: 1, y: 0, running: false },
             0.01,

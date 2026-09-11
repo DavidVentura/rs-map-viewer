@@ -1,6 +1,7 @@
-import { AbilityDefinition, AbilityEffectKind, CooldownGroup } from "./Ability";
+import { AbilityDefinition, AbilityEffect, CooldownGroup, DeliveryKind } from "./Ability";
 import { AnimationPlayback } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
+import { Affects, damagePayload } from "./Effect";
 import {
     Enemy,
     EnemyDecisionInputs,
@@ -29,6 +30,12 @@ import {
 } from "./abilities";
 import { directionToRotation } from "./projectileMath";
 import { stubSequenceLoaders } from "./testLoaders";
+
+const ARROW_SHOT: AbilityEffect = {
+    delivery: { kind: DeliveryKind.PROJECTILE, spec: ARROW_SPEC, count: 1, spreadAngleRadians: 0 },
+    affects: Affects.HOSTILE,
+    payloads: [damagePayload(1)],
+};
 
 function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDecisionInputs {
     return {
@@ -173,25 +180,31 @@ describe("enemyAttackRange", () => {
         const rangedDefinition: AbilityDefinition = {
             ...GOBLIN_MELEE,
             id: "enemy_ranged",
-            effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
+            effect: ARROW_SHOT,
         };
         expect(enemyAttackRange(rangedDefinition, 64, 64)).toBe(ARROW_SPEC.range);
     });
 
-    it("uses the ground strike's own cast range, ignoring hit radii", () => {
+    it("uses a delayed circle's own cast range, ignoring hit radii", () => {
         const groundStrikeDefinition: AbilityDefinition = {
             ...GOBLIN_MELEE,
             id: "enemy_ground_strike",
             effect: {
-                kind: AbilityEffectKind.GROUND_STRIKE,
-                radiusTiles: 1,
-                telegraphSeconds: 1,
-                damageMin: 1,
-                damageMax: 1,
-                range: 10 * 128,
+                delivery: {
+                    kind: DeliveryKind.DELAYED_CIRCLE,
+                    radiusTiles: 1,
+                    telegraphSeconds: 1,
+                    range: 10 * 128,
+                },
+                affects: Affects.HOSTILE,
+                payloads: [damagePayload(1)],
             },
         };
         expect(enemyAttackRange(groundStrikeDefinition, 128, 64)).toBe(10 * 128);
+    });
+
+    it("puts no range limit on a caster-centred circle such as the heal pulse", () => {
+        expect(enemyAttackRange(YT_MEJKOT_HEAL_PULSE, 128, 64)).toBe(Infinity);
     });
 });
 
@@ -258,6 +271,7 @@ const terrain: Terrain = {
 class FakePlayer implements Combatant {
     readonly faction = Faction.PLAYER;
     readonly hitRadius = 64;
+    rotation = 0;
     readonly projectileLaunchHeight = 40;
     readonly maxHealth = 100;
     health = 100;
@@ -662,7 +676,7 @@ const TEST_BOSS_MELEE: AbilityDefinition = { ...GOBLIN_MELEE, id: "boss_melee" }
 const TEST_BOSS_RANGED: AbilityDefinition = {
     ...GOBLIN_MELEE,
     id: "boss_ranged",
-    effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
+    effect: ARROW_SHOT,
 };
 
 const TEST_BOSS_TYPE = resolveType({

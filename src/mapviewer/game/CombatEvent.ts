@@ -82,7 +82,7 @@ export type BossPhaseEvent = {
     phaseLabel: string;
 };
 
-// A cone-melee cast that carries a hitEffect (see ConeMeleeEffect.hitEffect) landing: lets the HUD
+// A CONE-delivery cast that carries a hitEffect (see AbilityEffect.hitEffect) landing: lets the HUD
 // draw a short-lived outline of the cone's actual damage area (see hudDraw.drawGroundConeFlash),
 // distinct from GroundStrikeLandedEvent's circular area.
 export type ConeMeleeLandedEvent = {

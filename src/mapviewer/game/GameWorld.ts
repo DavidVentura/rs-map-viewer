@@ -2,19 +2,27 @@ import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
     AbilityEffect,
-    AbilityEffectKind,
     AbilityTarget,
-    AreaEffect,
-    ConeMeleeEffect,
-    GroundStrikeEffect,
-    HealAlliesEffect,
-    MeleeEffect,
-    MultiProjectileEffect,
-    ProjectileEffect,
+    AbilityTargetKind,
+    ConeDelivery,
+    DelayedCircleDelivery,
+    DeliveryKind,
+    ProjectileDelivery,
     WeaponStyle,
+    abilityTargetPoint,
+    aimedCombatant,
+    liveAbilityTarget,
 } from "./Ability";
-import { CombatEvent, CombatEventKind, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
-import { Combatant, Faction } from "./Combatant";
+import { CombatEvent, CombatEventKind } from "./CombatEvent";
+import { Combatant } from "./Combatant";
+import {
+    HitEffect,
+    applyPayloads,
+    combatantsInCircle,
+    hitEffectHoldSeconds,
+    matchesAffects,
+} from "./Effect";
+import { PendingDelayedDelivery, affectedCombatants } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
@@ -33,17 +41,16 @@ import {
     pendingGroundItemPaths,
     rollDropPath,
 } from "./GroundItem";
-import { PendingGroundStrike, TILE_SIZE, combatantsHitByGroundStrike } from "./GroundStrike";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import {
     Projectile,
-    ProjectileHitEffect,
+    ProjectileImpact,
+    ProjectileLanding,
     ProjectileOutcome,
-    ProjectileSpec,
     ProjectileTarget,
 } from "./Projectile";
 import { SpatialGrid } from "./SpatialGrid";
-import { Terrain } from "./Terrain";
+import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
 import {
     WaveDirectorState,
@@ -54,13 +61,11 @@ import {
     totalGroupCount,
 } from "./WaveDirector";
 import { getStyleAttack, resolvePlayerAbilityBars } from "./abilities";
-import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
+import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import {
     FlightOrigin,
     directionToRotation,
     generateSpreadDirections,
-    isPointInCone,
-    isWithinTileArea,
     rotationToDirection,
 } from "./projectileMath";
 import { resolveSpawn } from "./spawn";
@@ -98,7 +103,7 @@ export class GameWorld {
     static readonly MAX_PROJECTILES = 32;
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 32;
-    static readonly MAX_GROUND_STRIKES = 16;
+    static readonly MAX_DELAYED_DELIVERIES = 16;
     static readonly BASIC_ATTACK_SLOT = 0;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
     static readonly CORPSE_SECONDS = 6;
@@ -113,7 +118,7 @@ export class GameWorld {
     enemies: Enemy[] = [];
     projectiles: Projectile[] = [];
     visualEffects: VisualEffect[] = [];
-    pendingGroundStrikes: PendingGroundStrike[] = [];
+    pendingDelayedDeliveries: PendingDelayedDelivery[] = [];
     groundItems: GroundItem[] = [];
     private events: CombatEvent[] = [];
 
@@ -252,11 +257,6 @@ export class GameWorld {
         return this.enemies.find((enemy) => enemy.id === id);
     }
 
-    private resolveEnemyTarget(target: AbilityTarget, level: number): Enemy | undefined {
-        const enemy = target.enemyId !== undefined ? this.findEnemy(target.enemyId) : undefined;
-        return enemy && enemy.level === level && enemy.health > 0 ? enemy : undefined;
-    }
-
     combatants(): Combatant[] {
         const combatants: Combatant[] = [...this.enemies];
         if (this.player) {
@@ -303,7 +303,7 @@ export class GameWorld {
         this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
-        this.resolveGroundStrikeImpacts();
+        this.resolveDelayedDeliveries();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
             effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
@@ -407,7 +407,7 @@ export class GameWorld {
             this.tryRespawnEnemy(enemy);
             return;
         }
-        this.resolveEnemyAttack(enemy);
+        this.resolveReadyCast(enemy);
         this.checkBossPhase(enemy);
     }
 
@@ -593,58 +593,6 @@ export class GameWorld {
         this.enemyWaveIndex.set(id, spawn.waveIndex);
     }
 
-    private resolveEnemyAttack(enemy: Enemy): void {
-        const cast = enemy.abilityRuntime.takeReadyCast(this.timeSeconds);
-        if (!cast || !this.player || this.player.health <= 0) {
-            return;
-        }
-        switch (cast.definition.effect.kind) {
-            case AbilityEffectKind.MELEE:
-                this.resolveEnemyMelee(enemy, this.player, cast.definition.effect);
-                break;
-            case AbilityEffectKind.PROJECTILE:
-                this.spawnProjectile(enemy, this.resolveProjectileSpec(cast.definition.effect), {
-                    x: this.player.x,
-                    y: this.player.y,
-                });
-                break;
-            case AbilityEffectKind.GROUND_STRIKE:
-                this.resolveGroundStrike(enemy, cast.definition.effect, cast.target);
-                break;
-            case AbilityEffectKind.HEAL_ALLIES:
-                this.resolveEnemyHealAllies(enemy, cast.definition.effect);
-                break;
-            default:
-                throw new Error(`Unsupported enemy attack effect: ${cast.definition.effect.kind}`);
-        }
-    }
-
-    private resolveEnemyMelee(enemy: Enemy, player: Player, effect: MeleeEffect): void {
-        const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-        if (!isWithinMeleeReach(distance, effect.reach, enemy.hitRadius, player.hitRadius)) {
-            return;
-        }
-        applyDamage(
-            player,
-            rollDamage(effect.minDamage, effect.maxDamage, this.random),
-            this.events,
-        );
-    }
-
-    private resolveEnemyHealAllies(caster: Enemy, effect: HealAlliesEffect): void {
-        const radius = effect.radiusTiles * TILE_SIZE;
-        for (const ally of this.enemies) {
-            if (ally.level !== caster.level || ally.health <= 0) {
-                continue;
-            }
-            if (Math.hypot(ally.x - caster.x, ally.y - caster.y) > radius) {
-                continue;
-            }
-            applyHeal(ally, effect.amount, this.events);
-            this.spawnVisualEffect(effect.hitEffect, { kind: "COMBATANT", combatant: ally });
-        }
-    }
-
     private checkPlayerDeath(): void {
         const player = this.player;
         if (!player || player.health > 0 || player.hasDied()) {
@@ -683,8 +631,10 @@ export class GameWorld {
         for (const projectile of this.projectiles) {
             const outcome = projectile.update(
                 dtSeconds,
+                this.timeSeconds,
                 combatants,
                 this.events,
+                this.random,
                 this.terrain,
                 this.seqTypeLoader,
                 this.seqFrameLoader,
@@ -693,8 +643,12 @@ export class GameWorld {
                 survivingProjectiles.push(projectile);
                 continue;
             }
-            if (projectile.spec.hitEffect) {
-                this.spawnProjectileHitEffect(projectile.spec.hitEffect, projectile.level, outcome);
+            if (projectile.impact.hitEffect) {
+                this.spawnProjectileHitEffect(
+                    projectile.impact.hitEffect,
+                    projectile.level,
+                    outcome,
+                );
             }
         }
         this.projectiles = survivingProjectiles;
@@ -738,18 +692,18 @@ export class GameWorld {
         if (!slotInput?.held || !slotInput.target) {
             return undefined;
         }
-        const enemy = this.resolveEnemyTarget(slotInput.target, player.level);
+        const enemy = aimedCombatant(slotInput.target, player.level);
         if (!enemy) {
             return undefined;
         }
         const attack = getStyleAttack(WeaponStyle.MELEE);
-        if (attack.effect.kind !== AbilityEffectKind.MELEE) {
+        if (attack.effect.delivery.kind !== DeliveryKind.TARGET) {
             return undefined;
         }
         const deltaX = enemy.x - player.x;
         const deltaY = enemy.y - player.y;
         const distance = Math.hypot(deltaX, deltaY);
-        const reach = attack.effect.reach + player.hitRadius + enemy.hitRadius;
+        const reach = attack.effect.delivery.reach + player.hitRadius + enemy.hitRadius;
         if (distance <= reach) {
             return undefined;
         }
@@ -778,94 +732,250 @@ export class GameWorld {
         if (!player.canUseSlotIgnoringTarget(slot, time)) {
             return false;
         }
-        const definition = player.abilityBar[slot];
-        if (definition.effect.kind !== AbilityEffectKind.MELEE) {
+        const delivery = player.abilityBar[slot].effect.delivery;
+        if (delivery.kind !== DeliveryKind.TARGET) {
             return true;
         }
-        const enemy = this.resolveEnemyTarget(target, player.level);
+        const enemy = aimedCombatant(target, player.level);
         if (!enemy) {
             return false;
         }
         const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
-        return isWithinMeleeReach(
-            distance,
-            definition.effect.reach,
-            player.hitRadius,
-            enemy.hitRadius,
-        );
+        return isWithinMeleeReach(distance, delivery.reach, player.hitRadius, enemy.hitRadius);
     }
 
-    private resolveReadyCast(player: Player): void {
-        const cast = player.abilityRuntime.takeReadyCast(this.timeSeconds);
+    private resolveReadyCast(caster: Player | Enemy): void {
+        const cast = caster.abilityRuntime.takeReadyCast(this.timeSeconds);
         if (!cast) {
             return;
         }
-        this.resolveEffect(player, cast.definition.effect, cast.target);
+        this.resolveEffect(caster, cast.definition.effect, cast.target);
     }
 
-    private resolveEffect(caster: Player, effect: AbilityEffect, target: AbilityTarget): void {
-        switch (effect.kind) {
-            case AbilityEffectKind.PROJECTILE:
-                this.spawnProjectile(caster, this.resolveProjectileSpec(effect), target);
-                break;
-            case AbilityEffectKind.HEAL:
-                applyHeal(caster, effect.amount, this.events);
-                break;
-            case AbilityEffectKind.MELEE:
-                this.resolveMelee(caster, effect, target);
-                break;
-            case AbilityEffectKind.CONE_MELEE:
-                this.resolveConeMelee(caster, effect);
-                break;
-            case AbilityEffectKind.AREA:
-                this.resolveArea(caster, effect, target);
-                break;
-            case AbilityEffectKind.MULTI_PROJECTILE:
-                this.resolveMultiProjectile(caster, effect, target);
-                break;
-            case AbilityEffectKind.GROUND_STRIKE:
-                this.resolveGroundStrike(caster, effect, target);
-                break;
+    // The one resolution path for every cast, player or enemy: the delivery picks who is affected
+    // (or spawns projectiles / schedules a delayed circle that pick later), the payloads land on
+    // each of them, and the hit graphic is anchored per combatant for combatant deliveries or at
+    // the landing point for point deliveries (see AbilityEffect.hitEffect).
+    private resolveEffect(caster: Combatant, effect: AbilityEffect, target: AbilityTarget): void {
+        const aim = liveAbilityTarget(target, caster.level);
+        const delivery = effect.delivery;
+        switch (delivery.kind) {
+            case DeliveryKind.PROJECTILE:
+                this.spawnProjectiles(caster, effect, delivery, aim);
+                return;
+            case DeliveryKind.DELAYED_CIRCLE:
+                this.scheduleDelayedDelivery(caster, effect, delivery, aim);
+                return;
+            case DeliveryKind.CONE:
+                this.landCone(caster, effect, delivery, aim);
+                return;
+            case DeliveryKind.TARGET:
+            case DeliveryKind.CIRCLE: {
+                const hits = affectedCombatants(
+                    caster,
+                    delivery,
+                    effect.affects,
+                    aim,
+                    this.combatants(),
+                );
+                for (const hit of hits) {
+                    this.landOnCombatant(hit, effect);
+                }
+                return;
+            }
         }
     }
 
-    // Rolls a fresh damage value into the spec for abilities that declare a damage range (see
-    // ProjectileEffect.damageMin/Max), otherwise passes the spec's own fixed damage through as-is.
-    private resolveProjectileSpec(effect: ProjectileEffect): ProjectileSpec {
-        if (effect.damageMin === undefined || effect.damageMax === undefined) {
-            return effect.spec;
+    private landOnCombatant(target: Combatant, effect: AbilityEffect): void {
+        applyPayloads(target, effect.payloads, this.timeSeconds, this.random, this.events);
+        if (!effect.hitEffect || target.health <= 0) {
+            return;
         }
-        return {
-            ...effect.spec,
-            damage: rollDamage(effect.damageMin, effect.damageMax, this.random),
+        this.spawnVisualEffect(
+            effect.hitEffect,
+            { kind: "COMBATANT", combatant: target },
+            hitEffectHoldSeconds(effect.payloads),
+        );
+    }
+
+    private landCone(
+        caster: Combatant,
+        effect: AbilityEffect,
+        delivery: ConeDelivery,
+        aim: AbilityTarget,
+    ): void {
+        const hits = affectedCombatants(caster, delivery, effect.affects, aim, this.combatants());
+        for (const hit of hits) {
+            applyPayloads(hit, effect.payloads, this.timeSeconds, this.random, this.events);
+        }
+        if (!effect.hitEffect) {
+            return;
+        }
+        const facing = rotationToDirection(caster.rotation);
+        const landingDistance = delivery.reach * 0.5;
+        this.spawnVisualEffect(effect.hitEffect, {
+            kind: "POINT",
+            x: caster.x + facing.x * landingDistance,
+            y: caster.y + facing.y * landingDistance,
+            level: caster.level,
+        });
+        this.events.push({
+            kind: CombatEventKind.CONE_MELEE_LANDED,
+            x: caster.x,
+            y: caster.y,
+            level: caster.level,
+            facingRotation: caster.rotation,
+            angleRadians: delivery.angleRadians,
+            reach: delivery.reach,
+        });
+    }
+
+    private scheduleDelayedDelivery(
+        caster: Combatant,
+        effect: AbilityEffect,
+        delivery: DelayedCircleDelivery,
+        aim: AbilityTarget,
+    ): void {
+        if (this.pendingDelayedDeliveries.length >= GameWorld.MAX_DELAYED_DELIVERIES) {
+            return;
+        }
+        const point = abilityTargetPoint(aim);
+        this.pendingDelayedDeliveries.push({
+            x: point.x,
+            y: point.y,
+            level: caster.level,
+            caster,
+            effect: { ...effect, delivery },
+            startSeconds: this.timeSeconds,
+            strikeAtSeconds: this.timeSeconds + delivery.telegraphSeconds,
+        });
+    }
+
+    private resolveDelayedDeliveries(): void {
+        const ready = this.pendingDelayedDeliveries.filter(
+            (pending) => this.timeSeconds >= pending.strikeAtSeconds,
+        );
+        if (ready.length === 0) {
+            return;
+        }
+        this.pendingDelayedDeliveries = this.pendingDelayedDeliveries.filter(
+            (pending) => this.timeSeconds < pending.strikeAtSeconds,
+        );
+        const combatants = this.combatants();
+        for (const pending of ready) {
+            const { caster, effect } = pending;
+            const radius = effect.delivery.radiusTiles * TILE_SIZE;
+            const hits = combatantsInCircle(pending, radius, combatants).filter((combatant) =>
+                matchesAffects(caster, effect.affects, combatant),
+            );
+            for (const hit of hits) {
+                applyPayloads(hit, effect.payloads, this.timeSeconds, this.random, this.events);
+            }
+            if (effect.hitEffect) {
+                this.spawnVisualEffect(effect.hitEffect, {
+                    kind: "POINT",
+                    x: pending.x,
+                    y: pending.y,
+                    level: pending.level,
+                });
+            }
+            this.events.push({
+                kind: CombatEventKind.GROUND_STRIKE_LANDED,
+                x: pending.x,
+                y: pending.y,
+                level: pending.level,
+                radius,
+            });
+        }
+    }
+
+    // A free-flight spec fans count shots across the spread around the aim direction, each flying
+    // to max range along its own line; any other landing rule is a single shot that tracks the
+    // aimed combatant (or flies to the bare aimed point, to expire harmlessly, when there is none)
+    // or lands where the aim stands at cast time.
+    private spawnProjectiles(
+        caster: Combatant,
+        effect: AbilityEffect,
+        delivery: ProjectileDelivery,
+        aim: AbilityTarget,
+    ): void {
+        const spec = delivery.spec;
+        const impact: ProjectileImpact = {
+            caster,
+            affects: effect.affects,
+            payloads: effect.payloads,
+            hitEffect: effect.hitEffect,
         };
-    }
-
-    private spawnProjectile(caster: Combatant, spec: ProjectileSpec, target: AbilityTarget): void {
+        const aimPoint = abilityTargetPoint(aim);
+        if (spec.landing.kind === "FREE_FLIGHT") {
+            const deltaX = aimPoint.x - caster.x;
+            const deltaY = aimPoint.y - caster.y;
+            if (deltaX === 0 && deltaY === 0) {
+                return;
+            }
+            const directions = generateSpreadDirections(
+                directionToRotation(deltaX, deltaY),
+                delivery.spreadAngleRadians,
+                delivery.count,
+            );
+            for (const rotation of directions) {
+                if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+                    break;
+                }
+                const direction = rotationToDirection(rotation);
+                const start = this.projectileLaunchPoint(caster, direction.x, direction.y);
+                const end: ProjectileTarget = {
+                    kind: "POINT",
+                    x: caster.x + direction.x * spec.range,
+                    y: caster.y + direction.y * spec.range,
+                };
+                this.projectiles.push(new Projectile(spec, impact, start, end));
+            }
+            return;
+        }
+        if (delivery.count !== 1) {
+            throw new Error(
+                `A ${spec.landing.kind} projectile cannot be fired as a spread of ${delivery.count}`,
+            );
+        }
         if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
             return;
         }
-        const aim = this.resolveProjectileTarget(caster, spec, target);
-        const aimPoint = aim.kind === "COMBATANT" ? aim.combatant : aim;
-        if (spec.landing.kind === "FIXED_POINT" && spec.landing.origin.kind === "ABOVE_TARGET") {
-            const start = {
+        const start = this.aimedLaunchPoint(caster, spec.landing, aimPoint);
+        if (!start) {
+            return;
+        }
+        const target: ProjectileTarget =
+            spec.landing.kind === "TRACKED_COMBATANT" && aim.kind === AbilityTargetKind.COMBATANT
+                ? { kind: "COMBATANT", combatant: aim.combatant }
+                : { kind: "POINT", x: aimPoint.x, y: aimPoint.y };
+        this.projectiles.push(new Projectile(spec, impact, start, target));
+    }
+
+    // Where an aimed shot spawns: above its landing point for a rock dropped from the sky, else a
+    // launch offset from the caster toward the aim (nowhere, when the aim is the caster's own
+    // position).
+    private aimedLaunchPoint(
+        caster: Combatant,
+        landing: ProjectileLanding,
+        aimPoint: { x: number; y: number },
+    ): FlightOrigin | undefined {
+        if (landing.kind === "FIXED_POINT" && landing.origin.kind === "ABOVE_TARGET") {
+            return {
                 x: aimPoint.x,
                 y: aimPoint.y,
                 height:
                     this.terrain.getHeight(caster.level, aimPoint.x, aimPoint.y) +
-                    spec.landing.origin.height,
+                    landing.origin.height,
             };
-            this.projectiles.push(new Projectile(spec, caster.faction, caster.level, start, aim));
-            return;
         }
         const deltaX = aimPoint.x - caster.x;
         const deltaY = aimPoint.y - caster.y;
         const distance = Math.hypot(deltaX, deltaY);
         if (distance === 0) {
-            return;
+            return undefined;
         }
-        const start = this.projectileLaunchPoint(caster, deltaX / distance, deltaY / distance);
-        this.projectiles.push(new Projectile(spec, caster.faction, caster.level, start, aim));
+        return this.projectileLaunchPoint(caster, deltaX / distance, deltaY / distance);
     }
 
     private projectileLaunchPoint(
@@ -882,44 +992,8 @@ export class GameWorld {
         };
     }
 
-    // What a cast at `target` flies to under the spec's landing rule. The aimed combatant is the
-    // player's hovered enemy, or the player for an enemy's cast: a tracked shot follows it (and
-    // flies to the bare aimed point, to expire harmlessly, when there is none), a fixed-point shot
-    // lands where it stands at cast time, and a free-flight shot flies to max range along the aim.
-    private resolveProjectileTarget(
-        caster: Combatant,
-        spec: ProjectileSpec,
-        target: AbilityTarget,
-    ): ProjectileTarget {
-        const aimed =
-            caster.faction === Faction.PLAYER
-                ? this.resolveEnemyTarget(target, caster.level)
-                : this.player;
-        switch (spec.landing.kind) {
-            case "TRACKED_COMBATANT":
-                return aimed
-                    ? { kind: "COMBATANT", combatant: aimed }
-                    : { kind: "POINT", x: target.x, y: target.y };
-            case "FIXED_POINT":
-                return { kind: "POINT", x: aimed?.x ?? target.x, y: aimed?.y ?? target.y };
-            case "FREE_FLIGHT": {
-                const deltaX = target.x - caster.x;
-                const deltaY = target.y - caster.y;
-                const distance = Math.hypot(deltaX, deltaY);
-                if (distance === 0) {
-                    return { kind: "POINT", x: target.x, y: target.y };
-                }
-                return {
-                    kind: "POINT",
-                    x: caster.x + (deltaX / distance) * spec.range,
-                    y: caster.y + (deltaY / distance) * spec.range,
-                };
-            }
-        }
-    }
-
     private spawnProjectileHitEffect(
-        hitEffect: ProjectileHitEffect,
+        hitEffect: HitEffect,
         level: number,
         outcome: Exclude<ProjectileOutcome, { kind: "ALIVE" }>,
     ): void {
@@ -944,7 +1018,7 @@ export class GameWorld {
     }
 
     private spawnVisualEffect(
-        hitEffect: ProjectileHitEffect,
+        hitEffect: HitEffect,
         anchor: VisualEffectAnchor,
         holdSeconds?: number,
     ): void {
@@ -960,190 +1034,5 @@ export class GameWorld {
                 holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
             ),
         );
-    }
-
-    private resolveMelee(caster: Player, effect: MeleeEffect, target: AbilityTarget): void {
-        const enemy = this.resolveEnemyTarget(target, caster.level);
-        if (!enemy) {
-            return;
-        }
-        const distance = Math.hypot(enemy.x - caster.x, enemy.y - caster.y);
-        if (!isWithinMeleeReach(distance, effect.reach, caster.hitRadius, enemy.hitRadius)) {
-            return;
-        }
-        applyDamage(
-            enemy,
-            rollDamage(effect.minDamage, effect.maxDamage, this.random),
-            this.events,
-        );
-    }
-
-    private resolveConeMelee(caster: Player, effect: ConeMeleeEffect): void {
-        const basicAttack = getStyleAttack(caster.style);
-        if (basicAttack.effect.kind !== AbilityEffectKind.MELEE) {
-            return;
-        }
-        const minDamage = basicAttack.effect.minDamage * effect.damageMultiplier;
-        const maxDamage = basicAttack.effect.maxDamage * effect.damageMultiplier;
-        for (const enemy of this.enemies) {
-            if (enemy.level !== caster.level || enemy.health <= 0) {
-                continue;
-            }
-            const reach = effect.reach + caster.hitRadius + enemy.hitRadius;
-            if (
-                !isPointInCone(
-                    caster.x,
-                    caster.y,
-                    caster.rotation,
-                    effect.angleRadians,
-                    reach,
-                    enemy.x,
-                    enemy.y,
-                )
-            ) {
-                continue;
-            }
-            applyDamage(enemy, rollDamage(minDamage, maxDamage, this.random), this.events);
-        }
-        if (effect.hitEffect) {
-            const facing = rotationToDirection(caster.rotation);
-            const landingDistance = effect.reach * 0.5;
-            this.spawnVisualEffect(effect.hitEffect, {
-                kind: "POINT",
-                x: caster.x + facing.x * landingDistance,
-                y: caster.y + facing.y * landingDistance,
-                level: caster.level,
-            });
-            this.events.push({
-                kind: CombatEventKind.CONE_MELEE_LANDED,
-                x: caster.x,
-                y: caster.y,
-                level: caster.level,
-                facingRotation: caster.rotation,
-                angleRadians: effect.angleRadians,
-                reach: effect.reach,
-            });
-        }
-    }
-
-    private resolveArea(caster: Player, effect: AreaEffect, target: AbilityTarget): void {
-        const centerEnemy = this.resolveEnemyTarget(target, caster.level);
-        const centerX = centerEnemy?.x ?? target.x;
-        const centerY = centerEnemy?.y ?? target.y;
-        for (const enemy of this.enemies) {
-            if (enemy.level !== caster.level || enemy.health <= 0) {
-                continue;
-            }
-            if (!isWithinTileArea(centerX, centerY, effect.radiusTiles, enemy.x, enemy.y)) {
-                continue;
-            }
-            applyDamage(
-                enemy,
-                rollDamage(effect.damageMin, effect.damageMax, this.random),
-                this.events,
-            );
-            if (enemy.health <= 0) {
-                continue;
-            }
-            applyFreeze(enemy, this.timeSeconds + effect.freezeSeconds, this.events);
-            this.spawnVisualEffect(
-                effect.hitEffect,
-                { kind: "COMBATANT", combatant: enemy },
-                effect.freezeSeconds,
-            );
-        }
-    }
-
-    private resolveMultiProjectile(
-        caster: Player,
-        effect: MultiProjectileEffect,
-        target: AbilityTarget,
-    ): void {
-        if (effect.spec.landing.kind !== "FREE_FLIGHT") {
-            throw new Error(
-                `Multi-projectile spread requires a FREE_FLIGHT spec, got ${effect.spec.landing.kind}`,
-            );
-        }
-        const deltaX = target.x - caster.x;
-        const deltaY = target.y - caster.y;
-        if (deltaX === 0 && deltaY === 0) {
-            return;
-        }
-        const baseRotation = directionToRotation(deltaX, deltaY);
-        const directions = generateSpreadDirections(
-            baseRotation,
-            effect.spreadAngleRadians,
-            effect.count,
-        );
-        for (const rotation of directions) {
-            if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
-                break;
-            }
-            const direction = rotationToDirection(rotation);
-            const start = this.projectileLaunchPoint(caster, direction.x, direction.y);
-            const end = {
-                kind: "POINT" as const,
-                x: caster.x + direction.x * effect.spec.range,
-                y: caster.y + direction.y * effect.spec.range,
-            };
-            this.projectiles.push(
-                new Projectile(effect.spec, caster.faction, caster.level, start, end),
-            );
-        }
-    }
-
-    private resolveGroundStrike(
-        caster: Combatant,
-        effect: GroundStrikeEffect,
-        target: AbilityTarget,
-    ): void {
-        if (this.pendingGroundStrikes.length >= GameWorld.MAX_GROUND_STRIKES) {
-            return;
-        }
-        const targetEnemy = this.resolveEnemyTarget(target, caster.level);
-        this.pendingGroundStrikes.push({
-            x: targetEnemy?.x ?? target.x,
-            y: targetEnemy?.y ?? target.y,
-            level: caster.level,
-            radius: effect.radiusTiles * TILE_SIZE,
-            startSeconds: this.timeSeconds,
-            strikeAtSeconds: this.timeSeconds + effect.telegraphSeconds,
-            damageMin: effect.damageMin,
-            damageMax: effect.damageMax,
-            sourceFaction: caster.faction,
-            caster,
-        });
-    }
-
-    private resolveGroundStrikeImpacts(): void {
-        if (this.pendingGroundStrikes.length === 0) {
-            return;
-        }
-        const ready = this.pendingGroundStrikes.filter(
-            (strike) => this.timeSeconds >= strike.strikeAtSeconds,
-        );
-        if (ready.length === 0) {
-            return;
-        }
-        this.pendingGroundStrikes = this.pendingGroundStrikes.filter(
-            (strike) => this.timeSeconds < strike.strikeAtSeconds,
-        );
-        const combatants = this.combatants();
-        for (const strike of ready) {
-            for (const combatant of combatantsHitByGroundStrike(strike, combatants)) {
-                applyDamage(
-                    combatant,
-                    rollDamage(strike.damageMin, strike.damageMax, this.random),
-                    this.events,
-                );
-            }
-            this.events.push({
-                kind: CombatEventKind.GROUND_STRIKE_LANDED,
-                x: strike.x,
-                y: strike.y,
-                level: strike.level,
-                radius: strike.radius,
-            });
-        }
     }
 }

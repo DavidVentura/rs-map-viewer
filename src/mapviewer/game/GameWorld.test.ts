@@ -1,13 +1,18 @@
 import {
     AbilityDefinition,
-    AbilityEffectKind,
+    AbilityEffect,
+    AbilityTarget,
+    AbilityTargetKind,
+    CircleCenter,
     CooldownGroup,
+    DeliveryKind,
     ResolvedAbility,
     WeaponStyle,
     resolveAbility,
 } from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
-import { Faction } from "./Combatant";
+import { Combatant, Faction } from "./Combatant";
+import { Affects, PayloadKind, damagePayload } from "./Effect";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
 import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
@@ -25,6 +30,7 @@ import {
     POWER_SHOT,
     SCIMITAR_SLASH,
     VOLLEY,
+    YT_MEJKOT_HEAL_PULSE,
 } from "./abilities";
 import { stubSequenceLoaders } from "./testLoaders";
 
@@ -89,7 +95,35 @@ function idleAbilities(): AbilitySlotInput[] {
     return [{ held: false }, { held: false }, { held: false }, { held: false }];
 }
 
-function holdSlot(slot: number, target: { x: number; y: number; enemyId?: number }): SimInput {
+function point(x: number, y: number): AbilityTarget {
+    return { kind: AbilityTargetKind.POINT, x, y };
+}
+
+function at(combatant: Combatant): AbilityTarget {
+    return { kind: AbilityTargetKind.COMBATANT, combatant };
+}
+
+function minDamage(definition: AbilityDefinition): number {
+    const payload = definition.effect.payloads.find(
+        (candidate) => candidate.kind === PayloadKind.DAMAGE,
+    );
+    if (!payload || payload.kind !== PayloadKind.DAMAGE) {
+        throw new Error(`${definition.id} has no DAMAGE payload`);
+    }
+    return payload.roll.min;
+}
+
+function healAmount(definition: AbilityDefinition): number {
+    const payload = definition.effect.payloads.find(
+        (candidate) => candidate.kind === PayloadKind.HEAL,
+    );
+    if (!payload || payload.kind !== PayloadKind.HEAL) {
+        throw new Error(`${definition.id} has no HEAL payload`);
+    }
+    return payload.amount;
+}
+
+function holdSlot(slot: number, target: AbilityTarget): SimInput {
     const abilities = idleAbilities();
     abilities[slot] = { held: true, target };
     return { movement: { x: 0, y: 0, running: false }, abilities };
@@ -119,7 +153,7 @@ describe("GameWorld ability wiring", () => {
     it("fires an arrow once the bow's wind-up elapses, not before", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        const target = { x: 500, y: 0 };
+        const target = point(500, 0);
 
         advanceSeconds(world, holdSlot(0, target), impactOf(BOW_SHOT) - 0.05);
         expect(world.projectiles.length).toBe(0);
@@ -133,7 +167,7 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         // Far enough that neither arrow reaches its aimed landing point (and disappears) within
         // this test's short window, so both fired arrows are still in flight to be counted.
-        const target = { x: 100000, y: 0 };
+        const target = point(100000, 0);
 
         const cooldownTotal = impactOf(BOW_SHOT) + BOW_SHOT.locks[0].seconds;
         advanceSeconds(world, holdSlot(0, target), cooldownTotal * 2 + 0.1);
@@ -152,20 +186,12 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
         player.health = 50;
-        const healAmount =
-            HEALING_POTION.effect.kind === AbilityEffectKind.HEAL
-                ? HEALING_POTION.effect.amount
-                : 0;
         const potionSlot = player.abilityBar.length - 1;
 
-        advanceSeconds(
-            world,
-            holdSlot(potionSlot, { x: 0, y: 0 }),
-            impactOf(HEALING_POTION) + 0.05,
-        );
-        expect(player.health).toBe(50 + healAmount);
+        advanceSeconds(world, holdSlot(potionSlot, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
+        expect(player.health).toBe(50 + healAmount(HEALING_POTION));
 
-        advanceSeconds(world, holdSlot(0, { x: 500, y: 0 }), 0.05);
+        advanceSeconds(world, holdSlot(0, point(500, 0)), 0.05);
         expect(world.projectiles.length).toBe(0);
     });
 
@@ -176,11 +202,7 @@ describe("GameWorld ability wiring", () => {
         expect(player.health).toBe(player.maxHealth);
         const potionSlot = player.abilityBar.length - 1;
 
-        advanceSeconds(
-            world,
-            holdSlot(potionSlot, { x: 0, y: 0 }),
-            impactOf(HEALING_POTION) + 0.05,
-        );
+        advanceSeconds(world, holdSlot(potionSlot, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
         expect(player.health).toBe(player.maxHealth);
         expect(player.abilityRuntime.canUse(HEALING_POTION, player.mana, world.timeSeconds)).toBe(
             false,
@@ -219,7 +241,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(0, { x: enemy.x, y: enemy.y, enemyId: enemy.id }), 0.02);
+        advanceSeconds(world, holdSlot(0, at(enemy)), 0.02);
 
         expect(enemy.health).toBe(enemy.maxHealth);
         expect(player.abilityRuntime.isBusy(world.timeSeconds)).toBe(false);
@@ -235,11 +257,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(
-            world,
-            holdSlot(0, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            impactOf(SCIMITAR_SLASH) + 0.05,
-        );
+        advanceSeconds(world, holdSlot(0, at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
     });
@@ -251,18 +269,11 @@ describe("Melee style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
-        const basicMin =
-            SCIMITAR_SLASH.effect.kind === AbilityEffectKind.MELEE
-                ? SCIMITAR_SLASH.effect.minDamage
-                : 0;
 
-        advanceSeconds(
-            world,
-            holdSlot(1, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            impactOf(CLEAVE) + 0.05,
-        );
+        advanceSeconds(world, holdSlot(1, point(enemy.x, enemy.y)), impactOf(CLEAVE) + 0.05);
 
-        expect(enemy.health).toBe(enemy.maxHealth - basicMin * 2);
+        expect(minDamage(CLEAVE)).toBe(minDamage(SCIMITAR_SLASH) * 2);
+        expect(enemy.health).toBe(enemy.maxHealth - minDamage(CLEAVE));
     });
 
     it("Cleave does not hit an enemy behind the player's facing", () => {
@@ -273,7 +284,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, { x: 0, y: 200 }), impactOf(CLEAVE) + 0.05);
+        advanceSeconds(world, holdSlot(1, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth);
     });
@@ -283,9 +294,11 @@ describe("Ranged style", () => {
     it("Volley fires one arrow per spread direction on wind-up", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        const target = { x: 500, y: 0 };
+        const target = point(500, 0);
         const count =
-            VOLLEY.effect.kind === AbilityEffectKind.MULTI_PROJECTILE ? VOLLEY.effect.count : 0;
+            VOLLEY.effect.delivery.kind === DeliveryKind.PROJECTILE
+                ? VOLLEY.effect.delivery.count
+                : 0;
 
         advanceSeconds(world, holdSlot(1, target), impactOf(VOLLEY) + 0.05);
 
@@ -299,7 +312,7 @@ describe("Ranged style", () => {
         world.spawnEnemy(400, 0, 0, makeEnemyType(1, 2, 3));
         const [near, far] = world.enemies;
 
-        advanceSeconds(world, holdSlot(2, { x: 1000, y: 0 }), impactOf(POWER_SHOT) + 0.5);
+        advanceSeconds(world, holdSlot(2, point(1000, 0)), impactOf(POWER_SHOT) + 0.5);
 
         expect(near.health).toBeLessThan(near.maxHealth);
         expect(far.health).toBeLessThan(far.maxHealth);
@@ -315,11 +328,7 @@ describe("Magic style", () => {
         player.style = WeaponStyle.MAGIC;
         const enemy = world.enemies[0];
 
-        advanceSeconds(
-            world,
-            holdSlot(1, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            impactOf(ICE_BARRAGE) + 0.05,
-        );
+        advanceSeconds(world, holdSlot(1, at(enemy)), impactOf(ICE_BARRAGE) + 0.05);
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
@@ -334,11 +343,7 @@ describe("Magic style", () => {
         player.style = WeaponStyle.MAGIC;
         const enemy = world.enemies[0];
 
-        advanceSeconds(
-            world,
-            holdSlot(1, { x: enemy.x, y: enemy.y }),
-            impactOf(ICE_BARRAGE) + 0.05,
-        );
+        advanceSeconds(world, holdSlot(1, point(enemy.x, enemy.y)), impactOf(ICE_BARRAGE) + 0.05);
 
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
     });
@@ -358,10 +363,7 @@ describe("Enemy attack cycle", () => {
 
         advanceSeconds(world, idleInput(), impactOf(GOBLIN_MELEE) + 0.05);
 
-        const meleeEffect =
-            GOBLIN_MELEE.effect.kind === AbilityEffectKind.MELEE ? GOBLIN_MELEE.effect : undefined;
-        expect(meleeEffect).toBeDefined();
-        expect(player.health).toBe(player.maxHealth - meleeEffect!.minDamage);
+        expect(player.health).toBe(player.maxHealth - minDamage(GOBLIN_MELEE));
         expect(enemy.state).toBe(EnemyState.RECOVERY);
     });
 
@@ -434,7 +436,16 @@ describe("Enemy attack cycle", () => {
             id: "test_enemy_ranged",
             contactFrame: 2,
             castSpeed: 1,
-            effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
+            effect: {
+                delivery: {
+                    kind: DeliveryKind.PROJECTILE,
+                    spec: ARROW_SPEC,
+                    count: 1,
+                    spreadAngleRadians: 0,
+                },
+                affects: Affects.HOSTILE,
+                payloads: [damagePayload(3)],
+            },
         };
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
@@ -444,7 +455,7 @@ describe("Enemy attack cycle", () => {
         advanceSeconds(world, idleInput(), impactOf(rangedAttack) + 0.05);
 
         expect(world.projectiles.length).toBe(1);
-        expect(world.projectiles[0].sourceFaction).toBe(Faction.ENEMY);
+        expect(world.projectiles[0].impact.caster.faction).toBe(Faction.ENEMY);
 
         advanceSeconds(world, idleInput(), 1);
 
@@ -539,19 +550,18 @@ const GROUND_STRIKE_TEST: AbilityDefinition = {
     requires: [],
     locks: [],
     effect: {
-        kind: AbilityEffectKind.GROUND_STRIKE,
-        radiusTiles: 1,
-        telegraphSeconds: 0.5,
-        damageMin: 10,
-        damageMax: 10,
-        range: 1000,
+        delivery: {
+            kind: DeliveryKind.DELAYED_CIRCLE,
+            radiusTiles: 1,
+            telegraphSeconds: 0.5,
+            range: 1000,
+        },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(10)],
     },
 };
 
-const GROUND_STRIKE_TELEGRAPH_SECONDS =
-    GROUND_STRIKE_TEST.effect.kind === AbilityEffectKind.GROUND_STRIKE
-        ? GROUND_STRIKE_TEST.effect.telegraphSeconds
-        : 0;
+const GROUND_STRIKE_TELEGRAPH_SECONDS = 0.5;
 
 describe("Ground strike", () => {
     it("does not damage on cast, only after the telegraph elapses", () => {
@@ -561,22 +571,18 @@ describe("Ground strike", () => {
         const player = world.player!;
         const enemy = world.enemies[0];
 
-        player.beginCast(
-            resolve(GROUND_STRIKE_TEST),
-            { x: enemy.x, y: enemy.y },
-            world.timeSeconds,
-        );
+        player.beginCast(resolve(GROUND_STRIKE_TEST), at(enemy), world.timeSeconds);
         advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
 
         expect(enemy.health).toBe(enemy.maxHealth);
-        expect(world.pendingGroundStrikes.length).toBe(1);
-        expect(world.pendingGroundStrikes[0].x).toBe(enemy.x);
-        expect(world.pendingGroundStrikes[0].y).toBe(enemy.y);
+        expect(world.pendingDelayedDeliveries.length).toBe(1);
+        expect(world.pendingDelayedDeliveries[0].x).toBe(enemy.x);
+        expect(world.pendingDelayedDeliveries[0].y).toBe(enemy.y);
 
         advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
 
         expect(enemy.health).toBe(enemy.maxHealth - 10);
-        expect(world.pendingGroundStrikes.length).toBe(0);
+        expect(world.pendingDelayedDeliveries.length).toBe(0);
     });
 
     it("emits GROUND_STRIKE_LANDED with position and radius when a strike lands", () => {
@@ -584,7 +590,7 @@ describe("Ground strike", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
 
-        player.beginCast(resolve(GROUND_STRIKE_TEST), { x: 200, y: 300 }, world.timeSeconds);
+        player.beginCast(resolve(GROUND_STRIKE_TEST), point(200, 300), world.timeSeconds);
         advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
         world.drainEvents();
 
@@ -607,7 +613,7 @@ describe("Ground strike", () => {
         const player = world.player!;
         const enemy = world.enemies[0];
 
-        player.beginCast(resolve(GROUND_STRIKE_TEST), { x: 0, y: 0 }, world.timeSeconds);
+        player.beginCast(resolve(GROUND_STRIKE_TEST), point(0, 0), world.timeSeconds);
         advanceSeconds(
             world,
             idleInput(),
@@ -630,11 +636,75 @@ describe("Ground strike", () => {
         // +0.05 (not +0.01, as other enemy-cast tests in this file use) to cover the tick the
         // enemy spends going IDLE -> CHASE before it can even start winding up.
         advanceSeconds(world, idleInput(), impactOf(enemyGroundStrike) + 0.05);
-        expect(world.pendingGroundStrikes.length).toBe(1);
+        expect(world.pendingDelayedDeliveries.length).toBe(1);
 
         advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
 
         expect(player.health).toBe(player.maxHealth - 10);
+    });
+});
+
+// A hostile circle around the caster, the same definition cast by either side below.
+const NOVA_TEST: AbilityDefinition = {
+    ...GROUND_STRIKE_TEST,
+    id: "test_nova",
+    effect: {
+        delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 2, center: CircleCenter.CASTER },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(10)],
+    },
+};
+
+describe("Faction filtering through one resolver", () => {
+    it("hits only enemies when the player casts a hostile circle, and only the player when an enemy casts the same one", () => {
+        const playerWorld = new GameWorld(
+            new FakeTerrain(),
+            seqTypeLoader,
+            seqFrameLoader,
+            () => 0,
+        );
+        playerWorld.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        playerWorld.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3));
+        playerWorld.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3));
+        const player = playerWorld.player!;
+        player.beginCast(resolve(NOVA_TEST), point(0, 0), playerWorld.timeSeconds);
+        advanceSeconds(playerWorld, idleInput(), impactOf(NOVA_TEST) + 0.01);
+
+        expect(player.health).toBe(player.maxHealth);
+        for (const enemy of playerWorld.enemies) {
+            expect(enemy.health).toBe(enemy.maxHealth - 10);
+        }
+
+        const enemyWorld = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        enemyWorld.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        enemyWorld.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3, [NOVA_TEST]));
+        enemyWorld.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3, [NOVA_TEST]));
+        const victim = enemyWorld.player!;
+        advanceSeconds(enemyWorld, idleInput(), impactOf(NOVA_TEST) + 0.05);
+
+        expect(victim.health).toBeLessThan(victim.maxHealth);
+        for (const enemy of enemyWorld.enemies) {
+            expect(enemy.health).toBe(enemy.maxHealth);
+        }
+    });
+
+    it("heals allies of the caster with an ALLIED circle, leaving the other faction alone", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3, [YT_MEJKOT_HEAL_PULSE]));
+        world.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3, [YT_MEJKOT_HEAL_PULSE]));
+        const player = world.player!;
+        player.health = 10;
+        for (const enemy of world.enemies) {
+            enemy.health = 5;
+        }
+
+        advanceSeconds(world, idleInput(), impactOf(YT_MEJKOT_HEAL_PULSE) + 0.05);
+
+        expect(player.health).toBe(10);
+        for (const enemy of world.enemies) {
+            expect(enemy.health).toBe(5 + healAmount(YT_MEJKOT_HEAL_PULSE));
+        }
     });
 });
 
