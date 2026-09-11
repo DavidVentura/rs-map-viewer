@@ -3,6 +3,8 @@ import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqTransformType } from "../../../rs/model/seq/SeqTransformType";
 
 export class ActorRig {
+    static readonly REST_MATRIX_SOURCE_LABEL = -1;
+
     private constructor(
         readonly matrixSourceLabels: readonly number[],
         readonly alphaSourceLabels: readonly number[],
@@ -39,10 +41,7 @@ export class ActorRig {
                 }
             }
         }
-        if (matrixLabels.size === 0) {
-            matrixLabels.add(0);
-        }
-        if (matrixLabels.size > 0x10000) {
+        if (matrixLabels.size > 0xffff) {
             throw new Error(`Actor rig has ${matrixLabels.size} matrices; the format allows 65536`);
         }
         if (alphaLabels.size > 0xff) {
@@ -50,7 +49,10 @@ export class ActorRig {
                 `Actor rig has ${alphaLabels.size} alpha labels; the format allows 255`,
             );
         }
-        const matrixSourceLabels = [...matrixLabels].sort((a, b) => a - b);
+        const matrixSourceLabels = [
+            ActorRig.REST_MATRIX_SOURCE_LABEL,
+            ...[...matrixLabels].sort((a, b) => a - b),
+        ];
         const alphaSourceLabels = [...alphaLabels].sort((a, b) => a - b);
         return new ActorRig(
             matrixSourceLabels,
@@ -61,6 +63,9 @@ export class ActorRig {
     }
 
     matrixIndex(sourceLabel: number): number {
+        if (sourceLabel === ActorRig.REST_MATRIX_SOURCE_LABEL) {
+            return 0;
+        }
         const index = this.matrixIndices.get(sourceLabel);
         if (index === undefined) {
             throw new Error(`Vertex label ${sourceLabel} is absent from its actor rig`);

@@ -103,12 +103,12 @@ export function buildFramePalette(
 
     for (let index = 0; index < frame.transformCount; index++) {
         const group = frame.transformGroups[index];
+        const resetOriginGroup = frame.resetOriginGroups[index];
+        if (resetOriginGroup !== -1 && frame.base.masks[resetOriginGroup] === 0xffff) {
+            origin = calculateOrigin(stats, matrices, frame.base.labels[resetOriginGroup], 0, 0, 0);
+        }
         if (frame.base.masks[group] !== 0xffff) {
             continue;
-        }
-        const resetOriginGroup = frame.resetOriginGroups[index];
-        if (resetOriginGroup !== -1) {
-            origin = calculateOrigin(stats, matrices, frame.base.labels[resetOriginGroup], 0, 0, 0);
         }
 
         const labels = frame.base.labels[group];

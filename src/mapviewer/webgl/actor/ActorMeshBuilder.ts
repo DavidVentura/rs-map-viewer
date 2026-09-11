@@ -215,7 +215,7 @@ export class ActorMeshBuilder {
 function sourceVertexLabels(model: Model): Int32Array {
     const labels = new Int32Array(model.verticesCount).fill(-1);
     if (!model.vertexLabels || model.vertexLabels.length === 0) {
-        return labels.fill(0);
+        return labels;
     }
     for (let label = 0; label < model.vertexLabels.length; label++) {
         for (const vertex of model.vertexLabels[label]) {
@@ -224,10 +224,6 @@ function sourceVertexLabels(model: Model): Int32Array {
             }
             labels[vertex] = label;
         }
-    }
-    const unlabeled = labels.indexOf(-1);
-    if (unlabeled !== -1) {
-        throw new Error(`Actor vertex ${unlabeled} has no label`);
     }
     return labels;
 }

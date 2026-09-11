@@ -58,7 +58,7 @@ describe("ActorMeshBuilder", () => {
         expect(mesh.transparent).toEqual([12, 9, 1]);
         expect(data.indices).toHaveLength(12);
         expect(data.vertices.byteLength % 16).toBe(0);
-        expect(data.influences).toEqual(new Uint32Array([0x00ff0000, 0x00ff0001]));
+        expect(data.influences).toEqual(new Uint32Array([0x00ff0001, 0x00ff0002]));
         expect(data.usedTextureIds).toEqual(new Set([5]));
 
         const words = new Uint32Array(
@@ -103,14 +103,13 @@ describe("ActorMeshBuilder", () => {
         expect(data.vertices.byteLength / 16).toBe(6);
     });
 
-    it("rejects vertices that do not have exactly one label", () => {
+    it("maps unlabeled vertices to the reserved rest-pose matrix", () => {
         const model = actorModel();
         model.vertexLabels[10] = new Int32Array([0]);
         const builder = new ActorMeshBuilder(textureLoader, new Map([[5, 9]]));
         const rig = ActorRig.oldStyle([model], []);
 
-        expect(() => builder.addModel(model, rig, ActorFaceSelection.all())).toThrow(
-            "Actor vertex 1 has no label",
-        );
+        builder.addModel(model, rig, ActorFaceSelection.all());
+        expect(builder.build().influences).toContain(0x00ff0000);
     });
 });
