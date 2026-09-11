@@ -26,12 +26,32 @@ export class NpcModelLoader {
     }
 
     getModel(npcType: NpcType, seqId: number, frame: number): Model | undefined {
+        let model = this.getRestModel(npcType);
+        if (!model) {
+            return undefined;
+        }
+
+        const hasScale = npcType.widthScale !== 128 || npcType.heightScale !== 128;
+        const seqType = this.seqTypeLoader.load(seqId);
+        if (seqType && seqId !== -1 && frame !== -1) {
+            model = this.transformNpcModel(model, seqType, frame);
+        } else if (hasScale) {
+            model = Model.copyAnimated(model, true, true);
+        }
+
+        if (hasScale) {
+            model.scale(npcType.widthScale, npcType.heightScale, npcType.widthScale);
+        }
+        return model;
+    }
+
+    getRestModel(npcType: NpcType): Model | undefined {
         if (npcType.transforms) {
             const transformed = npcType.transform(this.varManager, this.npcTypeLoader);
             if (!transformed) {
                 return undefined;
             }
-            return this.getModel(transformed, seqId, frame);
+            return this.getRestModel(transformed);
         }
 
         let model = this.modelCache.get(npcType.id);
@@ -73,20 +93,6 @@ export class NpcModelLoader {
             );
 
             this.modelCache.set(npcType.id, model);
-        }
-
-        const hasScale = npcType.widthScale !== 128 || npcType.heightScale !== 128;
-
-        const seqType = this.seqTypeLoader.load(seqId);
-        if (seqType && seqId !== -1 && frame !== -1) {
-            model = this.transformNpcModel(model, seqType, frame);
-            // model = Model.copyAnimated(model, true, true);
-        } else if (hasScale) {
-            model = Model.copyAnimated(model, true, true);
-        }
-
-        if (hasScale) {
-            model.scale(npcType.widthScale, npcType.heightScale, npcType.widthScale);
         }
 
         return model;

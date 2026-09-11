@@ -1,10 +1,9 @@
 import { vec3 } from "gl-matrix";
 
-import { Model, computeTextureCoords } from "../../../rs/model/Model";
+import { Model } from "../../../rs/model/Model";
 import { Scene } from "../../../rs/scene/Scene";
 import { SceneTile } from "../../../rs/scene/SceneTile";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
-import { clamp } from "../../../util/MathUtil";
 import { DrawRange, newDrawRange } from "../DrawRange";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
@@ -146,14 +145,9 @@ export class SceneBuffer {
         return this.vertexCount() - terrainStartVertexCount;
     }
 
-    // minFaceIndex excludes faces before that index, e.g. to bake only a player item's own faces
-    // out of a model merged with the body for correct posing (see AnimationBaking.
-    // addPlayerAnimationFrames).
-    addModelAnimFrame(model: Model, transparent: boolean, minFaceIndex: number = 0): DrawRange {
+    addModelAnimFrame(model: Model, transparent: boolean): DrawRange {
         const faces = getModelFaces(model).filter(
-            (face) =>
-                face.index >= minFaceIndex &&
-                isModelFaceTransparent(this.textureLoader, face) === transparent,
+            (face) => isModelFaceTransparent(this.textureLoader, face) === transparent,
         );
 
         const offset = this.indexByteOffset();

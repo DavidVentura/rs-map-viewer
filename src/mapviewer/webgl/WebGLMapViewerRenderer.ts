@@ -68,13 +68,13 @@ import {
     writeActorInstance,
 } from "./actor/ActorInstanceData";
 import {
+    ActorAnimation,
     EnemyTypeAnimationSet,
     PreviewGfxBake,
-    getEnemyAnimationFrames,
-    getGroundItemAnimationFrames,
-    getPlayerBodyAnimationFrames,
-    getPlayerItemAnimationFrames,
-    getStanceSeqIds,
+    getEnemyAnimation,
+    getGroundItemAnimation,
+    getPlayerBodyAnimation,
+    getPlayerItemAnimation,
 } from "./actor/ActorRenderData";
 import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
 import { screenToGroundPoint, worldToScreen } from "./groundPoint";
@@ -159,6 +159,8 @@ type ActiveActor =
     | { kind: "effect"; effect: VisualEffect }
     | { kind: "groundItem"; item: GroundItem }
     | { kind: "previewGfx" };
+
+type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset">;
 
 enum TextureFilterMode {
     DISABLED,
@@ -1242,7 +1244,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             playerSpawn.x,
             playerSpawn.y,
             playerSpawn.level,
-            getStanceSeqIds(this.actorBuffer.actorData.player),
+            this.actorBuffer.actorData.player.stanceSeqIds,
         );
         this.spawnPreviewEnemyIfNeeded();
         this.initPreviewGfxIfNeeded();
@@ -2319,11 +2321,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             actorBuffer.growCapacity(Math.ceil((maxCount * 2) / 16) * 16);
         }
 
-        const push = (actor: ActiveActor, instance: ActorInstance): void => {
+        const push = (actor: ActiveActor, instance: ActorPlacement): void => {
             if (this.actorInstanceCount >= actorBuffer.capacity) {
                 return;
             }
-            writeActorInstance(this.actorInstanceData, this.actorInstanceCount, instance);
+            const pose = this.getActorPose(actor);
+            if (!pose) {
+                return;
+            }
+            const frame = pose.animation.frames[pose.frameIndex];
+            if (!frame) {
+                throw new Error(`Actor animation is missing frame ${pose.frameIndex}`);
+            }
+            writeActorInstance(this.actorInstanceData, this.actorInstanceCount, {
+                ...instance,
+                matrixOffset: frame.matrixOffset,
+                alphaOffset: frame.alphaOffset,
+            });
             this.actorInstanceCount++;
             this.activeActors.push(actor);
         };
@@ -2332,7 +2346,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (player) {
             const groundHeight = this.tryGetHeight(player.level, player.x, player.y);
             if (groundHeight !== undefined) {
-                const instance: ActorInstance = {
+                const instance: ActorPlacement = {
                     worldX: player.x,
                     worldY: player.y,
                     groundHeight,
@@ -2571,66 +2585,78 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    private getActorFrame(actor: ActiveActor, alpha: boolean): DrawRange {
+    private getActorPose(
+        actor: ActiveActor,
+    ): { readonly animation: ActorAnimation; readonly frameIndex: number } | undefined {
         if (!this.actorBuffer) {
-            return NULL_DRAW_RANGE;
+            return undefined;
         }
         const actorData = this.actorBuffer.actorData;
         switch (actor.kind) {
             case "playerBody": {
                 const { player } = actor;
-                const anim = getPlayerBodyAnimationFrames(
-                    actorData.player,
-                    player.style,
-                    player.animation.seqId,
-                );
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[player.animation.frame] ?? NULL_DRAW_RANGE;
+                return {
+                    animation: getPlayerBodyAnimation(
+                        actorData.player,
+                        player.style,
+                        player.animation.seqId,
+                    ),
+                    frameIndex: player.animation.frame,
+                };
             }
             case "playerItem": {
                 const { player, itemId } = actor;
-                const anim = getPlayerItemAnimationFrames(
-                    actorData.player,
-                    itemId,
-                    player.animation.seqId,
-                );
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[player.animation.frame] ?? NULL_DRAW_RANGE;
+                return {
+                    animation: getPlayerItemAnimation(
+                        actorData.player,
+                        itemId,
+                        player.animation.seqId,
+                    ),
+                    frameIndex: player.animation.frame,
+                };
             }
             case "enemy": {
                 const { enemy, animSet } = actor;
-                const anim = getEnemyAnimationFrames(animSet, enemy.animation.seqId);
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[enemy.animation.frame] ?? NULL_DRAW_RANGE;
+                return {
+                    animation: getEnemyAnimation(animSet, enemy.animation.seqId),
+                    frameIndex: enemy.animation.frame,
+                };
             }
             case "projectile": {
                 const { projectile } = actor;
-                const anim = actorData.projectiles.projectileMeshes[projectile.spec.kind];
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[projectile.animation.frame] ?? NULL_DRAW_RANGE;
+                return {
+                    animation: actorData.projectiles.projectileMeshes[projectile.spec.kind],
+                    frameIndex: projectile.animation.frame,
+                };
             }
             case "effect": {
                 const { effect } = actor;
-                const anim = actorData.projectiles.effectAnimations[effect.kind];
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[effect.animation.frame] ?? NULL_DRAW_RANGE;
+                return {
+                    animation: actorData.projectiles.effectAnimations[effect.kind],
+                    frameIndex: effect.animation.frame,
+                };
             }
             case "groundItem": {
                 const { item } = actor;
                 const itemId = itemIdForTier(item.path, item.tierIndex);
-                const anim = getGroundItemAnimationFrames(actorData.groundItems, itemId);
-                const frames = alpha ? anim?.framesAlpha : anim?.frames;
-                return frames?.[0] ?? NULL_DRAW_RANGE;
+                const animation = getGroundItemAnimation(actorData.groundItems, itemId);
+                return animation ? { animation, frameIndex: 0 } : undefined;
             }
             case "previewGfx": {
-                const anim = this.currentPreviewGfxBake()?.anim;
-                if (!anim) {
-                    return NULL_DRAW_RANGE;
-                }
-                const frames = alpha ? anim.framesAlpha : anim.frames;
-                return frames?.[this.previewGfxAnimation.frame] ?? NULL_DRAW_RANGE;
+                const animation = this.currentPreviewGfxBake()?.anim;
+                return animation
+                    ? { animation, frameIndex: this.previewGfxAnimation.frame }
+                    : undefined;
             }
         }
+    }
+
+    private getActorFrame(actor: ActiveActor, alpha: boolean): DrawRange {
+        const pose = this.getActorPose(actor);
+        if (!pose) {
+            return NULL_DRAW_RANGE;
+        }
+        return alpha ? pose.animation.mesh.transparent : pose.animation.mesh.opaque;
     }
 
     private drawActorPass(actorDataTexture: Texture, alpha: boolean): void {

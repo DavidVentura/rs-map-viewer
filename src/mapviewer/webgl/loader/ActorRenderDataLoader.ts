@@ -1,6 +1,8 @@
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { Model } from "../../../rs/model/Model";
+import { AffineTransform, VertexLabelStats } from "../../../rs/model/animation/FramePalette";
+import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { WeaponStyle } from "../../game/Ability";
 import { AnimPreviewParams } from "../../game/AnimPreview";
 import { getEncounter } from "../../game/Encounter";
@@ -9,12 +11,11 @@ import {
     ELDER_MAUL_ITEM_ID,
     EquipmentPath,
     allDroppableItemIds,
-    attachmentVisibleSeqIds,
     secondaryPathForStyle,
     visualGroupItemIds,
     weaponVisualItemIds,
 } from "../../game/Equipment";
-import { StanceSeqIds } from "../../game/Player";
+import { StanceSeqIds, StanceSeqIdsByStance } from "../../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
@@ -36,28 +37,22 @@ import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/RenderDataWorker";
-import { AnimationFrames } from "../AnimationFrames";
+import { ActorFaceSelection, ActorMeshBuilder } from "../actor/ActorMeshBuilder";
+import { ActorPaletteBuilder } from "../actor/ActorPaletteBuilder";
 import {
+    ActorAnimation,
     EnemyTypeAnimationSet,
     GroundItemActorData,
-    ItemAnimationSet,
     PlayerActorData,
     PreviewGfxAnimationSet,
     PreviewGfxBake,
     ProjectileActorData,
-    StanceAnimationSet,
 } from "../actor/ActorRenderData";
-import { SceneBuffer } from "../buffer/SceneBuffer";
+import { ActorRig } from "../actor/ActorRig";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
-import {
-    addNpcAnimationFrames,
-    addPlayerAnimationFrames,
-    addSpotAnimAnimationFrames,
-    addStaticModelAnimationFrames,
-    brightenModel,
-    buildSpotAnimModel,
-} from "./AnimationBaking";
+import { ActorSkinning } from "./ActorSkinning";
+import { brightenModel, buildSpotAnimModel } from "./AnimationBaking";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
 
 // A switch animation plays while the OLD style's weapon is still equipped, so the "switch into
@@ -129,110 +124,12 @@ function allStanceSeqIds(seqConfig: StanceSeqConfig): number[] {
     ];
 }
 
-// Bakes one style's body (idle/walk/run/attack/specials), with no equipment: the body model never
-// changes with what's equipped, so it only needs baking once per style rather than once per
-// equipment combination.
-function createBodyAnimationSet(
-    playerModelLoader: PlayerModelLoader,
-    sceneBuf: SceneBuffer,
-    baseNpc: NpcType,
-    seqConfig: StanceSeqConfig,
-): StanceAnimationSet | undefined {
-    const appearance = new PlayerAppearance(
-        baseNpc.modelIds,
-        [],
-        PlayerGender.MALE,
-        baseNpc.ambient,
-        baseNpc.contrast,
-    );
-
-    const animationsBySeqId = new Map<number, AnimationFrames>();
-    for (const seqId of allStanceSeqIds(seqConfig)) {
-        const anim = addPlayerAnimationFrames(playerModelLoader, sceneBuf, appearance, seqId);
-        if (!anim) {
-            return undefined;
-        }
-        animationsBySeqId.set(seqId, anim);
-    }
-
-    return {
-        idleSeqId: seqConfig.idleSeqId,
-        walkSeqId: seqConfig.walkSeqId,
-        runSeqId: seqConfig.runSeqId,
-        attackSeqId: seqConfig.attackSeqId,
-        idleAnim: animationsBySeqId.get(seqConfig.idleSeqId)!,
-        animationsBySeqId,
-    };
-}
-
-// Bakes one equipped item's own worn model, posed at every requested seq id. The item is merged
-// with the body (baseNpc.modelIds) before posing - a lone item model's vertex labels don't include
-// the parent bone groups the body carries, so animating it alone yields the wrong pose (verified
-// with scripts/cache/verify-item-attach-throwaway.ts: worst-case vertex delta of ~400 units on a
-// scimitar's attack swing). Only the item's own faces (everything from bodyFaceCount onward, since
-// ModelData.merge appends faces in source-model order) are written to the scene buffer, so the
-// body geometry itself is never duplicated into an item's baked mesh.
-function createItemAnimationSet(
-    playerModelLoader: PlayerModelLoader,
-    sceneBuf: SceneBuffer,
-    baseNpc: NpcType,
-    bodyFaceCount: number,
-    itemId: number,
-    seqIds: readonly number[],
-): ItemAnimationSet | undefined {
-    const appearance = new PlayerAppearance(
-        baseNpc.modelIds,
-        [itemId],
-        PlayerGender.MALE,
-        baseNpc.ambient,
-        baseNpc.contrast,
-    );
-
-    const animationsBySeqId = new Map<number, AnimationFrames>();
-    for (const seqId of seqIds) {
-        if (animationsBySeqId.has(seqId)) {
-            continue;
-        }
-        const anim = addPlayerAnimationFrames(
-            playerModelLoader,
-            sceneBuf,
-            appearance,
-            seqId,
-            bodyFaceCount,
-        );
-        if (!anim) {
-            return undefined;
-        }
-        animationsBySeqId.set(seqId, anim);
-    }
-
-    const idleSeqId = seqIds[0];
-    return {
-        idleSeqId,
-        idleAnim: animationsBySeqId.get(idleSeqId)!,
-        animationsBySeqId,
-    };
-}
-
 function createPlayerActorData(
     playerModelLoader: PlayerModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    sceneBuf: SceneBuffer,
-): PlayerActorData | undefined {
+    skinning: ActorSkinning,
+): PlayerActorData {
     const baseNpc = npcTypeLoader.load(3105);
-
-    const bodyByStyle = {} as Record<WeaponStyle, StanceAnimationSet>;
-    const seqIdsByStyle = {} as Record<WeaponStyle, readonly number[]>;
-    for (const style of ALL_STYLES) {
-        const seqConfig = STANCE_SEQ_CONFIG[style];
-        const body = createBodyAnimationSet(playerModelLoader, sceneBuf, baseNpc, seqConfig);
-        if (!body) {
-            return undefined;
-        }
-        bodyByStyle[style] = body;
-        seqIdsByStyle[style] = allStanceSeqIds(seqConfig);
-    }
-
     const bodyOnlyAppearance = new PlayerAppearance(
         baseNpc.modelIds,
         [],
@@ -242,69 +139,82 @@ function createPlayerActorData(
     );
     const bodyOnlyModel = playerModelLoader.getModel(bodyOnlyAppearance, -1, -1);
     if (!bodyOnlyModel) {
-        return undefined;
+        throw new Error("Player body model is missing from the cache");
     }
     const bodyFaceCount = bodyOnlyModel.faceCount;
-
-    const itemsByItemId = new Map<number, ItemAnimationSet>();
-    const ensureItem = (itemId: number, seqIds: readonly number[]): boolean => {
-        if (itemsByItemId.has(itemId)) {
-            return true;
-        }
-        const set = createItemAnimationSet(
-            playerModelLoader,
-            sceneBuf,
-            baseNpc,
-            bodyFaceCount,
-            itemId,
-            seqIds,
-        );
-        if (!set) {
-            return false;
-        }
-        itemsByItemId.set(itemId, set);
-        return true;
-    };
-
+    const seqIdsByStyle = {} as Record<WeaponStyle, readonly number[]>;
+    const itemIds = new Set<number>();
     for (const style of ALL_STYLES) {
-        const visibleSeqIds = attachmentVisibleSeqIds(seqIdsByStyle[style]);
+        seqIdsByStyle[style] = allStanceSeqIds(STANCE_SEQ_CONFIG[style]);
         for (const itemId of weaponVisualItemIds(style)) {
-            if (!ensureItem(itemId, visibleSeqIds)) {
-                return undefined;
-            }
+            itemIds.add(itemId);
         }
         const secondaryPath = secondaryPathForStyle(style);
         if (secondaryPath) {
             for (const itemId of visualGroupItemIds(secondaryPath)) {
-                if (!ensureItem(itemId, visibleSeqIds)) {
-                    return undefined;
-                }
+                itemIds.add(itemId);
             }
         }
     }
 
-    const amuletSeqIds = attachmentVisibleSeqIds([
-        ...new Set(ALL_STYLES.flatMap((style) => seqIdsByStyle[style])),
-    ]);
     for (const itemId of visualGroupItemIds(EquipmentPath.AMULET)) {
-        if (!ensureItem(itemId, amuletSeqIds)) {
-            return undefined;
+        itemIds.add(itemId);
+    }
+    itemIds.add(ELDER_MAUL_ITEM_ID);
+
+    const itemModels = new Map<number, Model>();
+    for (const itemId of itemIds) {
+        const appearance = new PlayerAppearance(
+            baseNpc.modelIds,
+            [itemId],
+            PlayerGender.MALE,
+            baseNpc.ambient,
+            baseNpc.contrast,
+        );
+        const model = playerModelLoader.getModel(appearance, -1, -1);
+        if (!model) {
+            throw new Error(`Player attachment model is missing for item ${itemId}`);
         }
+        itemModels.set(itemId, model);
     }
-
-    if (!ensureItem(ELDER_MAUL_ITEM_ID, [MAUL_SMASH_CAST_SEQ_ID])) {
-        return undefined;
+    const seqIds = [...new Set(ALL_STYLES.flatMap((style) => seqIdsByStyle[style]))];
+    const framesBySeqId = new Map(seqIds.map((seqId) => [seqId, skinning.loadFrames(seqId)]));
+    const rig = ActorRig.oldStyle(
+        [bodyOnlyModel, ...itemModels.values()],
+        [...framesBySeqId.values()].flat().filter((frame): frame is SeqFrame => !!frame),
+    );
+    const bodyMesh = skinning.meshes.addModel(bodyOnlyModel, rig, ActorFaceSelection.all());
+    const itemsByItemId = new Map(
+        [...itemModels].map(([itemId, model]) => [
+            itemId,
+            skinning.meshes.addModel(model, rig, ActorFaceSelection.startingAt(bodyFaceCount)),
+        ]),
+    );
+    const bodyStats = VertexLabelStats.fromModel(bodyOnlyModel);
+    const animationsBySeqId = new Map(
+        [...framesBySeqId].map(([seqId, frames]) => [
+            seqId,
+            frames.map((frame) =>
+                skinning.palettes.addFrame(bodyStats, rig, frame, AffineTransform.identity()),
+            ),
+        ]),
+    );
+    const stanceSeqIds = {} as StanceSeqIdsByStance;
+    for (const style of ALL_STYLES) {
+        stanceSeqIds[style] = STANCE_SEQ_CONFIG[style];
     }
-
-    return { bodyByStyle, itemsByItemId };
+    return { stanceSeqIds, body: { mesh: bodyMesh, animationsBySeqId }, itemsByItemId };
 }
 
 // Bakes every OSRS item that can ever appear as a ground drop (every tier above tier 0 across
 // every equipment path; see Equipment.allDroppableItemIds) as a single static ground-lying frame,
 // the same way createProjectileActorData bakes the arrow model.
-function createGroundItemActorData(state: WorkerState, sceneBuf: SceneBuffer): GroundItemActorData {
+function createGroundItemActorData(
+    state: WorkerState,
+    skinning: ActorSkinning,
+): GroundItemActorData {
     const objModelLoader = state.objModelLoader;
-    const animationsByItemId = new Map<number, AnimationFrames>();
+    const animationsByItemId = new Map<number, ActorAnimation>();
     for (const itemId of allDroppableItemIds()) {
         if (animationsByItemId.has(itemId)) {
             continue;
@@ -313,7 +223,7 @@ function createGroundItemActorData(state: WorkerState, sceneBuf: SceneBuffer): G
         if (!model) {
             throw new Error(`Ground item model is missing from the cache for item ${itemId}`);
         }
-        animationsByItemId.set(itemId, addStaticModelAnimationFrames(sceneBuf, model));
+        animationsByItemId.set(itemId, skinning.addAnimation(model, undefined));
     }
     return { animationsByItemId };
 }
@@ -333,19 +243,20 @@ function enemyTypeSeqIds(enemyType: EnemyType): number[] {
 function createEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    sceneBuf: SceneBuffer,
+    skinning: ActorSkinning,
     enemyType: EnemyType,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(enemyType.npcTypeId);
-    const animationsBySeqId = new Map<number, AnimationFrames>();
-    for (const seqId of enemyTypeSeqIds(enemyType)) {
-        const anim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, seqId);
-        if (!anim) {
-            throw new Error(`Failed baking seq ${seqId} for enemy type ${enemyType.id}`);
-        }
-        animationsBySeqId.set(seqId, anim);
+    const model = npcModelLoader.getRestModel(npcType);
+    if (!model) {
+        throw new Error(`Enemy model is missing for enemy type ${enemyType.id}`);
     }
-    return { idleAnim: animationsBySeqId.get(enemyType.idleSeqId)!, animationsBySeqId };
+    return skinning.addAnimationSet(
+        model,
+        enemyTypeSeqIds(enemyType),
+        ActorFaceSelection.all(),
+        npcScaleTransform(npcType),
+    );
 }
 
 // The animation viewer's preview enemy: bakes the npc's own idle/walk seqs plus every seq in the
@@ -353,7 +264,7 @@ function createEnemyTypeAnimationSet(
 function createPreviewEnemyTypeAnimationSet(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
-    sceneBuf: SceneBuffer,
+    skinning: ActorSkinning,
     preview: Extract<AnimPreviewParams, { kind: "NPC_SEQS" }>,
 ): EnemyTypeAnimationSet {
     const npcType = npcTypeLoader.load(preview.npcTypeId);
@@ -361,15 +272,22 @@ function createPreviewEnemyTypeAnimationSet(
     for (let seqId = preview.seqRange.from; seqId <= preview.seqRange.to; seqId++) {
         seqIds.add(seqId);
     }
-    const animationsBySeqId = new Map<number, AnimationFrames>();
-    for (const seqId of seqIds) {
-        const anim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, seqId);
-        if (!anim) {
-            throw new Error(`Failed baking seq ${seqId} for preview npc ${preview.npcTypeId}`);
-        }
-        animationsBySeqId.set(seqId, anim);
+    const model = npcModelLoader.getRestModel(npcType);
+    if (!model) {
+        throw new Error(`Preview NPC model is missing for ${preview.npcTypeId}`);
     }
-    return { idleAnim: animationsBySeqId.get(npcType.idleSeqId)!, animationsBySeqId };
+    return skinning.addAnimationSet(
+        model,
+        [...seqIds],
+        ActorFaceSelection.all(),
+        npcScaleTransform(npcType),
+    );
+}
+
+function npcScaleTransform(npcType: NpcType): AffineTransform {
+    const width = npcType.widthScale / 128;
+    const height = npcType.heightScale / 128;
+    return AffineTransform.fromRows([width, 0, 0, 0, 0, height, 0, 0, 0, 0, width, 0]);
 }
 
 // The animation viewer's gfx preview: bakes every spot anim id in the requested range, each into
@@ -380,13 +298,12 @@ function createPreviewEnemyTypeAnimationSet(
 // "no model" instead of silently showing nothing.
 function createPreviewGfxAnimationSet(
     state: WorkerState,
-    sceneBuf: SceneBuffer,
+    skinning: ActorSkinning,
     preview: Extract<AnimPreviewParams, { kind: "SPOT_ANIMS" }>,
 ): PreviewGfxAnimationSet {
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
     const textureLoader = state.textureLoader;
     const seqTypeLoader = state.seqTypeLoader;
-    const seqFrameLoader = state.seqFrameLoader;
     const spotAnimTypeLoader = state.cacheLoaderFactory.getSpotAnimTypeLoader();
     if (!spotAnimTypeLoader) {
         throw new Error("Spot animations are not available in this cache");
@@ -408,11 +325,8 @@ function createPreviewGfxAnimationSet(
         // Newer spot anims use skeletal sequences with no old-style frames, which this baker
         // can't pose; the viewer shows their rest model (the Info line reports 0 frames) rather
         // than one such id in the range aborting the whole actor buffer load.
-        const hasFrames =
-            seqId !== undefined && (seqTypeLoader.load(seqId).frameIds?.length ?? 0) > 0;
-        const anim = hasFrames
-            ? addSpotAnimAnimationFrames(sceneBuf, seqTypeLoader, seqFrameLoader, model, seqId!)
-            : addStaticModelAnimationFrames(sceneBuf, model);
+        const hasFrames = seqId !== undefined && !seqTypeLoader.load(seqId).isSkeletalSeq();
+        const anim = skinning.addAnimation(model, hasFrames ? seqId : undefined);
         bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
     }
     return { bakesByGfxId };
@@ -462,12 +376,13 @@ const ARROW_LIGHTNESS_BOOST = 45;
 // slow-moving projectile reads as a bigger, boss-scale attack.
 const JAD_MAGE_BLAST_MODEL_SCALE = 128 * 3;
 
-function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): ProjectileActorData {
+function createProjectileActorData(
+    state: WorkerState,
+    skinning: ActorSkinning,
+): ProjectileActorData {
     const objModelLoader = state.objModelLoader;
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
     const textureLoader = state.textureLoader;
-    const seqTypeLoader = state.seqTypeLoader;
-    const seqFrameLoader = state.seqFrameLoader;
     const spotAnimTypeLoader = state.cacheLoaderFactory.getSpotAnimTypeLoader();
 
     const arrowModel = objModelLoader.getModel(882, 1);
@@ -484,7 +399,7 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
     visibleArrowModel.rotate180();
     visibleArrowModel.scale(ARROW_THICKNESS_SCALE, ARROW_THICKNESS_SCALE, ARROW_LENGTH_SCALE);
     brightenModel(visibleArrowModel, ARROW_LIGHTNESS_BOOST);
-    const arrowAnim = addStaticModelAnimationFrames(sceneBuf, visibleArrowModel);
+    const arrowAnim = skinning.addAnimation(visibleArrowModel, undefined);
 
     const powerShotModel = Model.copy(arrowModel);
     powerShotModel.rotate180();
@@ -494,20 +409,14 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         POWER_SHOT_MODEL_SCALE,
     );
     brightenModel(powerShotModel, ARROW_LIGHTNESS_BOOST);
-    const powerShotAnim = addStaticModelAnimationFrames(sceneBuf, powerShotModel);
+    const powerShotAnim = skinning.addAnimation(powerShotModel, undefined);
 
     const boltSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_PROJECTILE_SPOTANIM_ID);
     const boltModel = buildSpotAnimModel(modelLoader, textureLoader, boltSpotAnim);
     if (!boltModel || boltSpotAnim.sequenceId !== FIRE_BOLT_TRAVEL_SEQ_ID) {
         throw new Error("Fire bolt projectile spot animation does not match the expected sequence");
     }
-    const boltAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        boltModel,
-        FIRE_BOLT_TRAVEL_SEQ_ID,
-    );
+    const boltAnim = skinning.addAnimation(boltModel, FIRE_BOLT_TRAVEL_SEQ_ID);
 
     const jadFireSpotAnim = spotAnimTypeLoader.load(JAD_FIRE_PROJECTILE_SPOTANIM_ID);
     const jadFireModel = buildSpotAnimModel(modelLoader, textureLoader, jadFireSpotAnim);
@@ -521,26 +430,14 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         JAD_MAGE_BLAST_MODEL_SCALE,
         JAD_MAGE_BLAST_MODEL_SCALE,
     );
-    const jadFireAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        jadFireModel,
-        JAD_FIRE_SEQ_ID,
-    );
+    const jadFireAnim = skinning.addAnimation(jadFireModel, JAD_FIRE_SEQ_ID);
 
     const jadFireHitSpotAnim = spotAnimTypeLoader.load(JAD_FIRE_HIT_SPOTANIM_ID);
     const jadFireHitModel = buildSpotAnimModel(modelLoader, textureLoader, jadFireHitSpotAnim);
     if (!jadFireHitModel || jadFireHitSpotAnim.sequenceId !== JAD_FIRE_SEQ_ID) {
         throw new Error("TzTok-Jad fire hit spot animation does not match the expected sequence");
     }
-    const jadFireHitAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        jadFireHitModel,
-        JAD_FIRE_SEQ_ID,
-    );
+    const jadFireHitAnim = skinning.addAnimation(jadFireHitModel, JAD_FIRE_SEQ_ID);
 
     const jadRockSpotAnim = spotAnimTypeLoader.load(JAD_RANGED_ROCK_SPOTANIM_ID);
     const jadRockModel = buildSpotAnimModel(modelLoader, textureLoader, jadRockSpotAnim);
@@ -549,78 +446,42 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             "TzTok-Jad ranged attack spot animation does not match the expected sequence",
         );
     }
-    const jadRockAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        jadRockModel,
-        JAD_RANGED_ROCK_SEQ_ID,
-    );
+    const jadRockAnim = skinning.addAnimation(jadRockModel, JAD_RANGED_ROCK_SEQ_ID);
 
     const tzhaarHealSpotAnim = spotAnimTypeLoader.load(TZHAAR_HEAL_SPOTANIM_ID);
     const tzhaarHealModel = buildSpotAnimModel(modelLoader, textureLoader, tzhaarHealSpotAnim);
     if (!tzhaarHealModel || tzhaarHealSpotAnim.sequenceId !== TZHAAR_HEAL_SEQ_ID) {
         throw new Error("TzHaar heal spot animation does not match the expected sequence");
     }
-    const tzhaarHealAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        tzhaarHealModel,
-        TZHAAR_HEAL_SEQ_ID,
-    );
+    const tzhaarHealAnim = skinning.addAnimation(tzhaarHealModel, TZHAAR_HEAL_SEQ_ID);
 
     const boltHitSpotAnim = spotAnimTypeLoader.load(FIRE_BOLT_HIT_SPOTANIM_ID);
     const boltHitModel = buildSpotAnimModel(modelLoader, textureLoader, boltHitSpotAnim);
     if (!boltHitModel || boltHitSpotAnim.sequenceId !== FIRE_BOLT_HIT_SEQ_ID) {
         throw new Error("Fire bolt hit spot animation does not match the expected sequence");
     }
-    const boltHitAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        boltHitModel,
-        FIRE_BOLT_HIT_SEQ_ID,
-    );
+    const boltHitAnim = skinning.addAnimation(boltHitModel, FIRE_BOLT_HIT_SEQ_ID);
 
     const iceBarrageSpotAnim = spotAnimTypeLoader.load(ICE_BARRAGE_HIT_SPOTANIM_ID);
     const iceBarrageModel = buildSpotAnimModel(modelLoader, textureLoader, iceBarrageSpotAnim);
     if (!iceBarrageModel || iceBarrageSpotAnim.sequenceId !== ICE_BARRAGE_HIT_SEQ_ID) {
         throw new Error("Ice barrage hit spot animation does not match the expected sequence");
     }
-    const iceBarrageAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        iceBarrageModel,
-        ICE_BARRAGE_HIT_SEQ_ID,
-    );
+    const iceBarrageAnim = skinning.addAnimation(iceBarrageModel, ICE_BARRAGE_HIT_SEQ_ID);
 
     const dustWaveSpotAnim = spotAnimTypeLoader.load(DUST_WAVE_SPOTANIM_ID);
     const dustWaveModel = buildSpotAnimModel(modelLoader, textureLoader, dustWaveSpotAnim);
     if (!dustWaveModel || dustWaveSpotAnim.sequenceId !== DUST_WAVE_SEQ_ID) {
         throw new Error("Dust wave spot animation does not match the expected sequence");
     }
-    const dustWaveAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        dustWaveModel,
-        DUST_WAVE_SEQ_ID,
-    );
+    const dustWaveAnim = skinning.addAnimation(dustWaveModel, DUST_WAVE_SEQ_ID);
 
     const maulSparkSpotAnim = spotAnimTypeLoader.load(MAUL_IMPACT_SPARK_SPOTANIM_ID);
     const maulSparkModel = buildSpotAnimModel(modelLoader, textureLoader, maulSparkSpotAnim);
     if (!maulSparkModel || maulSparkSpotAnim.sequenceId !== MAUL_IMPACT_SPARK_SEQ_ID) {
         throw new Error("Maul impact spark spot animation does not match the expected sequence");
     }
-    const maulSparkAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        maulSparkModel,
-        MAUL_IMPACT_SPARK_SEQ_ID,
-    );
+    const maulSparkAnim = skinning.addAnimation(maulSparkModel, MAUL_IMPACT_SPARK_SEQ_ID);
 
     const fallingShadowSpotAnim = spotAnimTypeLoader.load(FALLING_SHADOW_SPOTANIM_ID);
     const fallingShadowModel = buildSpotAnimModel(
@@ -631,30 +492,21 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
     if (!fallingShadowModel || fallingShadowSpotAnim.sequenceId !== FALLING_SHADOW_SEQ_ID) {
         throw new Error("Falling shadow spot animation does not match the expected sequence");
     }
-    const fallingShadowAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        fallingShadowModel,
-        FALLING_SHADOW_SEQ_ID,
-    );
+    const fallingShadowAnim = skinning.addAnimation(fallingShadowModel, FALLING_SHADOW_SEQ_ID);
 
     const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_SPOTANIM_ID);
     const tokXilShotModel = buildSpotAnimModel(modelLoader, textureLoader, tokXilShotSpotAnim);
     if (!tokXilShotModel || tokXilShotSpotAnim.sequenceId !== -1) {
         throw new Error("Tok-Xil shot spot animation is expected to be a static model");
     }
-    const tokXilShotAnim = addStaticModelAnimationFrames(sceneBuf, tokXilShotModel);
+    const tokXilShotAnim = skinning.addAnimation(tokXilShotModel, undefined);
 
     const ketZekBlastSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID);
     const ketZekBlastModel = buildSpotAnimModel(modelLoader, textureLoader, ketZekBlastSpotAnim);
     if (!ketZekBlastModel || ketZekBlastSpotAnim.sequenceId !== KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID) {
         throw new Error("Ket-Zek fire blast spot animation does not match the expected sequence");
     }
-    const ketZekBlastAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
+    const ketZekBlastAnim = skinning.addAnimation(
         ketZekBlastModel,
         KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     );
@@ -697,7 +549,14 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const npcModelLoader = state.npcModelLoader;
 
         const textureIdIndexMap = buildTextureIdIndexMap(textureLoader);
-        const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 20000);
+        const meshBuilder = new ActorMeshBuilder(textureLoader, textureIdIndexMap);
+        const paletteBuilder = new ActorPaletteBuilder();
+        const skinning = new ActorSkinning(
+            meshBuilder,
+            paletteBuilder,
+            state.seqTypeLoader,
+            state.seqFrameLoader,
+        );
 
         const playerModelLoader = new PlayerModelLoader(
             state.objTypeLoader,
@@ -707,10 +566,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
             state.seqFrameLoader,
             state.skeletalSeqLoader,
         );
-        const player = createPlayerActorData(playerModelLoader, npcTypeLoader, sceneBuf);
-        if (!player) {
-            throw new Error("Failed baking player actor animation data");
-        }
+        const player = createPlayerActorData(playerModelLoader, npcTypeLoader, skinning);
 
         const encounter = getEncounter(encounterId);
         const enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>> = {};
@@ -722,7 +578,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
             enemyTypes[enemyTypeId] = createEnemyTypeAnimationSet(
                 npcModelLoader,
                 npcTypeLoader,
-                sceneBuf,
+                skinning,
                 enemyType,
             );
         }
@@ -730,23 +586,26 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
             enemyTypes[EnemyTypeId.PREVIEW] = createPreviewEnemyTypeAnimationSet(
                 npcModelLoader,
                 npcTypeLoader,
-                sceneBuf,
+                skinning,
                 preview,
             );
         }
         const previewGfx =
             preview?.kind === "SPOT_ANIMS"
-                ? createPreviewGfxAnimationSet(state, sceneBuf, preview)
+                ? createPreviewGfxAnimationSet(state, skinning, preview)
                 : undefined;
 
-        const projectiles = createProjectileActorData(state, sceneBuf);
-        const groundItems = createGroundItemActorData(state, sceneBuf);
+        const projectiles = createProjectileActorData(state, skinning);
+        const groundItems = createGroundItemActorData(state, skinning);
 
-        const vertices = sceneBuf.vertexBuf.byteArray();
-        const indices = new Int32Array(sceneBuf.indices);
+        const meshData = meshBuilder.build();
+        const vertices = meshData.vertices;
+        const indices = meshData.indices;
+        const influences = meshData.influences;
+        const matrixTable = paletteBuilder.build();
 
         const loadedTextures = new Map<number, Int32Array>();
-        for (const textureId of sceneBuf.usedTextureIds) {
+        for (const textureId of meshData.usedTextureIds) {
             if (!loadedTextureIds.has(textureId)) {
                 try {
                     const pixels = textureLoader.getPixelsArgb(textureId, 128, true, 1.0);
@@ -760,6 +619,8 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const transferables = [
             vertices.buffer,
             indices.buffer,
+            influences.buffer,
+            matrixTable.buffer,
             ...Array.from(loadedTextures.values()).map((pixels) => pixels.buffer),
         ];
 
@@ -770,6 +631,8 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
 
                 vertices,
                 indices,
+                influences,
+                matrixTable,
 
                 actorData: { player, enemyTypes, projectiles, groundItems, previewGfx },
 

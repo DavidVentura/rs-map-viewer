@@ -1,114 +1,95 @@
 import { WeaponStyle } from "../../game/Ability";
 import { EnemyTypeId } from "../../game/EnemyType";
-import { StanceSeqIds, StanceSeqIdsByStance } from "../../game/Player";
+import { StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
-import { AnimationFrames } from "../AnimationFrames";
+import { ActorMesh } from "./ActorMeshBuilder";
 
-export type StanceAnimationSet = StanceSeqIds & {
-    idleAnim: AnimationFrames;
-    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
-};
-
-// One item's own worn-model animation set, posed by the same skeleton frames as the body (see
-// ActorRenderDataLoader.createItemAnimationSet). Drawn as its own actor instance next to the body.
-export type ItemAnimationSet = {
-    idleSeqId: number;
-    idleAnim: AnimationFrames;
-    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
-};
-
-const ALL_WEAPON_STYLES: readonly WeaponStyle[] = [
-    WeaponStyle.RANGED,
-    WeaponStyle.MAGIC,
-    WeaponStyle.MELEE,
-];
-
-export type PlayerActorData = {
-    // The body model never changes with equipment, so it is baked once per style.
-    bodyByStyle: Record<WeaponStyle, StanceAnimationSet>;
-    // Every equipped item worth baking as an attachment (see Equipment.equippedVisualItemIds for
-    // which item ids are worn at a given moment), keyed by item id rather than by style/tier so a
-    // representative item shared across tiers (or across styles, like the amulet) is baked once.
-    itemsByItemId: ReadonlyMap<number, ItemAnimationSet>;
-};
-
-export function getStanceSeqIds(data: PlayerActorData): StanceSeqIdsByStance {
-    const result = {} as StanceSeqIdsByStance;
-    for (const style of ALL_WEAPON_STYLES) {
-        result[style] = data.bodyByStyle[style];
-    }
-    return result;
+export interface ActorFrame {
+    readonly matrixOffset: number;
+    readonly alphaOffset: number;
 }
 
-export function getPlayerBodyAnimationFrames(
+export interface ActorAnimation {
+    readonly mesh: ActorMesh;
+    readonly frames: readonly ActorFrame[];
+}
+
+export interface ActorAnimationSet {
+    readonly mesh: ActorMesh;
+    readonly animationsBySeqId: ReadonlyMap<number, readonly ActorFrame[]>;
+}
+
+export interface PlayerActorData {
+    readonly stanceSeqIds: StanceSeqIdsByStance;
+    readonly body: ActorAnimationSet;
+    readonly itemsByItemId: ReadonlyMap<number, ActorMesh>;
+}
+
+export function getPlayerBodyAnimation(
     data: PlayerActorData,
-    style: WeaponStyle,
+    _style: WeaponStyle,
     seqId: number,
-): AnimationFrames {
-    const set = data.bodyByStyle[style];
-    return set.animationsBySeqId.get(seqId) ?? set.idleAnim;
+): ActorAnimation {
+    return { mesh: data.body.mesh, frames: requiredFrames(data.body, seqId) };
 }
 
-export function getPlayerItemAnimationFrames(
+export function getPlayerItemAnimation(
     data: PlayerActorData,
     itemId: number,
     seqId: number,
-): AnimationFrames {
-    const set = data.itemsByItemId.get(itemId);
-    if (!set) {
-        throw new Error(`No baked player attachment animation set for item ${itemId}`);
+): ActorAnimation {
+    const mesh = data.itemsByItemId.get(itemId);
+    if (!mesh) {
+        throw new Error(`No player attachment mesh for item ${itemId}`);
     }
-    return set.animationsBySeqId.get(seqId) ?? set.idleAnim;
+    return { mesh, frames: requiredFrames(data.body, seqId) };
 }
 
-export type EnemyTypeAnimationSet = {
-    idleAnim: AnimationFrames;
-    animationsBySeqId: ReadonlyMap<number, AnimationFrames>;
-};
+export type EnemyTypeAnimationSet = ActorAnimationSet;
 
-export function getEnemyAnimationFrames(
-    data: EnemyTypeAnimationSet,
-    seqId: number,
-): AnimationFrames {
-    return data.animationsBySeqId.get(seqId) ?? data.idleAnim;
+export function getEnemyAnimation(data: EnemyTypeAnimationSet, seqId: number): ActorAnimation {
+    return { mesh: data.mesh, frames: requiredFrames(data, seqId) };
 }
 
-export type ProjectileActorData = {
-    projectileMeshes: Record<ProjectileKind, AnimationFrames>;
-    effectAnimations: Record<VisualEffectKind, AnimationFrames>;
-};
+function requiredFrames(data: ActorAnimationSet, seqId: number): readonly ActorFrame[] {
+    const frames = data.animationsBySeqId.get(seqId);
+    if (!frames) {
+        throw new Error(`Actor sequence ${seqId} was not loaded`);
+    }
+    return frames;
+}
 
-// One spot anim id's bake for the gfx preview (see ActorRenderDataLoader.createPreviewGfxAnimationSet):
-// anim is undefined for an id with no model at all, so the viewer's Info line can say "no model"
-// instead of the id being silently dropped from bakesByGfxId.
-export type PreviewGfxBake = {
+export interface ProjectileActorData {
+    readonly projectileMeshes: Record<ProjectileKind, ActorAnimation>;
+    readonly effectAnimations: Record<VisualEffectKind, ActorAnimation>;
+}
+
+export interface PreviewGfxBake {
     readonly modelId?: number;
     readonly seqId?: number;
-    readonly anim?: AnimationFrames;
-};
+    readonly anim?: ActorAnimation;
+}
 
-export type PreviewGfxAnimationSet = {
+export interface PreviewGfxAnimationSet {
     readonly bakesByGfxId: ReadonlyMap<number, PreviewGfxBake>;
-};
+}
 
-// A ground-lying equipment drop's static mesh, keyed by the OSRS item id (see
-// Equipment.allDroppableItemIds for the full set baked at load time).
-export type GroundItemActorData = {
-    animationsByItemId: ReadonlyMap<number, AnimationFrames>;
-};
+export interface GroundItemActorData {
+    readonly animationsByItemId: ReadonlyMap<number, ActorAnimation>;
+}
 
-export function getGroundItemAnimationFrames(
+export function getGroundItemAnimation(
     data: GroundItemActorData,
     itemId: number,
-): AnimationFrames | undefined {
+): ActorAnimation | undefined {
     return data.animationsByItemId.get(itemId);
 }
 
-export type ActorRenderData = {
-    player: PlayerActorData;
-    enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>>;
-    projectiles: ProjectileActorData;
-    groundItems: GroundItemActorData;
-    previewGfx?: PreviewGfxAnimationSet;
-};
+export interface ActorRenderData {
+    readonly player: PlayerActorData;
+    readonly enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>>;
+    readonly projectiles: ProjectileActorData;
+    readonly groundItems: GroundItemActorData;
+    readonly previewGfx?: PreviewGfxAnimationSet;
+}

@@ -154,4 +154,40 @@ describe("frame palettes", () => {
 
         expect(palette.matrices[0].transformPoint(1, 1, 1)).toEqual([16, 28, 40]);
     });
+
+    it("checks reset-origin masks independently from operation masks", () => {
+        const stats = new VertexLabelStats([
+            { positionSum: [10, 0, 0], vertexCount: 1 },
+            { positionSum: [20, 0, 0], vertexCount: 1 },
+        ]);
+        const paletteForMasks = (originMask: number, resetCarrierMask: number) => {
+            const base = new SeqBase(
+                0,
+                3,
+                [SeqTransformType.ORIGIN, SeqTransformType.TRANSLATE, SeqTransformType.SCALE],
+                [true, true, true],
+                new Uint16Array([originMask, resetCarrierMask, 0xffff]),
+                [[0], [], [1]],
+            );
+            const animation = new SeqFrame(
+                1,
+                base,
+                2,
+                [1, 2],
+                [0, 256],
+                [0, 128],
+                [0, 128],
+                [0, -1],
+                false,
+            );
+            return buildFramePalette(
+                stats,
+                animation,
+                AffineTransform.identity(),
+            ).matrices[1].transformPoint(20, 0, 0)[0];
+        };
+
+        expect(paletteForMasks(0xffff, 0xfffe)).toBe(30);
+        expect(paletteForMasks(0xfffe, 0xffff)).toBe(40);
+    });
 });

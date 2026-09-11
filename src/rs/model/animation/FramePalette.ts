@@ -55,7 +55,7 @@ export class VertexLabelStats {
     constructor(readonly labels: readonly VertexLabelStat[]) {}
 
     static fromModel(model: Model): VertexLabelStats {
-        const labels = model.vertexLabels.map((vertices) => {
+        const labels = (model.vertexLabels ?? []).map((vertices) => {
             let sumX = 0;
             let sumY = 0;
             let sumZ = 0;
