@@ -112,7 +112,7 @@ describe("Projectile specs", () => {
         if (JAD_RANGED_ROCK_SPEC.landing.kind !== "FIXED_POINT") {
             throw new Error("expected the rock to land at a fixed point");
         }
-        expect(JAD_RANGED_ROCK_SPEC.landing.origin).toEqual({ kind: "ABOVE_TARGET", height: 3000 });
+        expect(JAD_RANGED_ROCK_SPEC.landing.origin).toEqual({ kind: "AT_TARGET", height: 0 });
         expect(JAD_RANGED_ROCK_SPEC.travelTime.secondsPerTile).toBe(0);
         expect(JAD_RANGED_ROCK_SPEC.landing.telegraph?.kind).toBe(VisualEffectKind.FALLING_SHADOW);
     });
@@ -344,7 +344,11 @@ describe("Projectile pitch", () => {
         expect(projectile.pitch).toBeGreaterThan(1024);
     });
 
-    it("points straight down for a rock falling with no horizontal travel", () => {
+    it("renders level rather than nose-down for a rock falling with no horizontal travel", () => {
+        // The rock's spot-anim model is a bare bake with no axis realignment (see
+        // ProjectileModelOrientation), so unlike the arrow it must never carry a pitch tilt: doing
+        // so would swing its off-origin geometry sideways instead of tilting a nose that was never
+        // built to point anywhere in particular.
         const rock = new Projectile(
             JAD_RANGED_ROCK_SPEC,
             ENEMY_SHOT,
@@ -352,7 +356,7 @@ describe("Projectile pitch", () => {
             point(500, 500),
         );
         update(rock, 0.1);
-        expect(rock.pitch).toBe(1536);
+        expect(rock.pitch).toBe(0);
     });
 });
 
@@ -385,19 +389,20 @@ describe("Projectile landing at a fixed point", () => {
         expect(dodged.health).toBe(100);
     });
 
-    it("drops Jad's rock straight down from its start height onto the point", () => {
+    it("keeps Jad's rock at the landing point while its own sequence plays the fall", () => {
         const player = new FakeCombatant(500, 0, 0, Faction.PLAYER);
         const rock = new Projectile(
             JAD_RANGED_ROCK_SPEC,
             ENEMY_SHOT,
-            { x: 500, y: 0, height: 3000 },
+            { x: 500, y: 0, height: 0 },
             point(500, 0),
         );
         expect(update(rock, 0.8, [player], [])).toEqual({ kind: "ALIVE" });
         expect(rock.x).toBe(500);
-        expect(rock.height).toBeGreaterThan(0);
-        expect(rock.height).toBeLessThan(3000);
-        const outcome = update(rock, 0.8, [player], []);
+        expect(rock.y).toBe(0);
+        expect(rock.height).toBe(0);
+        expect(rock.pitch).toBe(0);
+        const outcome = update(rock, 0.5, [player], []);
         expect(outcome).toEqual({ kind: "LANDED", x: 500, y: 0 });
         expect(rock.height).toBe(0);
         expect(player.health).toBe(100 - DAMAGE);

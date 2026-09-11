@@ -47,10 +47,11 @@ export type ProjectileTravelTime = {
 };
 
 // Where a FIXED_POINT projectile spawns: offset from its caster at the caster's launch height, or
-// directly above the landing point at the given height (a rock dropped from the sky).
+// at the landing point itself at the given height above the ground there (0 when the travel
+// sequence animates the whole fall within its own frames, like Jad's boulder).
 export type ProjectileOrigin =
     | { readonly kind: "CASTER" }
-    | { readonly kind: "ABOVE_TARGET"; readonly height: number };
+    | { readonly kind: "AT_TARGET"; readonly height: number };
 
 // TRACKED_COMBATANT follows its target every step and always arrives on it, landing only on it.
 // FIXED_POINT flies to the point fixed at cast time and lands on everything the projectile affects
@@ -70,6 +71,16 @@ export type ProjectileLanding =
       }
     | { readonly kind: "FREE_FLIGHT"; readonly hitRadius: number; readonly piercing: boolean };
 
+// Whether a projectile's baked model has been reoriented (see ActorRenderDataLoader's arrow
+// rotate180) so its own "nose" axis points along the flight direction. Only such a model can carry
+// a pitch tilt without it swinging the model's off-origin geometry (built along the vertical axis,
+// like every other bake) sideways into a horizontal displacement. A bare spot-anim bake always
+// renders LEVEL, whatever its instantaneous flight angle.
+export enum ProjectileModelOrientation {
+    LEVEL,
+    PITCHED,
+}
+
 // Purely how a projectile flies and looks; what it does on arrival is the ability's payloads,
 // carried per instance (see ProjectileImpact).
 export type ProjectileSpec = {
@@ -79,6 +90,8 @@ export type ProjectileSpec = {
     range: number;
     landing: ProjectileLanding;
     travelSeqId: number;
+    travelPlayback: AnimationPlayback;
+    modelOrientation: ProjectileModelOrientation;
 };
 
 const ARROW_LAUNCH_ANGLE_RADIANS = (20 * Math.PI) / 180;
@@ -90,6 +103,8 @@ export const ARROW_SPEC: ProjectileSpec = {
     range: 4096,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 60 },
     travelSeqId: -1,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.PITCHED,
 };
 
 // Volley fires a spread of arrows at once; unlike the single aimed basic shot, each arrow in the
@@ -108,6 +123,8 @@ export const MAGIC_SPEC: ProjectileSpec = {
     range: 4096,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 80 },
     travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
 export const POWER_SHOT_SPEC: ProjectileSpec = {
@@ -117,6 +134,8 @@ export const POWER_SHOT_SPEC: ProjectileSpec = {
     range: 4096,
     landing: { kind: "FREE_FLIGHT", hitRadius: 24, piercing: true },
     travelSeqId: -1,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.PITCHED,
 };
 
 // TzTok-Jad's mage blast: a slow, big fireball that leaves his mouth level (angle 0, so from his
@@ -139,18 +158,21 @@ export const JAD_MAGE_BLAST_SPEC: ProjectileSpec = {
     range: 12 * TILE_SIZE,
     landing: { kind: "FIXED_POINT", endHeight: 40, hitRadius: 48, origin: { kind: "CASTER" } },
     travelSeqId: JAD_FIRE_SEQ_ID,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
-// TzTok-Jad's ranged attack: a boulder (SpotAnimType id 451) that spawns high above the target and
-// falls straight down over a fixed time, landing on every combatant in radius. range matches the
-// old ground-strike's cast range so Jad still engages at the same distance (see
+// TzTok-Jad's ranged attack: a boulder (SpotAnimType id 451) landing on every combatant in radius.
+// Its sequence 2660 animates the whole fall in its own frames (the model starts ~1150 units up and
+// reaches the ground on the last frame, 1.3s in), so the projectile sits at the landing point and
+// does not move; it plays the sequence once and arrives as the last frame lands. range matches
+// the old ground-strike's cast range so Jad still engages at the same distance (see
 // Enemy.enemyAttackRange).
-const JAD_RANGED_ROCK_FALL_HEIGHT = 3000;
-const JAD_RANGED_ROCK_FALL_SECONDS = 1.6;
+const JAD_RANGED_ROCK_FALL_SECONDS = 1.3;
 export const JAD_RANGED_ROCK_SEQ_ID = 2660;
 
 // Grotesque Guardians' falling debris shadow (SpotAnimType id 1446, FALLING_SHADOW_SEQ_ID): the
-// closest-duration match (1.8s) to the rock's 1.6s fall among the 1446/1447/2776 candidates,
+// closest-duration match (1.8s) to the rock's 1.3s fall among the 1446/1447/2776 candidates,
 // telegraphing where it's about to land.
 export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
     kind: ProjectileKind.JAD_RANGED_ROCK,
@@ -161,7 +183,7 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
         kind: "FIXED_POINT",
         endHeight: 0,
         hitRadius: 1.5 * TILE_SIZE,
-        origin: { kind: "ABOVE_TARGET", height: JAD_RANGED_ROCK_FALL_HEIGHT },
+        origin: { kind: "AT_TARGET", height: 0 },
         telegraph: {
             kind: VisualEffectKind.FALLING_SHADOW,
             seqId: FALLING_SHADOW_SEQ_ID,
@@ -169,6 +191,8 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
         },
     },
     travelSeqId: JAD_RANGED_ROCK_SEQ_ID,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
 // Both TzHaar casters throw level (angle 0) from the top of their tall bodies, so the shot only
@@ -191,6 +215,8 @@ export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
     range: 11 * TILE_SIZE,
     landing: TZHAAR_CASTER_LANDING,
     travelSeqId: -1,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
 // Ket-Zek's fire blast: SpotAnimType id 445 (picked by the user by eye; its sequence 2648 sits
@@ -206,6 +232,8 @@ export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
     range: 10 * TILE_SIZE,
     landing: TZHAAR_CASTER_LANDING,
     travelSeqId: KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
+    travelPlayback: AnimationPlayback.ONCE,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
 export function travelSeconds(travelTime: ProjectileTravelTime, distance: number): number {
@@ -273,7 +301,10 @@ export class Projectile {
         this.y = start.y;
         this.height = start.height;
         this.rotation = directionToRotation(aim.x - start.x, aim.y - start.y);
-        this.pitch = pitchRadiansToRotationUnits(spec.launchAngleRadians);
+        this.pitch =
+            spec.modelOrientation === ProjectileModelOrientation.PITCHED
+                ? pitchRadiansToRotationUnits(spec.launchAngleRadians)
+                : 0;
         this.animation = new AnimationState(spec.travelSeqId);
     }
 
@@ -291,7 +322,7 @@ export class Projectile {
         seqTypeLoader: SeqTypeLoader,
         seqFrameLoader: SeqFrameLoader,
     ): ProjectileOutcome {
-        this.animation.advance(dtSeconds, seqTypeLoader, seqFrameLoader, AnimationPlayback.LOOP);
+        this.animation.advance(dtSeconds, seqTypeLoader, seqFrameLoader, this.spec.travelPlayback);
 
         if (this.target.kind === "COMBATANT" && this.target.combatant.health <= 0) {
             this.target = { kind: "POINT", x: this.target.combatant.x, y: this.target.combatant.y };
@@ -356,7 +387,8 @@ export class Projectile {
         this.y = step.state.y;
         this.height = step.state.height;
         this.rotation = step.rotation;
-        this.pitch = step.pitch;
+        this.pitch =
+            this.spec.modelOrientation === ProjectileModelOrientation.PITCHED ? step.pitch : 0;
     }
 
     private resolveArrival(

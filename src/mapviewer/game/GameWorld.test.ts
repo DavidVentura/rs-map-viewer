@@ -684,6 +684,72 @@ describe("Projectile telegraph", () => {
         expect(world.visualEffects.length).toBe(0);
     });
 
+    it("drops the rock on the player's position at contact time, not cast start, and keeps it pinned there through the fall", () => {
+        class SlopedTerrain implements Terrain {
+            isLoaded(): boolean {
+                return true;
+            }
+
+            canOccupy(): boolean {
+                return true;
+            }
+
+            getWallFlag(): number {
+                return 0;
+            }
+
+            getHeight(_level: number, x: number, y: number): number {
+                return 1000 + x + 2 * y;
+            }
+        }
+        const terrain = new SlopedTerrain();
+        const world = new GameWorld(terrain, seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [JAD_RANGED_STOMP]));
+        const player = world.player!;
+
+        const runInput: SimInput = {
+            movement: { x: 1, y: 0, running: true },
+            abilities: idleAbilities(),
+        };
+        const tick = GameWorld.FIXED_STEP_SECONDS;
+        let contactX: number | undefined;
+        let contactY: number | undefined;
+        for (let i = 0; i < 1000 && world.projectiles.length === 0; i++) {
+            world.advance(tick, runInput);
+            if (world.projectiles.length > 0) {
+                contactX = player.x;
+                contactY = player.y;
+            }
+        }
+
+        // The player must actually have moved away from its cast-start position for this test to
+        // tell cast-start placement apart from contact-time placement.
+        expect(contactX).not.toBe(player.spawnX);
+        expect(contactX).toBeDefined();
+        expect(contactY).toBeDefined();
+
+        const rock = world.projectiles[0];
+        expect(rock.x).toBe(contactX);
+        expect(rock.y).toBe(contactY);
+        expect(rock.height).toBeCloseTo(terrain.getHeight(0, contactX!, contactY!), 0);
+
+        expect(world.visualEffects.length).toBe(1);
+        expect(world.visualEffects[0].x).toBe(contactX);
+        expect(world.visualEffects[0].y).toBe(contactY);
+
+        for (let i = 0; i < 1000 && world.projectiles.length > 0; i++) {
+            world.advance(tick, idleInput());
+            if (world.projectiles.length > 0) {
+                expect(world.projectiles[0].x).toBe(contactX);
+                expect(world.projectiles[0].y).toBe(contactY);
+            }
+        }
+
+        // The player stood still under the rock's landing point through the fall, so it lands on it.
+        expect(player.health).toBeLessThan(player.maxHealth);
+    });
+
     it("spawns no telegraph for a fixed-point spec without one", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);

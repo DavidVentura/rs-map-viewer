@@ -920,7 +920,7 @@ export class GameWorld {
         landing: ProjectileLanding,
         aimPoint: { x: number; y: number },
     ): FlightOrigin | undefined {
-        if (landing.kind === "FIXED_POINT" && landing.origin.kind === "ABOVE_TARGET") {
+        if (landing.kind === "FIXED_POINT" && landing.origin.kind === "AT_TARGET") {
             return {
                 x: aimPoint.x,
                 y: aimPoint.y,
