@@ -1,5 +1,6 @@
 import { AbilityEffectKind, CooldownGroup } from "./Ability";
 import {
+    CastCosts,
     areGroupsUnlocked,
     canUseAbility,
     chargesAvailable,
@@ -205,5 +206,52 @@ describe("computeSlotReadiness", () => {
         expect(readiness.charges).toBe(1);
         expect(readiness.maxCharges).toBe(1);
         expect(readiness.cooldownFraction).toBe(0);
+    });
+});
+
+describe("free casting (god mode)", () => {
+    const definition = {
+        ...BASE_DEFINITION,
+        manaCost: 50,
+        requires: [CooldownGroup.ATTACK],
+        effect: { kind: AbilityEffectKind.HEAL, amount: 10 } as const,
+    };
+    const lockedAndSpent = {
+        busyUntil: undefined,
+        groupCooldownUntil: lockGroups(
+            [{ group: CooldownGroup.ATTACK, seconds: 10 }],
+            new Map(),
+            0,
+            0,
+        ),
+        chargeState: consumeCharge(initialChargeState(1), 1, 100, 0),
+        mana: 0,
+    };
+
+    it("ignores mana, group cooldowns and charges", () => {
+        expect(canUseAbility(definition, lockedAndSpent, 1)).toBe(false);
+        expect(canUseAbility(definition, lockedAndSpent, 1, CastCosts.FREE)).toBe(true);
+    });
+
+    it("still waits for a cast in progress", () => {
+        const busy = { ...lockedAndSpent, busyUntil: 5 };
+        expect(canUseAbility(definition, busy, 4, CastCosts.FREE)).toBe(false);
+        expect(canUseAbility(definition, busy, 5, CastCosts.FREE)).toBe(true);
+    });
+
+    it("reports every slot as ready", () => {
+        const readiness = computeSlotReadiness(
+            definition,
+            lockedAndSpent.chargeState,
+            0,
+            1,
+            CastCosts.FREE,
+        );
+        expect(readiness).toEqual({
+            cooldownFraction: 0,
+            charges: 1,
+            maxCharges: 1,
+            manaBlocked: false,
+        });
     });
 });

@@ -1,5 +1,6 @@
 import { AbilityDefinition, AbilityTarget, CooldownGroup, ResolvedAbility } from "./Ability";
 import {
+    CastCosts,
     ChargeState,
     canUseAbility,
     consumeCharge,
@@ -29,7 +30,12 @@ export class AbilityRuntime {
     private pendingCast?: PendingCast;
     private activeAnimation?: ActiveCastAnimation;
 
-    canUse(definition: AbilityDefinition, mana: number, time: number): boolean {
+    canUse(
+        definition: AbilityDefinition,
+        mana: number,
+        time: number,
+        costs: CastCosts = CastCosts.CHARGED,
+    ): boolean {
         return canUseAbility(
             definition,
             {
@@ -39,6 +45,7 @@ export class AbilityRuntime {
                 mana,
             },
             time,
+            costs,
         );
     }
 

@@ -64,6 +64,14 @@ export function consumeCharge(
     return { level: currentChargeLevel(state, maxCharges, rechargeSeconds, time) - 1, time };
 }
 
+// FREE is the debug god mode: mana, cooldown groups and charges are ignored so skills can be
+// spammed while tuning their feel. The busy gate still applies, since overlapping casts would
+// restart the cast animation mid-swing.
+export enum CastCosts {
+    CHARGED = 0,
+    FREE = 1,
+}
+
 export type AbilityGateState = {
     readonly busyUntil?: number;
     readonly groupCooldownUntil: GroupCooldowns;
@@ -75,9 +83,13 @@ export function canUseAbility(
     definition: AbilityDefinition,
     state: AbilityGateState,
     time: number,
+    costs: CastCosts = CastCosts.CHARGED,
 ): boolean {
     if (state.busyUntil !== undefined && time < state.busyUntil) {
         return false;
+    }
+    if (costs === CastCosts.FREE) {
+        return true;
     }
     if (state.mana < definition.manaCost) {
         return false;
@@ -135,7 +147,16 @@ export function computeSlotReadiness(
     chargeState: ChargeState,
     mana: number,
     time: number,
+    costs: CastCosts = CastCosts.CHARGED,
 ): AbilitySlotReadiness {
+    if (costs === CastCosts.FREE) {
+        return {
+            cooldownFraction: 0,
+            charges: definition.maxCharges,
+            maxCharges: definition.maxCharges,
+            manaBlocked: false,
+        };
+    }
     return {
         cooldownFraction: computeCooldownFraction(
             chargeState,

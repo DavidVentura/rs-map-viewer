@@ -365,11 +365,11 @@ describe("Enemy attack cycle", () => {
         expect(enemy.state).toBe(EnemyState.RECOVERY);
     });
 
-    it("leaves the player's health unchanged while invulnerable", () => {
+    it("leaves the player's health unchanged in god mode", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
-        world.setInvulnerable(true);
+        world.setGodMode(true);
         const player = world.player!;
 
         advanceSeconds(world, idleInput(), impactOf(GOBLIN_MELEE) + 0.05);

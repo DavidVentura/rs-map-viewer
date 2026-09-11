@@ -652,9 +652,9 @@ export function drawWaveCounter(
     ctx.restore();
 }
 
-const INVULNERABLE_LABEL_MARGIN_TOP = WAVE_COUNTER_SUMMARY_MARGIN_TOP + 20;
+const GOD_MODE_LABEL_MARGIN_TOP = WAVE_COUNTER_SUMMARY_MARGIN_TOP + 20;
 
-export function drawInvulnerableLabel(ctx: CanvasRenderingContext2D, width: number): void {
+export function drawGodModeLabel(ctx: CanvasRenderingContext2D, width: number): void {
     ctx.save();
     ctx.font = "700 13px sans-serif";
     ctx.textAlign = "center";
@@ -662,8 +662,8 @@ export function drawInvulnerableLabel(ctx: CanvasRenderingContext2D, width: numb
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
     ctx.fillStyle = "#4dc8ff";
-    ctx.strokeText("INVULNERABLE", width / 2, INVULNERABLE_LABEL_MARGIN_TOP);
-    ctx.fillText("INVULNERABLE", width / 2, INVULNERABLE_LABEL_MARGIN_TOP);
+    ctx.strokeText("GOD MODE", width / 2, GOD_MODE_LABEL_MARGIN_TOP);
+    ctx.fillText("GOD MODE", width / 2, GOD_MODE_LABEL_MARGIN_TOP);
     ctx.restore();
 }
 

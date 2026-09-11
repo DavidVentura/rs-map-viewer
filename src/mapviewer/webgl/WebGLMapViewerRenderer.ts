@@ -796,10 +796,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     override getToolControls(): Schema {
         const gameControls: Schema = {
             Game: folder({
-                Invulnerable: {
-                    value: this.mapViewer.world.invulnerable,
+                "God mode": {
+                    value: this.mapViewer.world.godMode,
                     onChange: (v: boolean) => {
-                        this.mapViewer.world.setInvulnerable(v);
+                        this.mapViewer.world.setGodMode(v);
                     },
                 },
             }),
@@ -2029,7 +2029,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 },
             abilities: player ? this.buildAbilitySlots(player) : [],
             activeStyle: player?.style,
-            invulnerable: world.invulnerable,
+            godMode: world.godMode,
             splatEvents,
             groundShadows,
             groundItems,

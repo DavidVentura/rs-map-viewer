@@ -15,7 +15,7 @@ import {
 } from "./Equipment";
 import { Terrain } from "./Terrain";
 import { AbilityBarsByStyle } from "./abilities";
-import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
+import { AbilitySlotReadiness, CastCosts, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
 import {
@@ -55,7 +55,9 @@ export class Player implements Combatant, ManaPool {
     readonly projectileLaunchHeight = Player.PROJECTILE_LAUNCH_HEIGHT;
     health = Player.MAX_HEALTH;
     mana = Player.MAX_MANA;
-    invulnerable = false;
+    // Debug god mode: no damage taken and every skill castable for free, for tuning skill and
+    // projectile feel without fighting the encounter.
+    godMode = false;
 
     private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
     equipment: EquipmentState = DEFAULT_EQUIPMENT;
@@ -155,6 +157,14 @@ export class Player implements Combatant, ManaPool {
         this.equipment = DEFAULT_EQUIPMENT;
     }
 
+    get invulnerable(): boolean {
+        return this.godMode;
+    }
+
+    private castCosts(): CastCosts {
+        return this.godMode ? CastCosts.FREE : CastCosts.CHARGED;
+    }
+
     getSlotReadiness(slot: number, timeSeconds: number): AbilitySlotReadiness {
         const definition = this.abilityBar[slot];
         return computeSlotReadiness(
@@ -162,11 +172,17 @@ export class Player implements Combatant, ManaPool {
             this.abilityRuntime.chargeStateFor(definition),
             this.mana,
             timeSeconds,
+            this.castCosts(),
         );
     }
 
     canUseSlotIgnoringTarget(slot: number, timeSeconds: number): boolean {
-        return this.abilityRuntime.canUse(this.abilityBar[slot], this.mana, timeSeconds);
+        return this.abilityRuntime.canUse(
+            this.abilityBar[slot],
+            this.mana,
+            timeSeconds,
+            this.castCosts(),
+        );
     }
 
     isBusy(timeSeconds: number): boolean {
@@ -273,7 +289,9 @@ export class Player implements Combatant, ManaPool {
     }
 
     beginCast(ability: ResolvedAbility, target: AbilityTarget, timeSeconds: number): void {
-        this.mana -= ability.manaCost;
+        if (this.castCosts() === CastCosts.CHARGED) {
+            this.mana -= ability.manaCost;
+        }
         this.abilityRuntime.use(ability, target, timeSeconds);
         const deltaX = target.x - this.x;
         const deltaY = target.y - this.y;

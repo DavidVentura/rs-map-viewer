@@ -7,13 +7,13 @@ import {
     drawBossBar,
     drawBottomPanel,
     drawDamageSplat,
+    drawGodModeLabel,
     drawGroundConeFlash,
     drawGroundImpactFlash,
     drawGroundItemLabel,
     drawGroundShadow,
     drawHealSplat,
     drawHealthGlobe,
-    drawInvulnerableLabel,
     drawManaGlobe,
     drawPickupFlash,
     drawPreviewSeqLabel,
@@ -85,8 +85,8 @@ export class Hud {
         if (frame.wave) {
             drawWaveCounter(ctx, width, frame.wave);
         }
-        if (frame.invulnerable) {
-            drawInvulnerableLabel(ctx, width);
+        if (frame.godMode) {
+            drawGodModeLabel(ctx, width);
         }
         if (frame.boss) {
             drawBossBar(ctx, width, frame.boss);

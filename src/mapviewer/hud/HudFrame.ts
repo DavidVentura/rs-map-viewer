@@ -146,7 +146,7 @@ export type HudFrame = {
     target?: TargetHudInfo;
     abilities: AbilitySlotHudInfo[];
     activeStyle?: WeaponStyle;
-    invulnerable: boolean;
+    godMode: boolean;
     splatEvents: SplatEvent[];
     groundShadows: GroundShadowHudInfo[];
     wave?: WaveHudInfo;

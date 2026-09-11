@@ -30,9 +30,10 @@ const cachesPromise = fetchCacheList();
 
 const workerPool = RenderDataWorkerPool.create(isWallpaperEngine ? 1 : 4);
 
-// Debug flag that disables player damage entirely (see GameWorld.setInvulnerable); parsed here,
-// at the edge, alongside parseEncounterId and parseAnimPreviewParams.
-function parseInvulnerable(searchParams: URLSearchParams): boolean {
+// Debug god mode: no damage taken, free casting (see GameWorld.setGodMode); parsed here, at the
+// edge, alongside parseEncounterId and parseAnimPreviewParams. The query key predates the free
+// casting half of the mode.
+function parseGodMode(searchParams: URLSearchParams): boolean {
     return searchParams.get("invuln") === "1";
 }
 
@@ -66,7 +67,7 @@ function MapViewerApp() {
 
             const encounterId = parseEncounterId(searchParams.get("enc"));
             const animPreview = parseAnimPreviewParams(searchParams);
-            const invulnerable = parseInvulnerable(searchParams);
+            const godMode = parseGodMode(searchParams);
             // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs or
             // spot anims that an encounter bundle was never built to contain. Bundles are build
             // artifacts, so development uses the full cache unless explicitly asked, to avoid
@@ -110,7 +111,7 @@ function MapViewerApp() {
                 rendererType,
                 cache,
                 animPreview,
-                invulnerable,
+                godMode,
             );
             (window as any).mapViewer = mapViewer;
 

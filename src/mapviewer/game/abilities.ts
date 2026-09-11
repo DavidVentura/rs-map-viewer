@@ -340,15 +340,15 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
 export const MAUL_SMASH_CAST_SEQ_ID = 11124;
 const MAUL_SMASH_RECHARGE_SECONDS = 10;
 
-// Played at half natural speed for a weightier overhead smash. The fast, short frame right after
-// the raise is the downswing snapping through into impact; the rest is recovery under the ATTACK
-// lock, so the hit lands as the maul comes down instead of after it's already back up.
+// The fast, short frame right after the raise is the downswing snapping through into impact; the
+// rest is recovery under the ATTACK lock, so the hit lands as the maul comes down instead of after
+// it's already back up.
 export const MAUL_SMASH: AbilityDefinition = {
     id: "maul_smash",
     name: "Maul Smash",
     castSeqId: MAUL_SMASH_CAST_SEQ_ID,
     contactFrame: 10,
-    castSpeed: 0.5,
+    castSpeed: 1,
     channelSeconds: 0,
     manaCost: 0,
     maxCharges: 1,

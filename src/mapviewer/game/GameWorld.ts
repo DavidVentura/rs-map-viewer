@@ -128,7 +128,7 @@ export class GameWorld {
     private waveClearedNotified: boolean[] = [];
     private triggeredBossPhases = new Map<number, Set<number>>();
     pendingUpgradeOffer?: readonly Upgrade[];
-    invulnerable = false;
+    godMode = false;
 
     constructor(
         private readonly terrain: Terrain,
@@ -137,12 +137,12 @@ export class GameWorld {
         private readonly random: RandomSource = Math.random,
     ) {}
 
-    // The debug invulnerability toggle (see MapViewerControls) survives across spawnPlayer calls,
-    // unlike the Player instance itself, which is recreated on every startEncounter.
-    setInvulnerable(invulnerable: boolean): void {
-        this.invulnerable = invulnerable;
+    // The debug god mode toggle (see MapViewerControls) survives across spawnPlayer calls, unlike
+    // the Player instance itself, which is recreated on every startEncounter.
+    setGodMode(godMode: boolean): void {
+        this.godMode = godMode;
         if (this.player) {
-            this.player.invulnerable = invulnerable;
+            this.player.godMode = godMode;
         }
     }
 
@@ -155,7 +155,7 @@ export class GameWorld {
             styleSeqIds,
             resolvePlayerAbilityBars(this.seqTypeLoader, this.seqFrameLoader),
         );
-        this.player.invulnerable = this.invulnerable;
+        this.player.godMode = this.godMode;
     }
 
     // Spawns the player and populates the encounter's initial enemies (its static roster for a
