@@ -1,4 +1,4 @@
-import { AbilityDefinition, AbilityEffectKind } from "./Ability";
+import { AbilityDefinition, AbilityEffectKind, ResolvedAbility } from "./Ability";
 import { RandomSource } from "./abilityRules";
 
 export type AbilityModifiers = {
@@ -132,22 +132,25 @@ function applyEffectModifiers(
 // abilities.ts stays untouched: this is the only place stacking upgrades changes numbers, so it
 // must be called wherever an ability's numbers matter (Player.abilityBar, effect resolution).
 export function applyModifiers(
-    definition: AbilityDefinition,
+    ability: ResolvedAbility,
     modifiers: AbilityModifiers,
-): AbilityDefinition {
+): ResolvedAbility {
     if (isIdentityModifiers(modifiers)) {
-        return definition;
+        return ability;
     }
     return {
-        ...definition,
-        // castSpeed scales inversely so the animation's impact frame still lines up with the new,
-        // shorter (or longer) impactSeconds.
-        impactSeconds: definition.impactSeconds * modifiers.castTimeMultiplier,
-        castSpeed: definition.castSpeed / modifiers.castTimeMultiplier,
-        rechargeSeconds: definition.rechargeSeconds * modifiers.cooldownMultiplier,
-        manaCost: definition.manaCost * modifiers.manaCostMultiplier,
-        maxCharges: definition.maxCharges + potionChargeBonus(definition, modifiers),
-        effect: applyEffectModifiers(definition.effect, modifiers),
+        ...ability,
+        // The resolved timing is wall-clock at castSpeed, so it scales with the cast time while
+        // castSpeed scales inversely: the contact frame stays lined up with the new impactSeconds.
+        timing: {
+            impactSeconds: ability.timing.impactSeconds * modifiers.castTimeMultiplier,
+            animationSeconds: ability.timing.animationSeconds * modifiers.castTimeMultiplier,
+        },
+        castSpeed: ability.castSpeed / modifiers.castTimeMultiplier,
+        rechargeSeconds: ability.rechargeSeconds * modifiers.cooldownMultiplier,
+        manaCost: ability.manaCost * modifiers.manaCostMultiplier,
+        maxCharges: ability.maxCharges + potionChargeBonus(ability, modifiers),
+        effect: applyEffectModifiers(ability.effect, modifiers),
     };
 }
 

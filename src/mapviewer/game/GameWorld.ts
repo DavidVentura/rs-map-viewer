@@ -1,7 +1,6 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
-    AbilityDefinition,
     AbilityEffect,
     AbilityEffectKind,
     AbilityTarget,
@@ -15,7 +14,7 @@ import {
     WeaponStyle,
 } from "./Ability";
 import { CombatEvent, CombatEventKind, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
-import { Combatant } from "./Combatant";
+import { Combatant, Faction } from "./Combatant";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
@@ -23,6 +22,7 @@ import {
     EnemyStatsOverride,
     EnemyType,
     getEnemyType,
+    resolveEnemyType,
     resolveTriggeredBossPhase,
 } from "./EnemyType";
 import {
@@ -35,10 +35,16 @@ import {
 } from "./GroundItem";
 import { PendingGroundStrike, TILE_SIZE, combatantsHitByGroundStrike } from "./GroundStrike";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
-import { Projectile, ProjectileHitEffect, ProjectileOutcome, ProjectileSpec } from "./Projectile";
+import {
+    Projectile,
+    ProjectileHitEffect,
+    ProjectileOutcome,
+    ProjectileSpec,
+    ProjectileTarget,
+} from "./Projectile";
 import { SpatialGrid } from "./SpatialGrid";
 import { Terrain } from "./Terrain";
-import { VisualEffect } from "./VisualEffect";
+import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
 import {
     WaveDirectorState,
     WaveSpawn,
@@ -47,9 +53,10 @@ import {
     stepWaveDirector,
     totalGroupCount,
 } from "./WaveDirector";
-import { getStyleAttack } from "./abilities";
+import { getStyleAttack, resolvePlayerAbilityBars } from "./abilities";
 import { RandomSource, isWithinMeleeReach, rollDamage } from "./abilityRules";
 import {
+    FlightOrigin,
     directionToRotation,
     generateSpreadDirections,
     isPointInCone,
@@ -89,6 +96,7 @@ export class GameWorld {
     static readonly FIXED_STEP_SECONDS = 1 / 120;
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
+    static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 32;
     static readonly MAX_GROUND_STRIKES = 16;
     static readonly BASIC_ATTACK_SLOT = 0;
@@ -140,7 +148,13 @@ export class GameWorld {
 
     spawnPlayer(x: number, y: number, level: number, styleSeqIds: StanceSeqIdsByStance): void {
         const spawn = resolveSpawn(this.terrain, level, x, y);
-        this.player = new Player(spawn.x, spawn.y, level, styleSeqIds);
+        this.player = new Player(
+            spawn.x,
+            spawn.y,
+            level,
+            styleSeqIds,
+            resolvePlayerAbilityBars(this.seqTypeLoader, this.seqFrameLoader),
+        );
         this.player.invulnerable = this.invulnerable;
     }
 
@@ -215,7 +229,6 @@ export class GameWorld {
         y: number,
         level: number,
         enemyType: EnemyType,
-        abilities: readonly AbilityDefinition[] = enemyType.abilities,
         statsOverride?: EnemyStatsOverride,
     ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
@@ -228,8 +241,7 @@ export class GameWorld {
                 level,
                 spawn.x,
                 spawn.y,
-                enemyType,
-                abilities,
+                resolveEnemyType(enemyType, this.seqTypeLoader, this.seqFrameLoader),
                 statsOverride,
             ),
         );
@@ -577,14 +589,7 @@ export class GameWorld {
         }
         const point = pickFarthestSpawnPoint(encounter.enemySpawns, this.player.x, this.player.y);
         const enemyType = getEnemyType(spawn.enemyTypeId);
-        const id = this.spawnEnemy(
-            point.x,
-            point.y,
-            point.level,
-            enemyType,
-            undefined,
-            spawn.statsOverride,
-        );
+        const id = this.spawnEnemy(point.x, point.y, point.level, enemyType, spawn.statsOverride);
         this.enemyWaveIndex.set(id, spawn.waveIndex);
     }
 
@@ -636,7 +641,7 @@ export class GameWorld {
                 continue;
             }
             applyHeal(ally, effect.amount, this.events);
-            this.spawnVisualEffect(effect.hitEffect, ally);
+            this.spawnVisualEffect(effect.hitEffect, { kind: "COMBATANT", combatant: ally });
         }
     }
 
@@ -680,13 +685,16 @@ export class GameWorld {
                 dtSeconds,
                 combatants,
                 this.events,
+                this.terrain,
                 this.seqTypeLoader,
                 this.seqFrameLoader,
             );
-            if (outcome === ProjectileOutcome.ALIVE) {
+            if (outcome.kind === "ALIVE") {
                 survivingProjectiles.push(projectile);
-            } else if (outcome === ProjectileOutcome.HIT) {
-                this.spawnProjectileHitEffect(projectile);
+                continue;
+            }
+            if (projectile.spec.hitEffect) {
+                this.spawnProjectileHitEffect(projectile.spec.hitEffect, projectile.level, outcome);
             }
         }
         this.projectiles = survivingProjectiles;
@@ -834,61 +842,110 @@ export class GameWorld {
     }
 
     private spawnProjectile(caster: Combatant, spec: ProjectileSpec, target: AbilityTarget): void {
-        if (spec.flight.kind === "DROP") {
-            this.spawnDropProjectile(caster, spec, target);
-            return;
-        }
-        const deltaX = target.x - caster.x;
-        const deltaY = target.y - caster.y;
-        const distance = Math.hypot(deltaX, deltaY);
-        if (distance === 0 || this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
-            return;
-        }
-        const homingTarget =
-            target.enemyId !== undefined ? this.findEnemy(target.enemyId) : undefined;
-        this.projectiles.push(
-            new Projectile(
-                spec,
-                caster.faction,
-                caster.level,
-                caster.x + (deltaX / distance) * 48,
-                caster.y + (deltaY / distance) * 48,
-                deltaX,
-                deltaY,
-                distance,
-                homingTarget,
-            ),
-        );
-    }
-
-    // A DROP projectile spawns directly above the target rather than offset from the caster (it has
-    // no horizontal travel to aim), so it gets its own spawn path instead of sharing spawnProjectile's
-    // caster-relative placement.
-    private spawnDropProjectile(
-        caster: Combatant,
-        spec: ProjectileSpec,
-        target: AbilityTarget,
-    ): void {
         if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
             return;
         }
-        this.projectiles.push(
-            new Projectile(spec, caster.faction, caster.level, target.x, target.y, 0, 1, 0),
-        );
-    }
-
-    private spawnProjectileHitEffect(projectile: Projectile): void {
-        const hitEffect = projectile.spec.hitEffect;
-        const target = projectile.hitTarget;
-        if (!hitEffect || !target) {
+        const aim = this.resolveProjectileTarget(caster, spec, target);
+        const aimPoint = aim.kind === "COMBATANT" ? aim.combatant : aim;
+        if (spec.landing.kind === "FIXED_POINT" && spec.landing.origin.kind === "ABOVE_TARGET") {
+            const start = {
+                x: aimPoint.x,
+                y: aimPoint.y,
+                height:
+                    this.terrain.getHeight(caster.level, aimPoint.x, aimPoint.y) +
+                    spec.landing.origin.height,
+            };
+            this.projectiles.push(new Projectile(spec, caster.faction, caster.level, start, aim));
             return;
         }
-        this.spawnVisualEffect(hitEffect, target);
+        const deltaX = aimPoint.x - caster.x;
+        const deltaY = aimPoint.y - caster.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        if (distance === 0) {
+            return;
+        }
+        const start = this.projectileLaunchPoint(caster, deltaX / distance, deltaY / distance);
+        this.projectiles.push(new Projectile(spec, caster.faction, caster.level, start, aim));
+    }
+
+    private projectileLaunchPoint(
+        caster: Combatant,
+        directionX: number,
+        directionY: number,
+    ): FlightOrigin {
+        const x = caster.x + directionX * GameWorld.PROJECTILE_LAUNCH_OFFSET;
+        const y = caster.y + directionY * GameWorld.PROJECTILE_LAUNCH_OFFSET;
+        return {
+            x,
+            y,
+            height: this.terrain.getHeight(caster.level, x, y) + caster.projectileLaunchHeight,
+        };
+    }
+
+    // What a cast at `target` flies to under the spec's landing rule. The aimed combatant is the
+    // player's hovered enemy, or the player for an enemy's cast: a tracked shot follows it (and
+    // flies to the bare aimed point, to expire harmlessly, when there is none), a fixed-point shot
+    // lands where it stands at cast time, and a free-flight shot flies to max range along the aim.
+    private resolveProjectileTarget(
+        caster: Combatant,
+        spec: ProjectileSpec,
+        target: AbilityTarget,
+    ): ProjectileTarget {
+        const aimed =
+            caster.faction === Faction.PLAYER
+                ? this.resolveEnemyTarget(target, caster.level)
+                : this.player;
+        switch (spec.landing.kind) {
+            case "TRACKED_COMBATANT":
+                return aimed
+                    ? { kind: "COMBATANT", combatant: aimed }
+                    : { kind: "POINT", x: target.x, y: target.y };
+            case "FIXED_POINT":
+                return { kind: "POINT", x: aimed?.x ?? target.x, y: aimed?.y ?? target.y };
+            case "FREE_FLIGHT": {
+                const deltaX = target.x - caster.x;
+                const deltaY = target.y - caster.y;
+                const distance = Math.hypot(deltaX, deltaY);
+                if (distance === 0) {
+                    return { kind: "POINT", x: target.x, y: target.y };
+                }
+                return {
+                    kind: "POINT",
+                    x: caster.x + (deltaX / distance) * spec.range,
+                    y: caster.y + (deltaY / distance) * spec.range,
+                };
+            }
+        }
+    }
+
+    private spawnProjectileHitEffect(
+        hitEffect: ProjectileHitEffect,
+        level: number,
+        outcome: Exclude<ProjectileOutcome, { kind: "ALIVE" }>,
+    ): void {
+        switch (outcome.kind) {
+            case "HIT_COMBATANT":
+                this.spawnVisualEffect(hitEffect, {
+                    kind: "COMBATANT",
+                    combatant: outcome.combatant,
+                });
+                return;
+            case "LANDED":
+                this.spawnVisualEffect(hitEffect, {
+                    kind: "POINT",
+                    x: outcome.x,
+                    y: outcome.y,
+                    level,
+                });
+                return;
+            case "EXPIRED":
+                return;
+        }
     }
 
     private spawnVisualEffect(
         hitEffect: ProjectileHitEffect,
-        point: { readonly x: number; readonly y: number; readonly level: number },
+        anchor: VisualEffectAnchor,
         holdSeconds?: number,
     ): void {
         if (this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
@@ -897,9 +954,7 @@ export class GameWorld {
         this.visualEffects.push(
             new VisualEffect(
                 hitEffect.kind,
-                point.level,
-                point.x,
-                point.y,
+                anchor,
                 hitEffect.height,
                 hitEffect.seqId,
                 holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
@@ -954,6 +1009,7 @@ export class GameWorld {
             const facing = rotationToDirection(caster.rotation);
             const landingDistance = effect.reach * 0.5;
             this.spawnVisualEffect(effect.hitEffect, {
+                kind: "POINT",
                 x: caster.x + facing.x * landingDistance,
                 y: caster.y + facing.y * landingDistance,
                 level: caster.level,
@@ -990,7 +1046,11 @@ export class GameWorld {
                 continue;
             }
             applyFreeze(enemy, this.timeSeconds + effect.freezeSeconds, this.events);
-            this.spawnVisualEffect(effect.hitEffect, enemy, effect.freezeSeconds);
+            this.spawnVisualEffect(
+                effect.hitEffect,
+                { kind: "COMBATANT", combatant: enemy },
+                effect.freezeSeconds,
+            );
         }
     }
 
@@ -999,12 +1059,16 @@ export class GameWorld {
         effect: MultiProjectileEffect,
         target: AbilityTarget,
     ): void {
+        if (effect.spec.landing.kind !== "FREE_FLIGHT") {
+            throw new Error(
+                `Multi-projectile spread requires a FREE_FLIGHT spec, got ${effect.spec.landing.kind}`,
+            );
+        }
         const deltaX = target.x - caster.x;
         const deltaY = target.y - caster.y;
         if (deltaX === 0 && deltaY === 0) {
             return;
         }
-        const distance = Math.hypot(deltaX, deltaY);
         const baseRotation = directionToRotation(deltaX, deltaY);
         const directions = generateSpreadDirections(
             baseRotation,
@@ -1016,17 +1080,14 @@ export class GameWorld {
                 break;
             }
             const direction = rotationToDirection(rotation);
+            const start = this.projectileLaunchPoint(caster, direction.x, direction.y);
+            const end = {
+                kind: "POINT" as const,
+                x: caster.x + direction.x * effect.spec.range,
+                y: caster.y + direction.y * effect.spec.range,
+            };
             this.projectiles.push(
-                new Projectile(
-                    effect.spec,
-                    caster.faction,
-                    caster.level,
-                    caster.x + direction.x * 48,
-                    caster.y + direction.y * 48,
-                    direction.x,
-                    direction.y,
-                    distance,
-                ),
+                new Projectile(effect.spec, caster.faction, caster.level, start, end),
             );
         }
     }

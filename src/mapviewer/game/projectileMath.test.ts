@@ -1,22 +1,23 @@
 import { Faction } from "./Combatant";
 import {
-    computeArcOffset,
-    computeProjectilePitch,
+    FlightPoint,
+    FlightState,
     directionToRotation,
-    findLandingHit,
     findSweepHit,
     generateSpreadDirections,
     isPointInCone,
     isWithinTileArea,
+    launchFlight,
     pitchRadiansToRotationUnits,
-    reaimTowardTarget,
     rotationAngleDifference,
     rotationToDirection,
+    stepFlight,
     sweepCircleHitFraction,
 } from "./projectileMath";
 
 class FakeCombatant {
     readonly hitRadius = 32;
+    readonly projectileLaunchHeight = 40;
     readonly maxHealth = 100;
     health = 100;
 
@@ -39,103 +40,136 @@ describe("directionToRotation", () => {
     });
 });
 
-describe("reaimTowardTarget", () => {
-    it("returns a unit vector pointing from the origin to the target", () => {
-        const result = reaimTowardTarget(1, 0, 0, 0, 0, 500);
-        expect(result.x).toBeCloseTo(0);
-        expect(result.y).toBeCloseTo(1);
+// Runs the solver to arrival, re-reading the (possibly moving) target every step, and returns the
+// states it passed through.
+function flyTo(
+    initial: FlightState,
+    target: () => FlightPoint,
+    endHeight: number,
+    dt: number,
+): FlightState[] {
+    const states: FlightState[] = [];
+    let state = initial;
+    for (let i = 0; i < 100000; i++) {
+        const step = stepFlight(state, target(), endHeight, dt);
+        state = step.state;
+        states.push(state);
+        if (step.arrived) {
+            return states;
+        }
+    }
+    throw new Error("flight never arrived");
+}
+
+describe("launchFlight", () => {
+    it("sets the initial vertical velocity from the launch angle and horizontal speed", () => {
+        const state = launchFlight({ x: 0, y: 0, height: 40 }, { x: 1000, y: 0 }, Math.PI / 4, 2);
+        expect(state.verticalVelocity).toBeCloseTo(500);
+        expect(state.secondsToArrival).toBe(2);
     });
 
-    it("keeps the previous direction when already at the target", () => {
-        const result = reaimTowardTarget(1, 0, 100, 100, 100, 100);
-        expect(result).toEqual({ x: 1, y: 0 });
-    });
-});
-
-describe("computeArcOffset (SYMMETRIC)", () => {
-    const arrowArc = { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 };
-
-    it("is zero at the start and end of the reference distance", () => {
-        expect(computeArcOffset(0, 1000, arrowArc, "SYMMETRIC")).toBe(0);
-        expect(computeArcOffset(1000, 1000, arrowArc, "SYMMETRIC")).toBe(0);
-    });
-
-    it("peaks above zero at the midpoint", () => {
-        expect(computeArcOffset(500, 1000, arrowArc, "SYMMETRIC")).toBeGreaterThan(0);
-    });
-
-    it("clamps the peak height to the arc profile maximum", () => {
-        const offset = computeArcOffset(5000, 10000, arrowArc, "SYMMETRIC");
-        expect(offset).toBeCloseTo(arrowArc.maxHeight);
-    });
-
-    it("stays flat for a zero-height arc profile", () => {
-        const flatArc = { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 };
-        expect(computeArcOffset(500, 1000, flatArc, "SYMMETRIC")).toBe(0);
-    });
-
-    it("does not travel past full progress once the reference distance is exceeded", () => {
-        const atReference = computeArcOffset(1000, 1000, arrowArc, "SYMMETRIC");
-        const pastReference = computeArcOffset(2000, 1000, arrowArc, "SYMMETRIC");
-        expect(pastReference).toBe(atReference);
+    it("rejects a non-positive travel time", () => {
+        expect(() => launchFlight({ x: 0, y: 0, height: 0 }, { x: 1, y: 0 }, 0, 0)).toThrow();
     });
 });
 
-describe("computeArcOffset (DESCENDING)", () => {
-    const jadArc = { baseHeight: 400, heightPerDistance: 0.3, maxHeight: 900 };
+describe("stepFlight", () => {
+    const angle = Math.PI / 6;
+    const start = { x: 0, y: 0, height: 40 };
+    const target = { x: 1000, y: 0 };
 
-    it("is at its peak at the start (the launch point is the apex)", () => {
-        const peak = computeArcOffset(0, 1000, jadArc, "DESCENDING");
-        expect(peak).toBeGreaterThan(0);
-        expect(peak).toBeGreaterThan(computeArcOffset(1, 1000, jadArc, "DESCENDING"));
+    it("peaks at distance * tan(angle) / 4 above the baseline at the midpoint of a level shot", () => {
+        const states = flyTo(launchFlight(start, target, angle, 1), () => target, 40, 1 / 1000);
+        const midpoint = states.reduce((closest, state) =>
+            Math.abs(state.x - 500) < Math.abs(closest.x - 500) ? state : closest,
+        );
+        expect(midpoint.height - 40).toBeCloseTo((1000 * Math.tan(angle)) / 4, 0);
+        const peak = Math.max(...states.map((state) => state.height));
+        expect(peak - 40).toBeCloseTo((1000 * Math.tan(angle)) / 4, 0);
     });
 
-    it("is zero at the end of the reference distance", () => {
-        expect(computeArcOffset(1000, 1000, jadArc, "DESCENDING")).toBeCloseTo(0);
+    it("lands exactly on the target at the end height and arrival time regardless of dt", () => {
+        for (const dt of [1 / 120, 1 / 7, 0.3]) {
+            const states = flyTo(launchFlight(start, target, angle, 1), () => target, 25, dt);
+            const last = states[states.length - 1];
+            expect(last.x).toBe(1000);
+            expect(last.y).toBe(0);
+            expect(last.height).toBe(25);
+            expect(last.secondsToArrival).toBe(0);
+            expect(Math.abs(states.length * dt - 1)).toBeLessThanOrEqual(dt);
+        }
     });
 
-    it("decreases monotonically from start to end", () => {
-        const early = computeArcOffset(200, 1000, jadArc, "DESCENDING");
-        const late = computeArcOffset(800, 1000, jadArc, "DESCENDING");
-        expect(early).toBeGreaterThan(late);
-    });
-});
-
-describe("computeProjectilePitch (SYMMETRIC)", () => {
-    const arrowArc = { baseHeight: 256, heightPerDistance: 0.15, maxHeight: 768 };
-
-    it("is zero at the apex", () => {
-        expect(computeProjectilePitch(500, 1000, arrowArc, "SYMMETRIC")).toBeCloseTo(0);
-    });
-
-    it("is positive (nose up) at the start", () => {
-        expect(computeProjectilePitch(0, 1000, arrowArc, "SYMMETRIC")).toBeGreaterThan(0);
+    it("only descends for a zero-angle shot launched from high above its end height", () => {
+        const states = flyTo(
+            launchFlight({ x: 0, y: 0, height: 900 }, target, 0, 1),
+            () => target,
+            40,
+            1 / 120,
+        );
+        let previous = 900;
+        for (const state of states) {
+            expect(state.height).toBeLessThanOrEqual(previous);
+            previous = state.height;
+        }
+        expect(states[states.length - 1].height).toBe(40);
     });
 
-    it("is negative (nose down) at the end", () => {
-        expect(computeProjectilePitch(1000, 1000, arrowArc, "SYMMETRIC")).toBeLessThan(0);
+    it("falls straight down for a shot with no horizontal distance", () => {
+        const drop = { x: 300, y: 300 };
+        const states = flyTo(
+            launchFlight({ ...drop, height: 3000 }, drop, 0, 1.6),
+            () => drop,
+            0,
+            1 / 120,
+        );
+        for (const state of states) {
+            expect(state.x).toBe(300);
+            expect(state.y).toBe(300);
+        }
+        expect(states[states.length - 1].height).toBe(0);
     });
 
-    it("is zero throughout for a flat (zero-height) arc profile", () => {
-        const flatArc = { baseHeight: 0, heightPerDistance: 0, maxHeight: 0 };
-        expect(computeProjectilePitch(0, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
-        expect(computeProjectilePitch(500, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
-        expect(computeProjectilePitch(1000, 1000, flatArc, "SYMMETRIC")).toBeCloseTo(0);
+    it("still lands on a target that moves mid-flight, at the same arrival time", () => {
+        const moving = { x: 1000, y: 0 };
+        let elapsed = 0;
+        const dt = 1 / 120;
+        const states = flyTo(
+            launchFlight(start, moving, angle, 1),
+            () => {
+                elapsed += dt;
+                moving.y = elapsed > 0.5 ? 400 : 0;
+                return moving;
+            },
+            40,
+            dt,
+        );
+        const last = states[states.length - 1];
+        expect(last.x).toBe(1000);
+        expect(last.y).toBe(400);
+        expect(Math.abs(states.length * dt - 1)).toBeLessThanOrEqual(dt);
     });
-});
 
-describe("computeProjectilePitch (DESCENDING)", () => {
-    const jadArc = { baseHeight: 400, heightPerDistance: 0.3, maxHeight: 900 };
-
-    it("is level (zero) leaving the apex at the start", () => {
-        expect(computeProjectilePitch(0, 1000, jadArc, "DESCENDING")).toBeCloseTo(0);
+    it("yaws toward the target and pitches nose up then nose down over a lobbed flight", () => {
+        const first = stepFlight(
+            launchFlight(start, { x: 0, y: 1000 }, angle, 1),
+            { x: 0, y: 1000 },
+            40,
+            0.01,
+        );
+        expect(first.rotation).toBe(1024);
+        expect(first.pitch).toBeCloseTo(pitchRadiansToRotationUnits(angle), -1);
+        const states = flyTo(launchFlight(start, target, angle, 1), () => target, 40, 1 / 120);
+        const late = stepFlight(states[states.length - 3], target, 40, 1 / 120);
+        expect(late.pitch).toBeGreaterThan(1024);
     });
 
-    it("is negative (nose down) partway through, and more so near the end", () => {
-        const early = computeProjectilePitch(200, 1000, jadArc, "DESCENDING");
-        const late = computeProjectilePitch(800, 1000, jadArc, "DESCENDING");
-        expect(early).toBeLessThan(0);
-        expect(late).toBeLessThan(early);
+    it("pitches straight down for a pure vertical fall", () => {
+        const drop = { x: 0, y: 0 };
+        const step = stepFlight(launchFlight({ ...drop, height: 100 }, drop, 0, 1), drop, 0, 0.5);
+        expect(step.state.verticalVelocity).toBeLessThan(0);
+        const next = stepFlight(step.state, drop, 0, 0.25);
+        expect(next.pitch).toBe(1536);
     });
 });
 
@@ -146,36 +180,6 @@ describe("pitchRadiansToRotationUnits", () => {
 
     it("wraps a negative angle into the upper half of the unit circle", () => {
         expect(pitchRadiansToRotationUnits(-Math.PI / 2)).toBe(1536);
-    });
-});
-
-describe("findLandingHit", () => {
-    it("finds the closest hostile combatant within radius of the landing point", () => {
-        const far = new FakeCombatant(0, 40, 0, Faction.ENEMY);
-        const near = new FakeCombatant(10, 0, 0, Faction.ENEMY);
-        const hit = findLandingHit(0, 0, 16, 0, Faction.PLAYER, [far, near]);
-        expect(hit).toBe(near);
-    });
-
-    it("returns undefined when nothing is within radius", () => {
-        const enemy = new FakeCombatant(1000, 1000, 0, Faction.ENEMY);
-        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [enemy])).toBeUndefined();
-    });
-
-    it("ignores combatants sharing the projectile's faction", () => {
-        const ally = new FakeCombatant(0, 0, 0, Faction.PLAYER);
-        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [ally])).toBeUndefined();
-    });
-
-    it("ignores combatants on a different level", () => {
-        const other = new FakeCombatant(0, 0, 1, Faction.ENEMY);
-        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [other])).toBeUndefined();
-    });
-
-    it("ignores combatants that are already dead", () => {
-        const dead = new FakeCombatant(0, 0, 0, Faction.ENEMY);
-        dead.health = 0;
-        expect(findLandingHit(0, 0, 16, 0, Faction.PLAYER, [dead])).toBeUndefined();
     });
 });
 

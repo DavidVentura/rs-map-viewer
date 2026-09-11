@@ -1,4 +1,10 @@
-import { WeaponStyle, attackLockSeconds, castAnimationSeconds } from "./Ability";
+import {
+    AbilityDefinition,
+    ResolvedAbility,
+    WeaponStyle,
+    attackLockSeconds,
+    resolveAbility,
+} from "./Ability";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import {
     BOW_SHOT,
@@ -6,10 +12,16 @@ import {
     HEALING_POTION_CAST_SEQ_ID,
     MAGIC_BOLT,
     SCIMITAR_SLASH,
+    resolvePlayerAbilityBars,
 } from "./abilities";
+import { stubSequenceLoaders } from "./testLoaders";
 import { DEFAULT_ABILITY_MODIFIERS, FLEET_FOOTED, VITALITY } from "./upgrades";
 
-const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
+const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+
+function resolve(definition: AbilityDefinition): ResolvedAbility {
+    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+}
 
 const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
     [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
@@ -18,26 +30,32 @@ const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
 };
 
 function makePlayer(): Player {
-    return new Player(0, 0, 0, STYLE_SEQ_IDS);
+    return new Player(
+        0,
+        0,
+        0,
+        STYLE_SEQ_IDS,
+        resolvePlayerAbilityBars(seqTypeLoader, seqFrameLoader),
+    );
 }
 
 describe("Player ability bar", () => {
     it("resolves slot 0 from the current style, with the potion last", () => {
         const player = makePlayer();
-        expect(player.abilityBar[0]).toBe(BOW_SHOT);
+        expect(player.abilityBar[0].id).toBe(BOW_SHOT.id);
         expect(player.abilityBar[player.abilityBar.length - 1].id).toBe("healing_potion");
     });
 
     it("switches slot 0 to the melee attack once in the melee style", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MELEE;
-        expect(player.abilityBar[0]).toBe(SCIMITAR_SLASH);
+        expect(player.abilityBar[0].id).toBe(SCIMITAR_SLASH.id);
     });
 
     it("switches slot 0 to the magic attack once in the magic style", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MAGIC;
-        expect(player.abilityBar[0]).toBe(MAGIC_BOLT);
+        expect(player.abilityBar[0].id).toBe(MAGIC_BOLT.id);
     });
 });
 
@@ -47,7 +65,6 @@ describe("Player animation ids follow the equipped style", () => {
         expect(player.idleSeqId).toBe(808);
         expect(player.walkSeqId).toBe(819);
         expect(player.runSeqId).toBe(824);
-        expect(player.attackSeqId).toBe(426);
     });
 
     it("switches to the magic style's seq ids once the style changes", () => {
@@ -56,7 +73,6 @@ describe("Player animation ids follow the equipped style", () => {
         expect(player.idleSeqId).toBe(813);
         expect(player.walkSeqId).toBe(1146);
         expect(player.runSeqId).toBe(1210);
-        expect(player.attackSeqId).toBe(711);
     });
 });
 
@@ -80,15 +96,16 @@ describe("Player mana", () => {
 describe("Player.beginCast", () => {
     it("deducts mana and starts the ability's wind-up", () => {
         const player = makePlayer();
-        player.beginCast(MAGIC_BOLT, { x: 100, y: 0 }, 10);
+        const bolt = resolve(MAGIC_BOLT);
+        player.beginCast(bolt, { x: 100, y: 0 }, 10);
         expect(player.mana).toBe(player.maxMana - MAGIC_BOLT.manaCost);
         expect(player.abilityRuntime.isBusy(10)).toBe(true);
-        expect(player.abilityRuntime.isBusy(10 + MAGIC_BOLT.impactSeconds)).toBe(false);
+        expect(player.abilityRuntime.isBusy(10 + bolt.timing.impactSeconds)).toBe(false);
     });
 
     it("faces the caster toward the target", () => {
         const player = makePlayer();
-        player.beginCast(BOW_SHOT, { x: 0, y: 500 }, 0);
+        player.beginCast(resolve(BOW_SHOT), { x: 0, y: 500 }, 0);
         expect(player.rotation).toBe(1024);
     });
 });
@@ -96,19 +113,19 @@ describe("Player.beginCast", () => {
 describe("Player cast animation duration", () => {
     it("keeps the cast animation active for the cast sequence's own duration, not the ATTACK lock", () => {
         const player = makePlayer();
-        player.beginCast(BOW_SHOT, { x: 100, y: 0 }, 0);
-        const played = castAnimationSeconds(BOW_SHOT);
+        const bow = resolve(BOW_SHOT);
+        player.beginCast(bow, { x: 100, y: 0 }, 0);
+        const played = bow.timing.animationSeconds;
         expect(player.abilityRuntime.activeCastAnimation(played - 0.01)).toBeDefined();
         expect(player.abilityRuntime.activeCastAnimation(played)).toBeUndefined();
     });
 
     it("returns to idle once the drink animation itself finishes, even though the heal/attack locks are still recovering", () => {
         const player = makePlayer();
-        player.beginCast(HEALING_POTION, { x: 0, y: 0 }, 0);
-        const played = HEALING_POTION.animationSeconds / HEALING_POTION.castSpeed;
-        expect(played).toBeLessThan(
-            HEALING_POTION.impactSeconds + attackLockSeconds(HEALING_POTION),
-        );
+        const potion = resolve(HEALING_POTION);
+        player.beginCast(potion, { x: 0, y: 0 }, 0);
+        const played = potion.timing.animationSeconds;
+        expect(played).toBeLessThan(potion.timing.impactSeconds + attackLockSeconds(potion));
 
         player.update(
             { x: 0, y: 0, running: false },
@@ -135,7 +152,7 @@ describe("Player cast animation duration", () => {
 describe("Player movement while busy", () => {
     it("does not move while an ability is winding up", () => {
         const player = makePlayer();
-        player.beginCast(BOW_SHOT, { x: 100, y: 0 }, 0);
+        player.beginCast(resolve(BOW_SHOT), { x: 100, y: 0 }, 0);
         player.update(
             { x: 1, y: 0, running: false },
             0.01,

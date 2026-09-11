@@ -5,6 +5,7 @@ import { GameWorld, SimInput } from "./GameWorld";
 import { GROUND_ITEM_LIFETIME_SECONDS, GroundItem } from "./GroundItem";
 import { StanceSeqIdsByStance } from "./Player";
 import { Terrain } from "./Terrain";
+import { stubSequenceLoaders } from "./testLoaders";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -24,8 +25,7 @@ class FakeTerrain implements Terrain {
     }
 }
 
-const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
-const seqFrameLoader = {} as any;
+const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
 
 const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
     [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },

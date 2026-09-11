@@ -1,3 +1,6 @@
+import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
+import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
 import { ProjectileHitEffect, ProjectileSpec } from "./Projectile";
 
 export enum CooldownGroup {
@@ -104,42 +107,71 @@ export type AbilityEffect =
 export type AbilityDefinition = {
     readonly id: string;
     readonly name: string;
-    // Time from cast start to when the effect (damage/heal/etc) resolves, at this ability's
-    // castSpeed. The cast animation keeps playing past this point through its own recovery
-    // (see castAnimationSeconds); how much of that recovery is covered by the ability's ATTACK
-    // lock vs. by idle time once the animation itself has finished is up to the lock's own seconds
-    // relative to castAnimationSeconds, not to this field.
-    readonly impactSeconds: number;
-    readonly channelSeconds: number;
-    // The cast sequence's own natural duration in seconds, at castSpeed 1 (from the cache's
-    // per-frame tick lengths; see abilities.ts). Combined with castSpeed this gives
-    // castAnimationSeconds, independent of impactSeconds/locks.
-    readonly animationSeconds: number;
-    // Playback speed multiplier for the cast animation (1 = natural speed). Chosen per-ability so
-    // impactSeconds lands on the animation's visual contact frame; see abilities.ts for how each
-    // value was derived from the cache's frame data.
+    readonly castSeqId: number;
+    // Frame index into castSeqId's sequence at which the effect (damage/heal/etc) resolves - the
+    // visual contact/release pose. The cast animation keeps playing past this point through its
+    // own recovery; how much of that recovery is covered by the ability's ATTACK lock vs. by idle
+    // time once the animation itself has finished is up to the lock's own seconds.
+    readonly contactFrame: number;
+    // Playback speed multiplier for the cast animation (1 = natural speed). The demo's attack
+    // cadence is much faster than natural OSRS animation speed, so this stays authored per ability
+    // rather than derived from the cache.
     readonly castSpeed: number;
+    readonly channelSeconds: number;
     readonly manaCost: number;
     readonly maxCharges: number;
     readonly rechargeSeconds: number;
     readonly requires: readonly CooldownGroup[];
     readonly locks: readonly CooldownLock[];
     readonly effect: AbilityEffect;
-    readonly castSeqId?: number;
 };
 
-// The ATTACK-group lock's own seconds value, i.e. how long the ability keeps its caster from
-// acting again after impact (see AbilityDefinition.impactSeconds). 0 for abilities with no
-// ATTACK-group lock.
-export function attackLockSeconds(definition: AbilityDefinition): number {
-    return definition.locks.find((lock) => lock.group === CooldownGroup.ATTACK)?.seconds ?? 0;
+// Wall-clock cast timing at the ability's castSpeed, derived from the cache's per-frame lengths
+// (see resolveCastTiming): impactSeconds is when contactFrame is first displayed, i.e. when the
+// effect resolves; animationSeconds is the whole cast sequence's length, the point past which
+// Player/Enemy stop showing the cast animation and fall back to idle/movement, whether or not the
+// ATTACK lock (see attackLockSeconds) is still holding the caster in place.
+export type CastTiming = {
+    readonly impactSeconds: number;
+    readonly animationSeconds: number;
+};
+
+export type ResolvedAbility = AbilityDefinition & {
+    readonly timing: CastTiming;
+};
+
+export function resolveCastTiming(
+    definition: AbilityDefinition,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): CastTiming {
+    return {
+        impactSeconds:
+            sequenceTimeToFrameSeconds(
+                definition.castSeqId,
+                definition.contactFrame,
+                seqTypeLoader,
+                seqFrameLoader,
+            ) / definition.castSpeed,
+        animationSeconds:
+            sequenceDurationSeconds(definition.castSeqId, seqTypeLoader, seqFrameLoader) /
+            definition.castSpeed,
+    };
 }
 
-// Wall-clock time the cast sequence itself plays for, at this ability's castSpeed - the point
-// past which Player/Enemy stop showing the cast animation and fall back to idle/movement, whether
-// or not the ATTACK lock (see attackLockSeconds) is still holding the caster in place.
-export function castAnimationSeconds(definition: AbilityDefinition): number {
-    return definition.animationSeconds / definition.castSpeed;
+export function resolveAbility(
+    definition: AbilityDefinition,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): ResolvedAbility {
+    return { ...definition, timing: resolveCastTiming(definition, seqTypeLoader, seqFrameLoader) };
+}
+
+// The ATTACK-group lock's own seconds value, i.e. how long the ability keeps its caster from
+// acting again after impact (see CastTiming.impactSeconds). 0 for abilities with no ATTACK-group
+// lock.
+export function attackLockSeconds(definition: AbilityDefinition): number {
+    return definition.locks.find((lock) => lock.group === CooldownGroup.ATTACK)?.seconds ?? 0;
 }
 
 export type AbilityTarget = {

@@ -2372,8 +2372,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         for (const projectile of world.projectiles) {
-            const groundHeight = this.tryGetHeight(projectile.level, projectile.x, projectile.y);
-            if (groundHeight === undefined) {
+            if (!this.terrain.isLoaded(projectile.level, projectile.x, projectile.y)) {
                 continue;
             }
             push(
@@ -2381,7 +2380,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 {
                     worldX: projectile.x,
                     worldY: projectile.y,
-                    groundHeight: groundHeight + projectile.height,
+                    groundHeight: projectile.height,
                     rotation: projectile.rotation,
                     level: this.terrain.getRenderLevel(
                         projectile.level,

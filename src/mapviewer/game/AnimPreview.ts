@@ -84,6 +84,7 @@ export function buildPreviewEnemyType(npc: PreviewNpcConfig): EnemyType {
         deathSeqId: npc.idleSeqId,
         attackSeqId: npc.idleSeqId,
         hitRadius: 32 + 32 * npc.size,
+        projectileLaunchHeight: 40 * npc.size,
         maxHealth: 1,
         walkSpeed: 0,
         behaviour: EnemyBehaviour.RUSHER,

@@ -77,3 +77,23 @@ export function sequenceDurationSeconds(
     }
     return total * 0.02;
 }
+
+// Seconds from the start of the sequence (at natural speed) until `frame` is first displayed,
+// i.e. the summed lengths of the frames before it.
+export function sequenceTimeToFrameSeconds(
+    seqId: number,
+    frame: number,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): number {
+    const sequence = seqTypeLoader.load(seqId);
+    const frameCount = sequence.frameIds?.length ?? 0;
+    if (!Number.isInteger(frame) || frame < 0 || frame >= frameCount) {
+        throw new Error(`Frame ${frame} is outside sequence ${seqId} (${frameCount} frames)`);
+    }
+    let total = 0;
+    for (let before = 0; before < frame; before++) {
+        total += sequence.getFrameLength(seqFrameLoader, before);
+    }
+    return total * 0.02;
+}

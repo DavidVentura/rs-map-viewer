@@ -1,9 +1,4 @@
-import {
-    AbilityDefinition,
-    AbilityEffectKind,
-    CooldownGroup,
-    castAnimationSeconds,
-} from "./Ability";
+import { AbilityDefinition, AbilityEffectKind, CooldownGroup } from "./Ability";
 import { AnimationPlayback } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import {
@@ -16,16 +11,24 @@ import {
     enemyAttackRange,
     selectPatternAbility,
 } from "./Enemy";
-import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import {
+    DropTier,
+    EnemyBehaviour,
+    EnemyType,
+    EnemyTypeId,
+    ResolvedEnemyType,
+    resolveEnemyType,
+} from "./EnemyType";
 import { ARROW_SPEC } from "./Projectile";
 import { Terrain } from "./Terrain";
 import {
-    ENEMY_MELEE,
+    GOBLIN_MELEE,
     TOK_XIL_RANGED_SHOT,
     YT_MEJKOT_HEAL_PULSE,
     YT_MEJKOT_MELEE,
 } from "./abilities";
 import { directionToRotation } from "./projectileMath";
+import { stubSequenceLoaders } from "./testLoaders";
 
 function decisionInputs(overrides: Partial<EnemyDecisionInputs> = {}): EnemyDecisionInputs {
     return {
@@ -163,12 +166,12 @@ describe("decideEnemyState", () => {
 
 describe("enemyAttackRange", () => {
     it("adds both hit radii on top of a melee ability's reach", () => {
-        expect(enemyAttackRange(ENEMY_MELEE, 64, 64)).toBe(48 + 64 + 64);
+        expect(enemyAttackRange(GOBLIN_MELEE, 64, 64)).toBe(48 + 64 + 64);
     });
 
     it("uses the projectile spec's range for a ranged ability", () => {
         const rangedDefinition: AbilityDefinition = {
-            ...ENEMY_MELEE,
+            ...GOBLIN_MELEE,
             id: "enemy_ranged",
             effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
         };
@@ -177,7 +180,7 @@ describe("enemyAttackRange", () => {
 
     it("uses the ground strike's own cast range, ignoring hit radii", () => {
         const groundStrikeDefinition: AbilityDefinition = {
-            ...ENEMY_MELEE,
+            ...GOBLIN_MELEE,
             id: "enemy_ground_strike",
             effect: {
                 kind: AbilityEffectKind.GROUND_STRIKE,
@@ -240,8 +243,11 @@ describe("directionToRotation for facing", () => {
     });
 });
 
-const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
-const seqFrameLoader = {} as any;
+const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+
+function resolveType(type: EnemyType): ResolvedEnemyType {
+    return resolveEnemyType(type, seqTypeLoader, seqFrameLoader);
+}
 const terrain: Terrain = {
     isLoaded: () => true,
     canOccupy: () => true,
@@ -252,6 +258,7 @@ const terrain: Terrain = {
 class FakePlayer implements Combatant {
     readonly faction = Faction.PLAYER;
     readonly hitRadius = 64;
+    readonly projectileLaunchHeight = 40;
     readonly maxHealth = 100;
     health = 100;
 
@@ -262,7 +269,7 @@ class FakePlayer implements Combatant {
     ) {}
 }
 
-const TEST_ENEMY_TYPE: EnemyType = {
+const TEST_ENEMY_TYPE = resolveType({
     id: EnemyTypeId.GOBLIN,
     npcTypeId: 0,
     idleSeqId: 1,
@@ -270,14 +277,16 @@ const TEST_ENEMY_TYPE: EnemyType = {
     deathSeqId: 3,
     attackSeqId: 4,
     hitRadius: 64,
+    projectileLaunchHeight: 40,
     maxHealth: 20,
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
-    abilities: [ENEMY_MELEE],
+    abilities: [GOBLIN_MELEE],
     dropTier: DropTier.NONE,
-};
+});
+const TEST_MELEE = TEST_ENEMY_TYPE.abilities[0];
 
-const TEST_KITER_TYPE: EnemyType = {
+const TEST_KITER_TYPE = resolveType({
     id: EnemyTypeId.TOK_XIL,
     npcTypeId: 0,
     idleSeqId: 1,
@@ -285,15 +294,16 @@ const TEST_KITER_TYPE: EnemyType = {
     deathSeqId: 3,
     attackSeqId: 4,
     hitRadius: 128,
+    projectileLaunchHeight: 200,
     maxHealth: 150,
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 512 },
     abilities: [TOK_XIL_RANGED_SHOT],
     dropTier: DropTier.NONE,
-};
+});
 
-const TEST_TANK_TYPE: EnemyType = {
+const TEST_TANK_TYPE = resolveType({
     id: EnemyTypeId.YT_MEJKOT,
     npcTypeId: 0,
     idleSeqId: 1,
@@ -301,46 +311,36 @@ const TEST_TANK_TYPE: EnemyType = {
     deathSeqId: 3,
     attackSeqId: 4,
     hitRadius: 160,
+    projectileLaunchHeight: 120,
     maxHealth: 360,
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.TANK,
     abilities: [YT_MEJKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
     dropTier: DropTier.NONE,
-};
+});
 
 function makeEnemy(): Enemy {
     return new Enemy(1, 0, 0, 0, 0, 0, TEST_ENEMY_TYPE);
 }
 
-describe("Enemy.castSeqId preference order", () => {
-    it("falls back to the type's attackSeqId when nothing more specific is set", () => {
-        const enemy = makeEnemy();
-        expect(enemy.castSeqIdAt(0)).toBe(TEST_ENEMY_TYPE.attackSeqId);
-    });
+describe("Enemy cast sequence", () => {
+    it("plays the casting ability's own castSeqId rather than the type's cast/attack sequence", () => {
+        const enemy = new Enemy(
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            resolveType({ ...TEST_ENEMY_TYPE, castSeqId: 999 }),
+        );
+        enemy.state = EnemyState.CHASE;
+        const player = new FakePlayer(100, 0, 0);
 
-    it("prefers the type's castSeqId over attackSeqId", () => {
-        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
-        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type);
-        expect(enemy.castSeqIdAt(0)).toBe(999);
-    });
+        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
 
-    it("prefers the pending ability's castSeqId over the type's castSeqId and attackSeqId", () => {
-        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
-        const ability: AbilityDefinition = { ...ENEMY_MELEE, castSeqId: 1234 };
-        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type, [ability]);
-
-        enemy.abilityRuntime.use(ability, { x: 0, y: 0 }, 0);
-
-        expect(enemy.castSeqIdAt(0)).toBe(1234);
-    });
-
-    it("falls through to the type's castSeqId once the pending ability has no castSeqId", () => {
-        const type: EnemyType = { ...TEST_ENEMY_TYPE, castSeqId: 999 };
-        const enemy = new Enemy(1, 0, 0, 0, 0, 0, type, [ENEMY_MELEE]);
-
-        enemy.abilityRuntime.use(ENEMY_MELEE, { x: 0, y: 0 }, 0);
-
-        expect(enemy.castSeqIdAt(0)).toBe(999);
+        expect(enemy.state).toBe(EnemyState.WINDUP);
+        expect(enemy.animation.seqId).toBe(GOBLIN_MELEE.castSeqId);
     });
 });
 
@@ -422,7 +422,7 @@ describe("Enemy freezing", () => {
 
 describe("Enemy attack cycle (integration through Enemy.update)", () => {
     function makeMeleeEnemy(x: number, y: number): Enemy {
-        return new Enemy(1, x, y, 0, x, y, TEST_ENEMY_TYPE, [ENEMY_MELEE]);
+        return new Enemy(1, x, y, 0, x, y, TEST_ENEMY_TYPE);
     }
 
     it("winds up once the chasing enemy is within melee reach, without moving", () => {
@@ -447,7 +447,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
-        const impactSeconds = ENEMY_MELEE.impactSeconds;
+        const impactSeconds = TEST_MELEE.timing.impactSeconds;
         time += impactSeconds - 0.001;
         enemy.update(
             player,
@@ -465,7 +465,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.002, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
 
-        const recoverySeconds = ENEMY_MELEE.locks.find(
+        const recoverySeconds = TEST_MELEE.locks.find(
             (lock) => lock.group === CooldownGroup.ATTACK,
         )!.seconds;
         time += recoverySeconds + 0.01;
@@ -481,7 +481,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         expect(enemy.state).toBe(EnemyState.CHASE);
     });
 
-    it("shows the cast sequence through castAnimationSeconds, then falls back to idle for the rest of recovery", () => {
+    it("shows the cast sequence through its resolved animationSeconds, then falls back to idle for the rest of recovery", () => {
         const enemy = makeMeleeEnemy(0, 0);
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
@@ -489,12 +489,12 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         let time = 10;
         enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+        expect(enemy.animation.seqId).toBe(TEST_MELEE.castSeqId);
 
-        const played = castAnimationSeconds(ENEMY_MELEE);
+        const played = TEST_MELEE.timing.animationSeconds;
         const totalCommit =
-            ENEMY_MELEE.impactSeconds +
-            ENEMY_MELEE.locks.find((lock) => lock.group === CooldownGroup.ATTACK)!.seconds;
+            TEST_MELEE.timing.impactSeconds +
+            TEST_MELEE.locks.find((lock) => lock.group === CooldownGroup.ATTACK)!.seconds;
         expect(played).toBeLessThan(totalCommit);
 
         const justBeforeAnimationEnds = 10 + played - 0.01;
@@ -509,7 +509,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         );
         time = justBeforeAnimationEnds;
         expect(enemy.state).toBe(EnemyState.RECOVERY);
-        expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.attackSeqId);
+        expect(enemy.animation.seqId).toBe(TEST_MELEE.castSeqId);
 
         const justAfterAnimationEnds = 10 + played + 0.01;
         enemy.update(
@@ -536,7 +536,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.frozenUntil = 20;
         enemy.update(player, [], 0.016, 10.1, seqTypeLoader, seqFrameLoader, terrain);
         expect(enemy.state).toBe(EnemyState.CHASE);
-        expect(enemy.abilityRuntime.canUse(ENEMY_MELEE, 0, 10.1)).toBe(true);
+        expect(enemy.abilityRuntime.canUse(TEST_MELEE, 0, 10.1)).toBe(true);
     });
 });
 
@@ -588,7 +588,7 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_HEAL_PULSE);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_HEAL_PULSE.id);
     });
 
     it("falls back to melee once the heal pulse is on cooldown and the player is in reach", () => {
@@ -599,7 +599,7 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
         let time = 10;
 
         enemy.update(farPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_HEAL_PULSE);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_HEAL_PULSE.id);
 
         let guard = 0;
         while (enemy.state !== EnemyState.CHASE && guard < 1000) {
@@ -614,14 +614,14 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
         enemy.update(nearPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(YT_MEJKOT_MELEE);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_MELEE.id);
     });
 });
 
 describe("selectPatternAbility", () => {
-    const A: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_a" };
-    const B: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_b" };
-    const C: AbilityDefinition = { ...ENEMY_MELEE, id: "pattern_c" };
+    const A: AbilityDefinition = { ...GOBLIN_MELEE, id: "pattern_a" };
+    const B: AbilityDefinition = { ...GOBLIN_MELEE, id: "pattern_b" };
+    const C: AbilityDefinition = { ...GOBLIN_MELEE, id: "pattern_c" };
     const pattern = [A, B, C];
 
     it("picks the entry at startIndex when it is usable, advancing to the next index", () => {
@@ -658,14 +658,14 @@ describe("selectPatternAbility", () => {
     });
 });
 
-const TEST_BOSS_MELEE: AbilityDefinition = { ...ENEMY_MELEE, id: "boss_melee" };
+const TEST_BOSS_MELEE: AbilityDefinition = { ...GOBLIN_MELEE, id: "boss_melee" };
 const TEST_BOSS_RANGED: AbilityDefinition = {
-    ...ENEMY_MELEE,
+    ...GOBLIN_MELEE,
     id: "boss_ranged",
     effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
 };
 
-const TEST_BOSS_TYPE: EnemyType = {
+const TEST_BOSS_TYPE = resolveType({
     id: EnemyTypeId.TZTOK_JAD,
     npcTypeId: 0,
     idleSeqId: 1,
@@ -673,6 +673,7 @@ const TEST_BOSS_TYPE: EnemyType = {
     deathSeqId: 3,
     attackSeqId: 4,
     hitRadius: 192,
+    projectileLaunchHeight: 520,
     maxHealth: 1200,
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.BOSS,
@@ -680,7 +681,7 @@ const TEST_BOSS_TYPE: EnemyType = {
     pattern: [TEST_BOSS_MELEE, TEST_BOSS_RANGED],
     abilities: [TEST_BOSS_MELEE, TEST_BOSS_RANGED],
     dropTier: DropTier.BOSS,
-};
+});
 
 describe("BOSS behaviour (integration through Enemy.update)", () => {
     it("skips the melee pattern entry when the player is out of melee range and casts the ranged one instead", () => {
@@ -691,7 +692,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_RANGED);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_RANGED.id);
     });
 
     it("casts the melee pattern entry, in pattern order, once the player is adjacent", () => {
@@ -702,7 +703,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_MELEE);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_MELEE.id);
     });
 
     it("advances through the pattern in order across repeated casts, not re-picking the entry it just used", () => {
@@ -713,7 +714,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         let time = 10;
 
         enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_MELEE);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_MELEE.id);
 
         let guard = 0;
         while (enemy.state !== EnemyState.CHASE && guard < 1000) {
@@ -727,7 +728,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
-        expect(enemy.abilityRuntime.pendingDefinition()).toBe(TEST_BOSS_RANGED);
+        expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_RANGED.id);
     });
 
     it("holds ground instead of closing to melee range while the player is within the leash range", () => {

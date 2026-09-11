@@ -1,15 +1,25 @@
-import { AbilityDefinition } from "./Ability";
+import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
+import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { AbilityDefinition, ResolvedAbility, resolveAbility } from "./Ability";
 import {
-    ENEMY_MELEE,
+    GOBLIN_MELEE,
+    GOBLIN_MELEE_SEQ_ID,
     JAD_MAGE_BLAST,
     JAD_MELEE_BITE,
     JAD_MELEE_BITE_CAST_SEQ_ID,
     JAD_RANGED_STOMP,
     KET_ZEK_FIRE_BLAST,
+    KET_ZEK_FIRE_BLAST_CAST_SEQ_ID,
     TOK_XIL_RANGED_SHOT,
+    TOK_XIL_RANGED_SHOT_CAST_SEQ_ID,
+    TZ_KEK_MELEE,
+    TZ_KEK_MELEE_SEQ_ID,
+    TZ_KIH_MELEE,
+    TZ_KIH_MELEE_SEQ_ID,
     YT_HURKOT_HEAL_PULSE,
     YT_MEJKOT_HEAL_PULSE,
     YT_MEJKOT_MELEE,
+    YT_MEJKOT_MELEE_CAST_SEQ_ID,
 } from "./abilities";
 
 export enum EnemyTypeId {
@@ -73,7 +83,9 @@ export enum DropTier {
     BOSS = "boss",
 }
 
-type EnemyTypeCommon = {
+// Generic over the ability type so the same shape serves both the static definitions below and
+// the per-spawn ResolvedEnemyType (see resolveEnemyType), whose abilities carry cast timing.
+type EnemyTypeCommon<A extends AbilityDefinition> = {
     readonly id: EnemyTypeId;
     readonly npcTypeId: number;
     readonly idleSeqId: number;
@@ -84,24 +96,44 @@ type EnemyTypeCommon = {
     // distinct from their basic attack pose.
     readonly castSeqId?: number;
     readonly hitRadius: number;
+    // Where this enemy's projectiles leave its body (see Combatant.projectileLaunchHeight).
+    readonly projectileLaunchHeight: number;
     readonly maxHealth: number;
     readonly walkSpeed: number;
-    readonly abilities: readonly AbilityDefinition[];
+    readonly abilities: readonly A[];
     readonly phases?: readonly BossPhase[];
     readonly dropTier: DropTier;
 };
 
-export type EnemyType =
-    | (EnemyTypeCommon & { readonly behaviour: EnemyBehaviour.RUSHER | EnemyBehaviour.TANK })
-    | (EnemyTypeCommon & {
+export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
+    | (EnemyTypeCommon<A> & { readonly behaviour: EnemyBehaviour.RUSHER | EnemyBehaviour.TANK })
+    | (EnemyTypeCommon<A> & {
           readonly behaviour: EnemyBehaviour.KITER | EnemyBehaviour.CASTER;
           readonly engagement: EngagementBand;
       })
-    | (EnemyTypeCommon & {
+    | (EnemyTypeCommon<A> & {
           readonly behaviour: EnemyBehaviour.BOSS;
           readonly engagement: BossEngagement;
-          readonly pattern: readonly AbilityDefinition[];
+          readonly pattern: readonly A[];
       });
+
+export type ResolvedEnemyType = EnemyType<ResolvedAbility>;
+
+// The composition point for an enemy's abilities: cast timing is read from the cache here, once
+// per spawned enemy, so Enemy/AbilityRuntime never need the sequence loaders.
+export function resolveEnemyType(
+    type: EnemyType,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): ResolvedEnemyType {
+    const resolve = (definition: AbilityDefinition) =>
+        resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+    const abilities = type.abilities.map(resolve);
+    if (type.behaviour === EnemyBehaviour.BOSS) {
+        return { ...type, abilities, pattern: type.pattern.map(resolve) };
+    }
+    return { ...type, abilities };
+}
 
 export type EnemyStatsOverride = {
     readonly healthMultiplier?: number;
@@ -120,15 +152,15 @@ export function resolveEnemyStats(type: EnemyType, override?: EnemyStatsOverride
     };
 }
 
-export function isBandedEnemyType(
-    type: EnemyType,
-): type is Extract<EnemyType, { engagement: EngagementBand }> {
+export function isBandedEnemyType<A extends AbilityDefinition>(
+    type: EnemyType<A>,
+): type is Extract<EnemyType<A>, { engagement: EngagementBand }> {
     return type.behaviour === EnemyBehaviour.KITER || type.behaviour === EnemyBehaviour.CASTER;
 }
 
-export function isBossEnemyType(
-    type: EnemyType,
-): type is Extract<EnemyType, { behaviour: EnemyBehaviour.BOSS }> {
+export function isBossEnemyType<A extends AbilityDefinition>(
+    type: EnemyType<A>,
+): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.BOSS }> {
     return type.behaviour === EnemyBehaviour.BOSS;
 }
 
@@ -163,12 +195,13 @@ const GOBLIN: EnemyType = {
     idleSeqId: 6181,
     walkSeqId: 6180,
     deathSeqId: 6182,
-    attackSeqId: 6183,
+    attackSeqId: GOBLIN_MELEE_SEQ_ID,
     hitRadius: 64,
+    projectileLaunchHeight: 40,
     maxHealth: 20,
     walkSpeed: 320 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
-    abilities: [ENEMY_MELEE],
+    abilities: [GOBLIN_MELEE],
     dropTier: DropTier.CHAFF,
 };
 
@@ -178,12 +211,13 @@ const TZ_KIH: EnemyType = {
     idleSeqId: 2618,
     walkSeqId: 2619,
     deathSeqId: 2620,
-    attackSeqId: 2621,
+    attackSeqId: TZ_KIH_MELEE_SEQ_ID,
     hitRadius: 64,
+    projectileLaunchHeight: 40,
     maxHealth: 8,
     walkSpeed: 480 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
-    abilities: [ENEMY_MELEE],
+    abilities: [TZ_KIH_MELEE],
     dropTier: DropTier.CHAFF,
 };
 
@@ -197,12 +231,13 @@ const TZ_KEK: EnemyType = {
     idleSeqId: 2624,
     walkSeqId: 2623,
     deathSeqId: 2627,
-    attackSeqId: 2625,
+    attackSeqId: TZ_KEK_MELEE_SEQ_ID,
     hitRadius: 96,
+    projectileLaunchHeight: 80,
     maxHealth: 60,
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
-    abilities: [ENEMY_MELEE],
+    abilities: [TZ_KEK_MELEE],
     dropTier: DropTier.ELITE,
 };
 
@@ -217,9 +252,10 @@ const TOK_XIL: EnemyType = {
     idleSeqId: 2631,
     walkSeqId: 2632,
     deathSeqId: 2630,
-    castSeqId: 2633,
+    castSeqId: TOK_XIL_RANGED_SHOT_CAST_SEQ_ID,
     attackSeqId: 2628,
     hitRadius: 128,
+    projectileLaunchHeight: 200,
     maxHealth: 150,
     walkSpeed: 576 * 1.6 * 0.6,
     behaviour: EnemyBehaviour.KITER,
@@ -237,8 +273,9 @@ const YT_MEJKOT: EnemyType = {
     idleSeqId: 2636,
     walkSeqId: 2634,
     deathSeqId: 2638,
-    attackSeqId: 2637,
+    attackSeqId: YT_MEJKOT_MELEE_CAST_SEQ_ID,
     hitRadius: 160,
+    projectileLaunchHeight: 120,
     maxHealth: 360,
     walkSpeed: 576 * 1.6 * 0.45,
     behaviour: EnemyBehaviour.TANK,
@@ -256,9 +293,10 @@ const KET_ZEK: EnemyType = {
     idleSeqId: 2642,
     walkSeqId: 2643,
     deathSeqId: 2646,
-    castSeqId: 2647,
+    castSeqId: KET_ZEK_FIRE_BLAST_CAST_SEQ_ID,
     attackSeqId: 2644,
     hitRadius: 192,
+    projectileLaunchHeight: 320,
     maxHealth: 280,
     walkSpeed: 576 * 1.6 * 0.4,
     behaviour: EnemyBehaviour.CASTER,
@@ -278,8 +316,9 @@ const YT_HURKOT: EnemyType = {
     idleSeqId: 2636,
     walkSeqId: 2634,
     deathSeqId: 2638,
-    attackSeqId: 2637,
+    attackSeqId: YT_MEJKOT_MELEE_CAST_SEQ_ID,
     hitRadius: 64,
+    projectileLaunchHeight: 60,
     maxHealth: 80,
     walkSpeed: 576 * 1.6 * 0.45,
     behaviour: EnemyBehaviour.TANK,
@@ -310,6 +349,7 @@ const TZTOK_JAD: EnemyType = {
     deathSeqId: 2654,
     attackSeqId: JAD_MELEE_BITE_CAST_SEQ_ID,
     hitRadius: 192,
+    projectileLaunchHeight: 520,
     maxHealth: 1200,
     walkSpeed: 576 * 1.6 * 0.3,
     behaviour: EnemyBehaviour.BOSS,

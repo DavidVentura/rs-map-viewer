@@ -9,6 +9,8 @@ export interface Combatant {
     readonly level: number;
     readonly faction: Faction;
     readonly hitRadius: number;
+    // Height above the ground a projectile this combatant fires leaves from (its hand, mouth...).
+    readonly projectileLaunchHeight: number;
     health: number;
     readonly maxHealth: number;
 }

@@ -1,37 +1,51 @@
-import { AbilityDefinition, AbilityEffectKind, CooldownGroup } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffectKind,
+    CooldownGroup,
+    ResolvedAbility,
+    resolveAbility,
+} from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
+import { stubSequenceLoaders } from "./testLoaders";
 
-const INSTANT_ATTACK: AbilityDefinition = {
+const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+
+function resolve(definition: AbilityDefinition): ResolvedAbility {
+    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+}
+
+const INSTANT_ATTACK = resolve({
     id: "instant_attack",
     name: "Instant Attack",
-    impactSeconds: 0,
-    channelSeconds: 0,
-    animationSeconds: 0,
+    castSeqId: 1,
+    contactFrame: 0,
     castSpeed: 1,
+    channelSeconds: 0,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 1 }],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 1, maxDamage: 1, reach: 0 },
-};
+});
 
-const TELEGRAPHED_SHOT: AbilityDefinition = {
+// Contact frame 5 of the stub's 0.08s frames at castSpeed 0.8: impact lands at 0.5s.
+const TELEGRAPHED_SHOT = resolve({
     id: "telegraphed_shot",
     name: "Telegraphed Shot",
-    impactSeconds: 0.5,
+    castSeqId: 1,
+    contactFrame: 5,
+    castSpeed: 0.8,
     channelSeconds: 0,
-    animationSeconds: 0.5,
-    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0.5,
     requires: [],
     locks: [],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 1, maxDamage: 1, reach: 0 },
-};
+});
 
-const COSTLY_SPELL: AbilityDefinition = {
+const COSTLY_SPELL: ResolvedAbility = {
     ...INSTANT_ATTACK,
     id: "costly_spell",
     manaCost: 20,
@@ -39,38 +53,39 @@ const COSTLY_SPELL: AbilityDefinition = {
     locks: [],
 };
 
-const CHANNELED_ABILITY: AbilityDefinition = {
+const CHANNELED_ABILITY = resolve({
     id: "channeled_ability",
     name: "Channeled Ability",
-    impactSeconds: 0,
-    channelSeconds: 1,
-    animationSeconds: 0,
+    castSeqId: 1,
+    contactFrame: 0,
     castSpeed: 1,
+    channelSeconds: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [],
     locks: [],
     effect: { kind: AbilityEffectKind.HEAL, amount: 0 },
-};
+});
 
 // Short animation, long ATTACK-lock recovery: models an enemy cast whose visible swing finishes
 // well before the caster is allowed to act again (see Enemy.ts, which falls back to idle once
-// activeCastAnimation expires while RECOVERY continues under the lock).
-const LONG_RECOVERY_SHORT_ANIMATION: AbilityDefinition = {
+// activeCastAnimation expires while RECOVERY continues under the lock). At castSpeed 3.2 the
+// stub's 1.6s sequence plays in 0.5s, with contact frame 8 landing at 0.2s.
+const LONG_RECOVERY_SHORT_ANIMATION = resolve({
     id: "long_recovery_short_animation",
     name: "Long Recovery Short Animation",
-    impactSeconds: 0.2,
+    castSeqId: 1,
+    contactFrame: 8,
+    castSpeed: 3.2,
     channelSeconds: 0,
-    animationSeconds: 0.5,
-    castSpeed: 1,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 2 }],
     effect: { kind: AbilityEffectKind.MELEE, minDamage: 1, maxDamage: 1, reach: 0 },
-};
+});
 
 describe("AbilityRuntime cooldown groups", () => {
     it("is usable immediately after construction", () => {
@@ -121,7 +136,7 @@ describe("AbilityRuntime wind-up timing", () => {
     });
 
     it("keeps the ability itself on cooldown via its own charge recharge after the wind-up ends", () => {
-        const slowRecharge: AbilityDefinition = { ...TELEGRAPHED_SHOT, rechargeSeconds: 2 };
+        const slowRecharge: ResolvedAbility = { ...TELEGRAPHED_SHOT, rechargeSeconds: 2 };
         const runtime = new AbilityRuntime();
         runtime.use(slowRecharge, { x: 0, y: 0 }, 0);
         expect(runtime.isBusy(0.5)).toBe(false);
@@ -155,7 +170,7 @@ describe("AbilityRuntime channeling", () => {
 });
 
 describe("AbilityRuntime cast animation", () => {
-    it("keeps the cast animation active only for animationSeconds / castSpeed, independent of the lock", () => {
+    it("keeps the cast animation active only for the resolved animationSeconds, independent of the lock", () => {
         const runtime = new AbilityRuntime();
         runtime.use(LONG_RECOVERY_SHORT_ANIMATION, { x: 0, y: 0 }, 10);
         expect(runtime.activeCastAnimation(10.499)?.definition).toBe(LONG_RECOVERY_SHORT_ANIMATION);

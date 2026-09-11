@@ -1,4 +1,4 @@
-import { AbilityDefinition, AbilityTarget, CooldownGroup, castAnimationSeconds } from "./Ability";
+import { AbilityDefinition, AbilityTarget, CooldownGroup, ResolvedAbility } from "./Ability";
 import {
     ChargeState,
     canUseAbility,
@@ -8,17 +8,17 @@ import {
 } from "./abilityRules";
 
 export type PendingCast = {
-    readonly definition: AbilityDefinition;
+    readonly definition: ResolvedAbility;
     readonly target: AbilityTarget;
     readonly readyAt: number;
 };
 
 // Tracks the cast animation independently of PendingCast: PendingCast is consumed at impact (see
 // takeReadyCast), but the animation keeps playing through recovery past that point (see
-// castAnimationSeconds), so Player/Enemy need to know what to keep playing after the effect has
-// already resolved.
+// CastTiming.animationSeconds), so Player/Enemy need to know what to keep playing after the effect
+// has already resolved.
 export type ActiveCastAnimation = {
-    readonly definition: AbilityDefinition;
+    readonly definition: ResolvedAbility;
     readonly startedAt: number;
     readonly endsAt: number;
 };
@@ -46,7 +46,7 @@ export class AbilityRuntime {
         return this.pendingCast?.readyAt;
     }
 
-    pendingDefinition(): AbilityDefinition | undefined {
+    pendingDefinition(): ResolvedAbility | undefined {
         return this.pendingCast?.definition;
     }
 
@@ -67,8 +67,8 @@ export class AbilityRuntime {
         return this.activeAnimation;
     }
 
-    use(definition: AbilityDefinition, target: AbilityTarget, time: number): void {
-        const commitSeconds = definition.impactSeconds + definition.channelSeconds;
+    use(definition: ResolvedAbility, target: AbilityTarget, time: number): void {
+        const commitSeconds = definition.timing.impactSeconds + definition.channelSeconds;
         this.groupCooldownUntil = lockGroups(
             definition.locks,
             this.groupCooldownUntil,
@@ -88,7 +88,7 @@ export class AbilityRuntime {
         this.activeAnimation = {
             definition,
             startedAt: time,
-            endsAt: time + castAnimationSeconds(definition),
+            endsAt: time + definition.timing.animationSeconds,
         };
     }
 

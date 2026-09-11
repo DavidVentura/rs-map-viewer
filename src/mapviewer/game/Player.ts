@@ -1,6 +1,6 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityDefinition, AbilityTarget, WeaponStyle } from "./Ability";
+import { AbilityTarget, ResolvedAbility, WeaponStyle } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
@@ -14,7 +14,7 @@ import {
     equipmentMaxHealthBonus,
 } from "./Equipment";
 import { Terrain } from "./Terrain";
-import { buildPlayerAbilityBar } from "./abilities";
+import { AbilityBarsByStyle } from "./abilities";
 import { AbilitySlotReadiness, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -43,6 +43,7 @@ export type StanceSeqIdsByStance = Record<WeaponStyle, StanceSeqIds>;
 
 export class Player implements Combatant, ManaPool {
     static readonly HIT_RADIUS = 64;
+    static readonly PROJECTILE_LAUNCH_HEIGHT = 40;
     static readonly MAX_HEALTH = 100;
     static readonly MAX_MANA = 100;
     static readonly MANA_REGEN_PER_SECOND = 4;
@@ -51,6 +52,7 @@ export class Player implements Combatant, ManaPool {
 
     readonly faction = Faction.PLAYER;
     readonly hitRadius = Player.HIT_RADIUS;
+    readonly projectileLaunchHeight = Player.PROJECTILE_LAUNCH_HEIGHT;
     health = Player.MAX_HEALTH;
     mana = Player.MAX_MANA;
     invulnerable = false;
@@ -95,6 +97,7 @@ export class Player implements Combatant, ManaPool {
         public y: number,
         readonly level: number,
         readonly styleSeqIds: StanceSeqIdsByStance,
+        private readonly abilityBars: AbilityBarsByStyle,
     ) {
         this.spawnX = x;
         this.spawnY = y;
@@ -117,18 +120,12 @@ export class Player implements Combatant, ManaPool {
         return this.activeSeqIds.runSeqId;
     }
 
-    get attackSeqId(): number {
-        return this.activeSeqIds.attackSeqId;
-    }
-
-    get abilityBar(): readonly AbilityDefinition[] {
+    get abilityBar(): readonly ResolvedAbility[] {
         const combined = composeModifiers(
             this.modifiers,
             equipmentAbilityModifiers(this.equipment, this.style),
         );
-        return buildPlayerAbilityBar(this.style).map((definition) =>
-            applyModifiers(definition, combined),
-        );
+        return this.abilityBars[this.style].map((ability) => applyModifiers(ability, combined));
     }
 
     getModifiers(): AbilityModifiers {
@@ -237,7 +234,7 @@ export class Player implements Combatant, ManaPool {
         if (activeCast) {
             if (this.castAnimationStartedAt !== activeCast.startedAt) {
                 this.castAnimationStartedAt = activeCast.startedAt;
-                this.animation.restart(activeCast.definition.castSeqId ?? this.attackSeqId);
+                this.animation.restart(activeCast.definition.castSeqId);
             }
             this.animation.advance(
                 deltaTimeSeconds,
@@ -275,9 +272,9 @@ export class Player implements Combatant, ManaPool {
         this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
     }
 
-    beginCast(definition: AbilityDefinition, target: AbilityTarget, timeSeconds: number): void {
-        this.mana -= definition.manaCost;
-        this.abilityRuntime.use(definition, target, timeSeconds);
+    beginCast(ability: ResolvedAbility, target: AbilityTarget, timeSeconds: number): void {
+        this.mana -= ability.manaCost;
+        this.abilityRuntime.use(ability, target, timeSeconds);
         const deltaX = target.x - this.x;
         const deltaY = target.y - this.y;
         if (deltaX !== 0 || deltaY !== 0) {

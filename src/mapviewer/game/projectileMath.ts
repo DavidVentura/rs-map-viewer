@@ -1,84 +1,108 @@
 import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { Combatant, Faction } from "./Combatant";
 
-export type ProjectileArcProfile = {
-    baseHeight: number;
-    heightPerDistance: number;
-    maxHeight: number;
-};
-
 export function directionToRotation(directionX: number, directionY: number): number {
     return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
 }
 
-export function reaimTowardTarget(
-    directionX: number,
-    directionY: number,
-    fromX: number,
-    fromY: number,
-    targetX: number,
-    targetY: number,
-): { x: number; y: number } {
-    const deltaX = targetX - fromX;
-    const deltaY = targetY - fromY;
-    const length = Math.hypot(deltaX, deltaY);
-    if (length === 0) {
-        return { x: directionX, y: directionY };
-    }
-    return { x: deltaX / length, y: deltaY / length };
-}
-
-// SYMMETRIC climbs out of the start and lands at the same baseline, apex at the midpoint (a shot
-// fired from ground/body height, like an arrow). DESCENDING starts already at the apex and falls
-// from there to the baseline, apex at launch (a shot lobbed from something already elevated, like a
-// fireball leaving a boss's raised mouth) — physically the back half of the same parabola, launched
-// with zero vertical velocity.
-export type ProjectileArcShape = "SYMMETRIC" | "DESCENDING";
-
-function computeArcPeakHeight(referenceDistance: number, arc: ProjectileArcProfile): number {
-    return Math.min(arc.baseHeight + referenceDistance * arc.heightPerDistance, arc.maxHeight);
-}
-
-export function computeArcOffset(
-    distanceTraveled: number,
-    referenceDistance: number,
-    arc: ProjectileArcProfile,
-    shape: ProjectileArcShape,
-): number {
-    if (referenceDistance <= 0) {
-        return 0;
-    }
-    const progress = Math.min(distanceTraveled / referenceDistance, 1);
-    const peakHeight = computeArcPeakHeight(referenceDistance, arc);
-    return shape === "SYMMETRIC"
-        ? peakHeight * 4 * progress * (1 - progress)
-        : peakHeight * (1 - progress * progress);
-}
-
-// Tangent angle of the arc's height-over-distance curve, in radians: positive (nose up), negative
-// (nose down). For SYMMETRIC that's nose up climbing out of the start, zero at the apex, nose down
-// diving into the landing point; for DESCENDING it starts at zero (level, leaving the apex flat) and
-// goes increasingly nose down toward the landing point.
-export function computeProjectilePitch(
-    distanceTraveled: number,
-    referenceDistance: number,
-    arc: ProjectileArcProfile,
-    shape: ProjectileArcShape,
-): number {
-    if (referenceDistance <= 0) {
-        return 0;
-    }
-    const progress = Math.min(distanceTraveled / referenceDistance, 1);
-    const peakHeight = computeArcPeakHeight(referenceDistance, arc);
-    const slope =
-        shape === "SYMMETRIC"
-            ? (peakHeight * 4 * (1 - 2 * progress)) / referenceDistance
-            : (-2 * peakHeight * progress) / referenceDistance;
-    return Math.atan(slope);
-}
-
 export function pitchRadiansToRotationUnits(pitchRadians: number): number {
     return Math.round(pitchRadians / RS_TO_RADIANS) & 2047;
+}
+
+export type FlightPoint = {
+    readonly x: number;
+    readonly y: number;
+};
+
+export type FlightOrigin = {
+    readonly x: number;
+    readonly y: number;
+    readonly height: number;
+};
+
+export type FlightState = FlightOrigin & {
+    readonly verticalVelocity: number;
+    readonly secondsToArrival: number;
+};
+
+export type FlightStep = {
+    readonly state: FlightState;
+    readonly rotation: number;
+    readonly pitch: number;
+    readonly arrived: boolean;
+};
+
+// The OSRS client's projectile model: the horizontal velocity is whatever covers the remaining
+// distance in the remaining time, the initial vertical velocity is fixed by the launch angle, and
+// the vertical acceleration is re-solved every step so the shot always meets endHeight exactly at
+// arrival, even when the target point moves between steps.
+export function launchFlight(
+    start: FlightOrigin,
+    target: FlightPoint,
+    launchAngleRadians: number,
+    travelSeconds: number,
+): FlightState {
+    if (travelSeconds <= 0) {
+        throw new Error(`Flight travel time must be positive, got ${travelSeconds}`);
+    }
+    const speed = Math.hypot(target.x - start.x, target.y - start.y) / travelSeconds;
+    return {
+        x: start.x,
+        y: start.y,
+        height: start.height,
+        verticalVelocity: speed * Math.tan(launchAngleRadians),
+        secondsToArrival: travelSeconds,
+    };
+}
+
+export function stepFlight(
+    state: FlightState,
+    target: FlightPoint,
+    endHeight: number,
+    dtSeconds: number,
+): FlightStep {
+    const remaining = state.secondsToArrival;
+    const velocityX = (target.x - state.x) / remaining;
+    const velocityY = (target.y - state.y) / remaining;
+    const speed = Math.hypot(velocityX, velocityY);
+    const acceleration =
+        (2 * (endHeight - state.height - state.verticalVelocity * remaining)) /
+        (remaining * remaining);
+    const rotation = directionToRotation(velocityX, velocityY);
+    const arrived = remaining <= dtSeconds;
+    const elapsed = arrived ? remaining : dtSeconds;
+    const verticalVelocity = state.verticalVelocity + acceleration * elapsed;
+    const pitch = pitchRadiansToRotationUnits(Math.atan2(verticalVelocity, speed));
+
+    if (arrived) {
+        return {
+            state: {
+                x: target.x,
+                y: target.y,
+                height: endHeight,
+                verticalVelocity,
+                secondsToArrival: 0,
+            },
+            rotation,
+            pitch,
+            arrived,
+        };
+    }
+    return {
+        state: {
+            x: state.x + velocityX * elapsed,
+            y: state.y + velocityY * elapsed,
+            height:
+                state.height +
+                state.verticalVelocity * elapsed +
+                0.5 * acceleration * elapsed * elapsed,
+            verticalVelocity,
+            secondsToArrival: remaining - elapsed,
+        },
+        rotation,
+        pitch,
+        arrived,
+    };
 }
 
 export function sweepCircleHitFraction(
@@ -152,39 +176,6 @@ export function findSweepHit<T extends Combatant>(
         }
     }
     return closest;
-}
-
-// Point-radius hit test for a projectile that lands at a fixed point rather than sweeping its
-// path, e.g. an arcing arrow that only checks for a target once it reaches its aimed landing spot.
-export function findLandingHit<T extends Combatant>(
-    landingX: number,
-    landingY: number,
-    hitRadius: number,
-    level: number,
-    sourceFaction: Faction,
-    combatants: readonly T[],
-): T | undefined {
-    let closest: { combatant: T; distanceSquared: number } | undefined;
-    for (const combatant of combatants) {
-        if (
-            combatant.level !== level ||
-            combatant.faction === sourceFaction ||
-            combatant.health <= 0
-        ) {
-            continue;
-        }
-        const deltaX = combatant.x - landingX;
-        const deltaY = combatant.y - landingY;
-        const radius = hitRadius + combatant.hitRadius;
-        const distanceSquared = deltaX * deltaX + deltaY * deltaY;
-        if (distanceSquared > radius * radius) {
-            continue;
-        }
-        if (!closest || distanceSquared < closest.distanceSquared) {
-            closest = { combatant, distanceSquared };
-        }
-    }
-    return closest?.combatant;
 }
 
 export function rotationToDirection(rotation: number): { x: number; y: number } {

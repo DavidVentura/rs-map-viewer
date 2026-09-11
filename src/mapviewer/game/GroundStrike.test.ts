@@ -17,6 +17,7 @@ function makeCombatant(
         level: 0,
         faction,
         hitRadius: 16,
+        projectileLaunchHeight: 40,
         health: 10,
         maxHealth: 10,
         ...overrides,

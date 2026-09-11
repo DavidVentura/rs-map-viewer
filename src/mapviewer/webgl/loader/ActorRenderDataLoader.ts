@@ -20,7 +20,6 @@ import {
     FIRE_BOLT_TRAVEL_SEQ_ID,
     JAD_FIRE_SEQ_ID,
     JAD_RANGED_ROCK_SEQ_ID,
-    KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
     KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     ProjectileKind,
 } from "../../game/Projectile";
@@ -439,10 +438,9 @@ const MAUL_SMASH_HIT_SPOTANIM_ID = 2804;
 // Tok-Xil's ranged shot (SpotAnimType id): 443, a static spike model without a sequence.
 const TOK_XIL_SHOT_SPOTANIM_ID = 443;
 
-// Ket-Zek's fire blast (SpotAnimType ids): 445 travel / 446 impact, the graphics whose sequences
-// follow Ket-Zek's own animation block.
+// Ket-Zek's fire blast (SpotAnimType id): 445, the graphic whose sequence follows Ket-Zek's own
+// animation block. It has no impact graphic.
 const KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID = 445;
-const KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID = 446;
 
 // A visually distinct, larger arrow model for the ranged Power Shot special.
 const POWER_SHOT_MODEL_SCALE = 200;
@@ -621,28 +619,6 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     );
 
-    const ketZekBlastHitSpotAnim = spotAnimTypeLoader.load(KET_ZEK_FIRE_BLAST_HIT_SPOTANIM_ID);
-    const ketZekBlastHitModel = buildSpotAnimModel(
-        modelLoader,
-        textureLoader,
-        ketZekBlastHitSpotAnim,
-    );
-    if (
-        !ketZekBlastHitModel ||
-        ketZekBlastHitSpotAnim.sequenceId !== KET_ZEK_FIRE_BLAST_HIT_SEQ_ID
-    ) {
-        throw new Error(
-            "Ket-Zek fire blast hit spot animation does not match the expected sequence",
-        );
-    }
-    const ketZekBlastHitAnim = addSpotAnimAnimationFrames(
-        sceneBuf,
-        seqTypeLoader,
-        seqFrameLoader,
-        ketZekBlastHitModel,
-        KET_ZEK_FIRE_BLAST_HIT_SEQ_ID,
-    );
-
     return {
         projectileMeshes: {
             [ProjectileKind.ARROW]: arrowAnim,
@@ -658,7 +634,6 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
             [VisualEffectKind.JAD_FIRE_HIT]: jadFireHitAnim,
             [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
-            [VisualEffectKind.KET_ZEK_FIRE_BLAST_HIT]: ketZekBlastHitAnim,
             [VisualEffectKind.MAUL_SMASH_HIT]: maulSmashHitAnim,
         },
     };

@@ -15,10 +15,10 @@ import {
 const BASE_DEFINITION = {
     id: "test",
     name: "Test",
-    impactSeconds: 0,
-    channelSeconds: 0,
-    animationSeconds: 0,
+    castSeqId: 1,
+    contactFrame: 0,
     castSpeed: 1,
+    channelSeconds: 0,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,

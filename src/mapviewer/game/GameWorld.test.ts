@@ -1,4 +1,11 @@
-import { AbilityDefinition, AbilityEffectKind, CooldownGroup, WeaponStyle } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffectKind,
+    CooldownGroup,
+    ResolvedAbility,
+    WeaponStyle,
+    resolveAbility,
+} from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
 import { Faction } from "./Combatant";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
@@ -11,7 +18,7 @@ import { Terrain } from "./Terrain";
 import {
     BOW_SHOT,
     CLEAVE,
-    ENEMY_MELEE,
+    GOBLIN_MELEE,
     HEALING_POTION,
     ICE_BARRAGE,
     MAGIC_BOLT,
@@ -19,6 +26,7 @@ import {
     SCIMITAR_SLASH,
     VOLLEY,
 } from "./abilities";
+import { stubSequenceLoaders } from "./testLoaders";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -38,8 +46,15 @@ class FakeTerrain implements Terrain {
     }
 }
 
-const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
-const seqFrameLoader = {} as any;
+const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+
+function resolve(definition: AbilityDefinition): ResolvedAbility {
+    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+}
+
+function impactOf(definition: AbilityDefinition): number {
+    return resolve(definition).timing.impactSeconds;
+}
 
 const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
     [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
@@ -51,7 +66,7 @@ function makeEnemyType(
     idleSeqId: number,
     walkSeqId: number,
     deathSeqId: number,
-    attackSeqId: number = -1,
+    abilities: readonly AbilityDefinition[] = [GOBLIN_MELEE],
 ): EnemyType {
     return {
         id: EnemyTypeId.GOBLIN,
@@ -59,12 +74,13 @@ function makeEnemyType(
         idleSeqId,
         walkSeqId,
         deathSeqId,
-        attackSeqId,
+        attackSeqId: -1,
         hitRadius: 64,
+        projectileLaunchHeight: 40,
         maxHealth: 20,
         walkSpeed: 288 * 1.6,
         behaviour: EnemyBehaviour.RUSHER,
-        abilities: [ENEMY_MELEE],
+        abilities,
         dropTier: DropTier.NONE,
     };
 }
@@ -105,7 +121,7 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const target = { x: 500, y: 0 };
 
-        advanceSeconds(world, holdSlot(0, target), BOW_SHOT.impactSeconds - 0.05);
+        advanceSeconds(world, holdSlot(0, target), impactOf(BOW_SHOT) - 0.05);
         expect(world.projectiles.length).toBe(0);
 
         advanceSeconds(world, holdSlot(0, target), 0.1);
@@ -119,7 +135,7 @@ describe("GameWorld ability wiring", () => {
         // this test's short window, so both fired arrows are still in flight to be counted.
         const target = { x: 100000, y: 0 };
 
-        const cooldownTotal = BOW_SHOT.impactSeconds + BOW_SHOT.locks[0].seconds;
+        const cooldownTotal = impactOf(BOW_SHOT) + BOW_SHOT.locks[0].seconds;
         advanceSeconds(world, holdSlot(0, target), cooldownTotal * 2 + 0.1);
         expect(world.projectiles.length).toBe(2);
     });
@@ -145,7 +161,7 @@ describe("GameWorld ability wiring", () => {
         advanceSeconds(
             world,
             holdSlot(potionSlot, { x: 0, y: 0 }),
-            HEALING_POTION.impactSeconds + 0.05,
+            impactOf(HEALING_POTION) + 0.05,
         );
         expect(player.health).toBe(50 + healAmount);
 
@@ -163,7 +179,7 @@ describe("GameWorld ability wiring", () => {
         advanceSeconds(
             world,
             holdSlot(potionSlot, { x: 0, y: 0 }),
-            HEALING_POTION.impactSeconds + 0.05,
+            impactOf(HEALING_POTION) + 0.05,
         );
         expect(player.health).toBe(player.maxHealth);
         expect(player.abilityRuntime.canUse(HEALING_POTION, player.mana, world.timeSeconds)).toBe(
@@ -222,7 +238,7 @@ describe("Melee style", () => {
         advanceSeconds(
             world,
             holdSlot(0, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            SCIMITAR_SLASH.impactSeconds + 0.05,
+            impactOf(SCIMITAR_SLASH) + 0.05,
         );
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
@@ -243,7 +259,7 @@ describe("Melee style", () => {
         advanceSeconds(
             world,
             holdSlot(1, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            CLEAVE.impactSeconds + 0.05,
+            impactOf(CLEAVE) + 0.05,
         );
 
         expect(enemy.health).toBe(enemy.maxHealth - basicMin * 2);
@@ -257,7 +273,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, { x: 0, y: 200 }), CLEAVE.impactSeconds + 0.05);
+        advanceSeconds(world, holdSlot(1, { x: 0, y: 200 }), impactOf(CLEAVE) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth);
     });
@@ -271,7 +287,7 @@ describe("Ranged style", () => {
         const count =
             VOLLEY.effect.kind === AbilityEffectKind.MULTI_PROJECTILE ? VOLLEY.effect.count : 0;
 
-        advanceSeconds(world, holdSlot(1, target), VOLLEY.impactSeconds + 0.05);
+        advanceSeconds(world, holdSlot(1, target), impactOf(VOLLEY) + 0.05);
 
         expect(world.projectiles.length).toBe(count);
     });
@@ -283,7 +299,7 @@ describe("Ranged style", () => {
         world.spawnEnemy(400, 0, 0, makeEnemyType(1, 2, 3));
         const [near, far] = world.enemies;
 
-        advanceSeconds(world, holdSlot(2, { x: 1000, y: 0 }), POWER_SHOT.impactSeconds + 0.5);
+        advanceSeconds(world, holdSlot(2, { x: 1000, y: 0 }), impactOf(POWER_SHOT) + 0.5);
 
         expect(near.health).toBeLessThan(near.maxHealth);
         expect(far.health).toBeLessThan(far.maxHealth);
@@ -302,7 +318,7 @@ describe("Magic style", () => {
         advanceSeconds(
             world,
             holdSlot(1, { x: enemy.x, y: enemy.y, enemyId: enemy.id }),
-            ICE_BARRAGE.impactSeconds + 0.05,
+            impactOf(ICE_BARRAGE) + 0.05,
         );
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
@@ -321,7 +337,7 @@ describe("Magic style", () => {
         advanceSeconds(
             world,
             holdSlot(1, { x: enemy.x, y: enemy.y }),
-            ICE_BARRAGE.impactSeconds + 0.05,
+            impactOf(ICE_BARRAGE) + 0.05,
         );
 
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
@@ -330,8 +346,7 @@ describe("Magic style", () => {
 
 describe("Enemy attack cycle", () => {
     it("winds up more slowly than the player's fastest basic attack, so it reads as a telegraph", () => {
-        expect(ENEMY_MELEE.impactSeconds).toBeGreaterThanOrEqual(0.5);
-        expect(ENEMY_MELEE.impactSeconds).toBeGreaterThan(BOW_SHOT.impactSeconds);
+        expect(impactOf(GOBLIN_MELEE)).toBeGreaterThan(impactOf(BOW_SHOT));
     });
 
     it("lands a melee hit on the player once the wind-up completes while still in reach", () => {
@@ -341,10 +356,10 @@ describe("Enemy attack cycle", () => {
         const player = world.player!;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, idleInput(), ENEMY_MELEE.impactSeconds + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(GOBLIN_MELEE) + 0.05);
 
         const meleeEffect =
-            ENEMY_MELEE.effect.kind === AbilityEffectKind.MELEE ? ENEMY_MELEE.effect : undefined;
+            GOBLIN_MELEE.effect.kind === AbilityEffectKind.MELEE ? GOBLIN_MELEE.effect : undefined;
         expect(meleeEffect).toBeDefined();
         expect(player.health).toBe(player.maxHealth - meleeEffect!.minDamage);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
@@ -357,7 +372,7 @@ describe("Enemy attack cycle", () => {
         world.setInvulnerable(true);
         const player = world.player!;
 
-        advanceSeconds(world, idleInput(), ENEMY_MELEE.impactSeconds + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(GOBLIN_MELEE) + 0.05);
 
         expect(player.health).toBe(player.maxHealth);
     });
@@ -415,18 +430,18 @@ describe("Enemy attack cycle", () => {
 
     it("spawns an enemy-sourced projectile aimed at the player for a ranged enemy attack definition", () => {
         const rangedAttack: AbilityDefinition = {
-            ...ENEMY_MELEE,
+            ...GOBLIN_MELEE,
             id: "test_enemy_ranged",
-            impactSeconds: 0.2,
+            contactFrame: 2,
             castSpeed: 1,
             effect: { kind: AbilityEffectKind.PROJECTILE, spec: ARROW_SPEC },
         };
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, 4), [rangedAttack]);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [rangedAttack]));
         const player = world.player!;
 
-        advanceSeconds(world, idleInput(), rangedAttack.impactSeconds + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(rangedAttack) + 0.05);
 
         expect(world.projectiles.length).toBe(1);
         expect(world.projectiles[0].sourceFaction).toBe(Faction.ENEMY);
@@ -514,10 +529,10 @@ describe("Player death and respawn", () => {
 const GROUND_STRIKE_TEST: AbilityDefinition = {
     id: "test_ground_strike",
     name: "Test Ground Strike",
-    impactSeconds: 0.2,
-    channelSeconds: 0,
-    animationSeconds: 0.2,
+    castSeqId: 5,
+    contactFrame: 2,
     castSpeed: 1,
+    channelSeconds: 0,
     manaCost: 0,
     maxCharges: 1,
     rechargeSeconds: 0,
@@ -546,8 +561,12 @@ describe("Ground strike", () => {
         const player = world.player!;
         const enemy = world.enemies[0];
 
-        player.beginCast(GROUND_STRIKE_TEST, { x: enemy.x, y: enemy.y }, world.timeSeconds);
-        advanceSeconds(world, idleInput(), GROUND_STRIKE_TEST.impactSeconds + 0.01);
+        player.beginCast(
+            resolve(GROUND_STRIKE_TEST),
+            { x: enemy.x, y: enemy.y },
+            world.timeSeconds,
+        );
+        advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
 
         expect(enemy.health).toBe(enemy.maxHealth);
         expect(world.pendingGroundStrikes.length).toBe(1);
@@ -565,8 +584,8 @@ describe("Ground strike", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
 
-        player.beginCast(GROUND_STRIKE_TEST, { x: 200, y: 300 }, world.timeSeconds);
-        advanceSeconds(world, idleInput(), GROUND_STRIKE_TEST.impactSeconds + 0.01);
+        player.beginCast(resolve(GROUND_STRIKE_TEST), { x: 200, y: 300 }, world.timeSeconds);
+        advanceSeconds(world, idleInput(), impactOf(GROUND_STRIKE_TEST) + 0.01);
         world.drainEvents();
 
         advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);
@@ -588,11 +607,11 @@ describe("Ground strike", () => {
         const player = world.player!;
         const enemy = world.enemies[0];
 
-        player.beginCast(GROUND_STRIKE_TEST, { x: 0, y: 0 }, world.timeSeconds);
+        player.beginCast(resolve(GROUND_STRIKE_TEST), { x: 0, y: 0 }, world.timeSeconds);
         advanceSeconds(
             world,
             idleInput(),
-            GROUND_STRIKE_TEST.impactSeconds + GROUND_STRIKE_TELEGRAPH_SECONDS + 0.1,
+            impactOf(GROUND_STRIKE_TEST) + GROUND_STRIKE_TELEGRAPH_SECONDS + 0.1,
         );
 
         expect(enemy.health).toBe(enemy.maxHealth);
@@ -605,12 +624,12 @@ describe("Ground strike", () => {
         };
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
-        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, 4), [enemyGroundStrike]);
+        world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [enemyGroundStrike]));
         const player = world.player!;
 
         // +0.05 (not +0.01, as other enemy-cast tests in this file use) to cover the tick the
         // enemy spends going IDLE -> CHASE before it can even start winding up.
-        advanceSeconds(world, idleInput(), enemyGroundStrike.impactSeconds + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(enemyGroundStrike) + 0.05);
         expect(world.pendingGroundStrikes.length).toBe(1);
 
         advanceSeconds(world, idleInput(), GROUND_STRIKE_TELEGRAPH_SECONDS + 0.01);

@@ -1,13 +1,13 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AbilityDefinition, AbilityEffectKind } from "./Ability";
+import { AbilityDefinition, AbilityEffectKind, ResolvedAbility } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import {
     EnemyBehaviour,
     EnemyStatsOverride,
-    EnemyType,
+    ResolvedEnemyType,
     isBandedEnemyType,
     isBossEnemyType,
     resolveEnemyStats,
@@ -121,8 +121,8 @@ export function computeKeepDistanceMovement(
     return { x: 0, y: 0 };
 }
 
-export type PatternAbilitySelection = {
-    readonly ability: AbilityDefinition;
+export type PatternAbilitySelection<A extends AbilityDefinition> = {
+    readonly ability: A;
     readonly nextIndex: number;
 };
 
@@ -131,11 +131,11 @@ export type PatternAbilitySelection = {
 // one isUsable accepts and the index the pattern should resume from next time. An entry whose own
 // cooldown isn't up yet or whose range condition fails is skipped without being consumed, so it's
 // tried again on its next turn through the cycle.
-export function selectPatternAbility(
-    pattern: readonly AbilityDefinition[],
+export function selectPatternAbility<A extends AbilityDefinition>(
+    pattern: readonly A[],
     startIndex: number,
-    isUsable: (ability: AbilityDefinition, index: number) => boolean,
-): PatternAbilitySelection | undefined {
+    isUsable: (ability: A, index: number) => boolean,
+): PatternAbilitySelection<A> | undefined {
     for (let offset = 0; offset < pattern.length; offset++) {
         const index = (startIndex + offset) % pattern.length;
         if (isUsable(pattern[index], index)) {
@@ -179,8 +179,7 @@ export class Enemy implements Combatant, SteeringBody {
         readonly level: number,
         readonly spawnX: number,
         readonly spawnY: number,
-        readonly type: EnemyType,
-        readonly abilities: readonly AbilityDefinition[] = type.abilities,
+        readonly type: ResolvedEnemyType,
         statsOverride?: EnemyStatsOverride,
     ) {
         const stats = resolveEnemyStats(type, statsOverride);
@@ -189,6 +188,10 @@ export class Enemy implements Combatant, SteeringBody {
         this.health = stats.maxHealth;
         this.walkSpeed = stats.walkSpeed;
         this.animation = new AnimationState(type.idleSeqId);
+    }
+
+    get projectileLaunchHeight(): number {
+        return this.type.projectileLaunchHeight;
     }
 
     get idleSeqId(): number {
@@ -205,18 +208,6 @@ export class Enemy implements Combatant, SteeringBody {
 
     get attackSeqId(): number {
         return this.type.attackSeqId;
-    }
-
-    // The cast/recovery sequence to show at `time`: the actively-playing cast's own castSeqId (see
-    // AbilityRuntime.activeCastAnimation, which outlives the cast's pendingCast/effect resolution
-    // through its recovery), falling back to the type's cast/basic-attack sequence once nothing is
-    // playing.
-    castSeqIdAt(time: number): number {
-        return (
-            this.abilityRuntime.activeCastAnimation(time)?.definition.castSeqId ??
-            this.type.castSeqId ??
-            this.type.attackSeqId
-        );
     }
 
     isFrozen(timeSeconds: number): boolean {
@@ -247,9 +238,9 @@ export class Enemy implements Combatant, SteeringBody {
         const distanceToPlayer = frozen ? Infinity : this.distanceTo(player);
         const hasPlayer = !frozen && player !== undefined && player.level === this.level;
 
-        let readyAbility: AbilityDefinition | undefined;
+        let readyAbility: ResolvedAbility | undefined;
         let attackWindow: AttackWindow | undefined;
-        let patternSelection: PatternAbilitySelection | undefined;
+        let patternSelection: PatternAbilitySelection<ResolvedAbility> | undefined;
         const bossType = isBossEnemyType(this.type) ? this.type : undefined;
         if (!frozen && player) {
             if (bossType) {
@@ -316,11 +307,11 @@ export class Enemy implements Combatant, SteeringBody {
 
         // WINDUP and RECOVERY are one continuous animation while it's still playing (see
         // AbilityRuntime.activeCastAnimation): WINDUP is the portion up to impact, RECOVERY is the
-        // remainder up to castAnimationSeconds. RECOVERY commonly outlasts the animation itself
-        // (the ATTACK lock's own recovery time on top of it), so once activeCastAnimation expires
-        // the enemy shows idle for the rest of RECOVERY rather than holding the cast's last frame.
-        // setSequence no-ops once the sequence is already playing, so this doesn't restart it on
-        // every tick.
+        // remainder up to the cast timing's animationSeconds. RECOVERY commonly outlasts the
+        // animation itself (the ATTACK lock's own recovery time on top of it), so once
+        // activeCastAnimation expires the enemy shows idle for the rest of RECOVERY rather than
+        // holding the cast's last frame. setSequence no-ops once the sequence is already playing,
+        // so this doesn't restart it on every tick.
         if (this.state === EnemyState.WINDUP || this.state === EnemyState.RECOVERY) {
             if (this.state === EnemyState.WINDUP && player) {
                 const deltaX = player.x - this.x;
@@ -335,7 +326,7 @@ export class Enemy implements Combatant, SteeringBody {
                 this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
                 return;
             }
-            this.animation.setSequence(this.castSeqIdAt(timeSeconds));
+            this.animation.setSequence(activeCast.definition.castSeqId);
             this.animation.advance(
                 deltaTimeSeconds,
                 seqTypeLoader,
@@ -397,8 +388,8 @@ export class Enemy implements Combatant, SteeringBody {
     // The first ability (in priority order) whose own cooldown/resource gate is currently open,
     // independent of distance to the player. Distance is applied separately via attackWindowFor,
     // so a ready-but-out-of-range ability still blocks lower-priority ones from being picked.
-    private selectReadyAbility(timeSeconds: number): AbilityDefinition | undefined {
-        return this.abilities.find((ability) =>
+    private selectReadyAbility(timeSeconds: number): ResolvedAbility | undefined {
+        return this.type.abilities.find((ability) =>
             this.abilityRuntime.canUse(ability, 0, timeSeconds),
         );
     }
@@ -407,11 +398,11 @@ export class Enemy implements Combatant, SteeringBody {
     // condition are checked here (see selectPatternAbility), since the pattern must skip an entry
     // that's out of range (e.g. melee while the player is at range) rather than wait on it.
     private selectBossPatternAbility(
-        type: Extract<EnemyType, { behaviour: EnemyBehaviour.BOSS }>,
+        type: Extract<ResolvedEnemyType, { behaviour: EnemyBehaviour.BOSS }>,
         distanceToPlayer: number,
         player: Combatant,
         timeSeconds: number,
-    ): PatternAbilitySelection | undefined {
+    ): PatternAbilitySelection<ResolvedAbility> | undefined {
         return selectPatternAbility(type.pattern, this.patternIndex, (ability) => {
             if (!this.abilityRuntime.canUse(ability, 0, timeSeconds)) {
                 return false;
@@ -430,7 +421,7 @@ export class Enemy implements Combatant, SteeringBody {
     }
 
     private computeBossMovement(
-        type: Extract<EnemyType, { behaviour: EnemyBehaviour.BOSS }>,
+        type: Extract<ResolvedEnemyType, { behaviour: EnemyBehaviour.BOSS }>,
         deltaX: number,
         deltaY: number,
         distanceToPlayer: number,
@@ -457,7 +448,7 @@ export class Enemy implements Combatant, SteeringBody {
         if (!isBandedEnemyType(this.type)) {
             return { x: 0, y: 0 };
         }
-        const maxRange = enemyAttackRange(this.abilities[0], this.hitRadius, player.hitRadius);
+        const maxRange = enemyAttackRange(this.type.abilities[0], this.hitRadius, player.hitRadius);
         const kiteDirection = computeKeepDistanceMovement(
             deltaX,
             deltaY,

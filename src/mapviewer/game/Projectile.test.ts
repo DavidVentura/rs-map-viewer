@@ -10,12 +10,15 @@ import {
     ProjectileKind,
     ProjectileOutcome,
     ProjectileSpec,
+    ProjectileTarget,
     VOLLEY_ARROW_SPEC,
+    travelSeconds,
 } from "./Projectile";
 import { VisualEffectKind } from "./VisualEffect";
 
 class FakeCombatant {
     readonly hitRadius = 32;
+    readonly projectileLaunchHeight = 40;
     readonly maxHealth = 100;
     health = 100;
 
@@ -29,35 +32,72 @@ class FakeCombatant {
 
 const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
 const seqFrameLoader = {} as any;
+const START = { x: 0, y: 0, height: 40 };
+const flatTerrain = { getHeight: () => 0 } as any;
 
 function update(
     projectile: Projectile,
     dtSeconds: number,
     combatants: any[] = [],
     events: any[] = [],
-) {
-    return projectile.update(dtSeconds, combatants, events, seqTypeLoader, seqFrameLoader);
+): ProjectileOutcome {
+    return projectile.update(
+        dtSeconds,
+        combatants,
+        events,
+        flatTerrain,
+        seqTypeLoader,
+        seqFrameLoader,
+    );
+}
+
+function fly(projectile: Projectile, seconds: number, combatants: any[] = []): ProjectileOutcome {
+    const dt = 1 / 120;
+    let outcome: ProjectileOutcome = { kind: "ALIVE" };
+    for (let elapsed = 0; elapsed < seconds && outcome.kind === "ALIVE"; elapsed += dt) {
+        outcome = update(projectile, dt, combatants, []);
+    }
+    return outcome;
+}
+
+function point(x: number, y: number): ProjectileTarget {
+    return { kind: "POINT", x, y };
+}
+
+function tracked(combatant: FakeCombatant): ProjectileTarget {
+    return { kind: "COMBATANT", combatant };
 }
 
 describe("Projectile specs", () => {
-    it("gives arrows an arc and magic a flat trajectory", () => {
+    it("lobs the aimed arrow at its tracked target and flies the magic bolt flat at it", () => {
         expect(ARROW_SPEC.kind).toBe(ProjectileKind.ARROW);
-        expect(ARROW_SPEC.flight.kind).toBe("ARC");
-        if (ARROW_SPEC.flight.kind !== "ARC") {
-            throw new Error("expected the arrow to have an ARC flight");
-        }
-        expect(ARROW_SPEC.flight.profile.maxHeight).toBeGreaterThan(0);
+        expect(ARROW_SPEC.landing.kind).toBe("TRACKED_COMBATANT");
+        expect(ARROW_SPEC.launchAngleRadians).toBeGreaterThan(0);
         expect(MAGIC_SPEC.kind).toBe(ProjectileKind.MAGIC);
-        expect(MAGIC_SPEC.flight.kind).toBe("STRAIGHT");
+        expect(MAGIC_SPEC.landing.kind).toBe("TRACKED_COMBATANT");
+        expect(MAGIC_SPEC.launchAngleRadians).toBe(0);
     });
 
-    it("gives volley's arrows a straight flight unlike the single aimed shot", () => {
-        expect(ARROW_SPEC.flight.kind).toBe("ARC");
-        expect(VOLLEY_ARROW_SPEC.flight).toEqual({
-            kind: "STRAIGHT",
+    it("gives volley's arrows a free flight unlike the single aimed shot", () => {
+        expect(VOLLEY_ARROW_SPEC.landing).toEqual({
+            kind: "FREE_FLIGHT",
+            hitRadius: 16,
             piercing: false,
-            homing: false,
         });
+        expect(POWER_SHOT_SPEC.landing).toEqual({
+            kind: "FREE_FLIGHT",
+            hitRadius: 24,
+            piercing: true,
+        });
+    });
+
+    it("drops Jad's rock from above its landing point over a fixed time", () => {
+        expect(JAD_RANGED_ROCK_SPEC.landing.kind).toBe("FIXED_POINT");
+        if (JAD_RANGED_ROCK_SPEC.landing.kind !== "FIXED_POINT") {
+            throw new Error("expected the rock to land at a fixed point");
+        }
+        expect(JAD_RANGED_ROCK_SPEC.landing.origin).toEqual({ kind: "ABOVE_TARGET", height: 3000 });
+        expect(JAD_RANGED_ROCK_SPEC.travelTime.secondsPerTile).toBe(0);
     });
 
     it("gives the arrow no real travel sequence and magic a real one", () => {
@@ -75,177 +115,127 @@ describe("Projectile specs", () => {
     });
 });
 
+describe("travelSeconds", () => {
+    it("adds the per-tile time on top of the base time", () => {
+        expect(travelSeconds({ baseSeconds: 0.5, secondsPerTile: 0.1 }, 4 * 128)).toBeCloseTo(0.9);
+    });
+});
+
 describe("Projectile animation", () => {
     it("keeps the arrow's animation on frame 0", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
         update(projectile, 0.5);
         expect(projectile.animation.frame).toBe(0);
     });
 });
 
 describe("Projectile travel", () => {
-    it("moves along its direction at the spec's speed", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1000, 0, 1000);
-        update(projectile, 0.1);
-        expect(projectile.x).toBeCloseTo(ARROW_SPEC.speed * 0.1);
+    it("starts at its launch point facing the target", () => {
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
+        expect(projectile.x).toBe(0);
+        expect(projectile.height).toBe(40);
+        expect(projectile.rotation).toBe(1024);
+        expect(projectile.pitch).toBeGreaterThan(0);
+    });
+
+    it("covers the distance at the spec's travel time", () => {
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(1000, 0));
+        const total = travelSeconds(ARROW_SPEC.travelTime, 1000);
+        update(projectile, total / 2);
+        expect(projectile.x).toBeCloseTo(500);
         expect(projectile.y).toBeCloseTo(0);
     });
 
-    it("normalizes the supplied direction", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 10, 0, 1000);
-        update(projectile, 0.1);
-        expect(projectile.x).toBeCloseTo(ARROW_SPEC.speed * 0.1);
-    });
-
     it("arcs upward mid-flight for arrows", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 1000 / ARROW_SPEC.speed / 2);
-        expect(projectile.height).toBeGreaterThan(Projectile.START_HEIGHT);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
+        update(projectile, travelSeconds(ARROW_SPEC.travelTime, 1000) / 2);
+        expect(projectile.height).toBeGreaterThan(START.height);
     });
 
-    it("stays at a flat height for magic projectiles", () => {
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 1000 / MAGIC_SPEC.speed / 2);
-        expect(projectile.height).toBe(Projectile.START_HEIGHT);
+    it("keeps a zero-angle free-flight arrow at its launch height", () => {
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(0, 1000),
+        );
+        update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 1000) / 2);
+        expect(projectile.height).toBeCloseTo(START.height);
+        expect(projectile.pitch).toBe(0);
     });
 
-    it("expires once it travels beyond its max range", () => {
-        const shortSpec: ProjectileSpec = { ...ARROW_SPEC, range: 100 };
-        const projectile = new Projectile(shortSpec, Faction.PLAYER, 0, 0, 0, 1, 0, 100);
-        expect(update(projectile, 200 / shortSpec.speed)).toBe(ProjectileOutcome.EXPIRED);
+    it("expires once a free-flight projectile reaches its end point", () => {
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(0, 100),
+        );
+        const outcome = update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 100));
+        expect(outcome).toEqual({ kind: "EXPIRED" });
+        expect(projectile.y).toBe(100);
     });
 
-    it("keeps flying while under its max range", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        expect(update(projectile, 0.01)).toBe(ProjectileOutcome.ALIVE);
+    it("keeps flying while short of its end point", () => {
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
+        expect(update(projectile, 0.01)).toEqual({ kind: "ALIVE" });
     });
 });
 
-describe("Projectile collision (straight flight)", () => {
+describe("Projectile collision (free flight)", () => {
     it("hits a hostile combatant it sweeps through and applies damage", () => {
         const enemy = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 500);
-        const outcome = update(projectile, 500 / MAGIC_SPEC.speed, [enemy], []);
-        expect(outcome).toBe(ProjectileOutcome.HIT);
-        expect(enemy.health).toBe(100 - MAGIC_SPEC.damage);
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        const outcome = fly(projectile, 2, [enemy]);
+        expect(outcome).toEqual({ kind: "HIT_COMBATANT", combatant: enemy });
+        expect(enemy.health).toBe(100 - VOLLEY_ARROW_SPEC.damage);
     });
 
     it("stops at the point of impact rather than passing through", () => {
         const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 1000 / MAGIC_SPEC.speed, [enemy], []);
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 1000), [enemy], []);
         expect(projectile.x).toBeLessThan(200);
     });
 
     it("does not hit combatants sharing the projectile's faction", () => {
         const ally = new FakeCombatant(200, 0, 0, Faction.PLAYER);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        const outcome = update(projectile, 1000 / MAGIC_SPEC.speed, [ally], []);
-        expect(outcome).toBe(ProjectileOutcome.ALIVE);
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        expect(update(projectile, 0.1, [ally], [])).toEqual({ kind: "ALIVE" });
         expect(ally.health).toBe(100);
     });
 
     it("does not hit combatants on a different level", () => {
         const enemy = new FakeCombatant(200, 0, 1, Faction.ENEMY);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        const outcome = update(projectile, 1000 / MAGIC_SPEC.speed, [enemy], []);
-        expect(outcome).toBe(ProjectileOutcome.ALIVE);
-        expect(enemy.health).toBe(100);
-    });
-});
-
-describe("Projectile landing (arc flight)", () => {
-    it("does not hit an enemy sitting on the path before the landing point", () => {
-        const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        const outcome = update(projectile, 250 / ARROW_SPEC.speed, [enemy], []);
-        expect(outcome).toBe(ProjectileOutcome.ALIVE);
-        expect(enemy.health).toBe(100);
-    });
-
-    it("hits whatever is within radius of the landing point once it arrives", () => {
-        const enemy = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 500);
-        const outcome = update(projectile, 500 / ARROW_SPEC.speed, [enemy], []);
-        expect(outcome).toBe(ProjectileOutcome.HIT);
-        expect(projectile.x).toBeCloseTo(500);
-        expect(enemy.health).toBe(100 - ARROW_SPEC.damage);
-    });
-
-    it("hits nothing if the target moved away from the landing point", () => {
-        const enemy = new FakeCombatant(2000, 2000, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 500);
-        const outcome = update(projectile, 500 / ARROW_SPEC.speed, [enemy], []);
-        expect(outcome).toBe(ProjectileOutcome.EXPIRED);
-        expect(enemy.health).toBe(100);
-    });
-});
-
-describe("Projectile landing (tracked arc flight)", () => {
-    if (ARROW_SPEC.flight.kind !== "ARC") {
-        throw new Error("expected the arrow to have an ARC flight");
-    }
-    const fixedPointArrowSpec: ProjectileSpec = {
-        ...ARROW_SPEC,
-        flight: { ...ARROW_SPEC.flight, landing: "FIXED_POINT" },
-    };
-
-    it("still lands on a target that moved 2 tiles off the original line mid-flight", () => {
-        const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 500, target);
-        update(projectile, 250 / ARROW_SPEC.speed, [target], []);
-        target.x = 500;
-        target.y = 256;
-
-        let outcome = ProjectileOutcome.ALIVE;
-        for (let i = 0; i < 1000 && outcome === ProjectileOutcome.ALIVE; i++) {
-            outcome = update(projectile, 0.001, [target], []);
-        }
-        expect(outcome).toBe(ProjectileOutcome.HIT);
-        expect(target.health).toBe(100 - ARROW_SPEC.damage);
-    });
-
-    it("still misses a target that moved 2 tiles off the original line when the landing point is fixed", () => {
-        const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
         const projectile = new Projectile(
-            fixedPointArrowSpec,
+            VOLLEY_ARROW_SPEC,
             Faction.PLAYER,
             0,
-            0,
-            0,
-            1,
-            0,
-            500,
-            target,
+            START,
+            point(1000, 0),
         );
-        update(projectile, 250 / ARROW_SPEC.speed, [target], []);
-        target.x = 500;
-        target.y = 256;
-
-        const outcome = update(projectile, 250 / ARROW_SPEC.speed, [target], []);
-        expect(outcome).toBe(ProjectileOutcome.EXPIRED);
-        expect(target.health).toBe(100);
-    });
-});
-
-describe("Projectile pitch", () => {
-    it("pitches nose up early in an arcing flight", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 10 / ARROW_SPEC.speed);
-        expect(projectile.pitch).toBeGreaterThan(0);
-        expect(projectile.pitch).toBeLessThan(1024);
-    });
-
-    it("pitches nose down late in an arcing flight", () => {
-        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 990 / ARROW_SPEC.speed);
-        expect(projectile.pitch).toBeGreaterThan(1024);
-    });
-
-    it("keeps a straight-flight projectile's pitch at zero", () => {
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 500 / MAGIC_SPEC.speed);
-        expect(projectile.pitch).toBe(0);
+        expect(update(projectile, 0.1, [enemy], [])).toEqual({ kind: "ALIVE" });
+        expect(enemy.health).toBe(100);
     });
 });
 
@@ -253,9 +243,15 @@ describe("Projectile piercing", () => {
     it("stops at the first hit for a non-piercing projectile", () => {
         const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
         const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        const outcome = update(projectile, 400 / MAGIC_SPEC.speed, [near, far], []);
-        expect(outcome).toBe(ProjectileOutcome.HIT);
+        const projectile = new Projectile(
+            VOLLEY_ARROW_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        const outcome = fly(projectile, 2, [near, far]);
+        expect(outcome.kind).toBe("HIT_COMBATANT");
         expect(near.health).toBeLessThan(100);
         expect(far.health).toBe(100);
     });
@@ -263,88 +259,164 @@ describe("Projectile piercing", () => {
     it("continues through multiple hostile combatants for a piercing projectile", () => {
         const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
         const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(POWER_SHOT_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        // Hits register one sweep-step at a time, so advance in small increments
-        // to let the projectile reach and pass through both combatants in turn.
-        let outcome = ProjectileOutcome.ALIVE;
-        for (let i = 0; i < 50 && outcome === ProjectileOutcome.ALIVE; i++) {
-            outcome = update(projectile, 0.01, [near, far], []);
-        }
+        const projectile = new Projectile(
+            POWER_SHOT_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        const outcome = fly(projectile, 2, [near, far]);
+        expect(outcome).toEqual({ kind: "EXPIRED" });
         expect(near.health).toBe(100 - POWER_SHOT_SPEC.damage);
         expect(far.health).toBe(100 - POWER_SHOT_SPEC.damage);
     });
 
     it("does not damage the same combatant twice while still overlapping it", () => {
         const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(POWER_SHOT_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000);
-        update(projectile, 250 / POWER_SHOT_SPEC.speed, [enemy], []);
+        const projectile = new Projectile(
+            POWER_SHOT_SPEC,
+            Faction.PLAYER,
+            0,
+            START,
+            point(1000, 0),
+        );
+        update(projectile, travelSeconds(POWER_SHOT_SPEC.travelTime, 1000) / 4, [enemy], []);
         const healthAfterFirstHit = enemy.health;
+        expect(healthAfterFirstHit).toBeLessThan(100);
         update(projectile, 0.001, [enemy], []);
         expect(enemy.health).toBe(healthAfterFirstHit);
     });
 });
 
-describe("Projectile homing", () => {
-    const homingSpec: ProjectileSpec = {
-        ...MAGIC_SPEC,
-        flight: { kind: "STRAIGHT", piercing: false, homing: true },
-    };
-
-    it("re-aims toward its target each step when the spec is homing", () => {
-        const target = new FakeCombatant(1000, 1000, 0, Faction.ENEMY);
-        const projectile = new Projectile(homingSpec, Faction.PLAYER, 0, 0, 0, 1, 0, 1000, target);
-        update(projectile, 0.001);
-        expect(projectile.y).toBeGreaterThan(0);
+describe("Projectile tracking a combatant", () => {
+    it("does not hit an enemy sitting on the path before its target", () => {
+        const bystander = new FakeCombatant(200, 0, 0, Faction.ENEMY);
+        const target = new FakeCombatant(1000, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, tracked(target));
+        expect(fly(projectile, 0.2, [bystander, target]).kind).toBe("ALIVE");
+        expect(bystander.health).toBe(100);
     });
 
-    it("does not re-aim when the spec is not homing", () => {
-        const target = new FakeCombatant(1000, 1000, 0, Faction.ENEMY);
-        const projectile = new Projectile(MAGIC_SPEC, Faction.PLAYER, 0, 0, 0, 1, 0, 1000, target);
-        update(projectile, 0.001);
-        expect(projectile.y).toBe(0);
+    it("lands on its target at the travel time and damages only it", () => {
+        const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, tracked(target));
+        const outcome = update(projectile, travelSeconds(ARROW_SPEC.travelTime, 500), [target], []);
+        expect(outcome).toEqual({ kind: "HIT_COMBATANT", combatant: target });
+        expect(projectile.x).toBe(500);
+        expect(projectile.height).toBe(60);
+        expect(target.health).toBe(100 - ARROW_SPEC.damage);
+    });
+
+    it("still lands on a target that moved 2 tiles off the original line mid-flight", () => {
+        const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, tracked(target));
+        const total = travelSeconds(ARROW_SPEC.travelTime, 500);
+        fly(projectile, total / 2, [target]);
+        target.x = 500;
+        target.y = 256;
+        const outcome = fly(projectile, total, [target]);
+        expect(outcome).toEqual({ kind: "HIT_COMBATANT", combatant: target });
+        expect(projectile.x).toBe(500);
+        expect(projectile.y).toBe(256);
+        expect(target.health).toBe(100 - ARROW_SPEC.damage);
+    });
+
+    it("flies on to where its target died and expires without damage", () => {
+        const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, tracked(target));
+        const total = travelSeconds(ARROW_SPEC.travelTime, 500);
+        fly(projectile, total / 2, [target]);
+        target.health = 0;
+        update(projectile, 1 / 120, [target], []);
+        target.x = 2000;
+        const outcome = fly(projectile, total, [target]);
+        expect(outcome).toEqual({ kind: "EXPIRED" });
+        expect(projectile.x).toBe(500);
+        expect(target.health).toBe(0);
+    });
+
+    it("expires harmlessly at a bare point when fired with no combatant to track", () => {
+        const enemy = new FakeCombatant(500, 0, 0, Faction.ENEMY);
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(500, 0));
+        const outcome = update(projectile, travelSeconds(ARROW_SPEC.travelTime, 500), [enemy], []);
+        expect(outcome).toEqual({ kind: "EXPIRED" });
+        expect(enemy.health).toBe(100);
     });
 });
 
-describe("Projectile drop flight", () => {
-    it("starts at the flight's start height and stays alive while falling", () => {
-        const projectile = new Projectile(
+describe("Projectile pitch", () => {
+    it("pitches nose up early in a lobbed flight", () => {
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
+        update(projectile, 0.001);
+        expect(projectile.pitch).toBeGreaterThan(0);
+        expect(projectile.pitch).toBeLessThan(1024);
+    });
+
+    it("pitches nose down late in a lobbed flight", () => {
+        const projectile = new Projectile(ARROW_SPEC, Faction.PLAYER, 0, START, point(0, 1000));
+        fly(projectile, travelSeconds(ARROW_SPEC.travelTime, 1000) * 0.95);
+        expect(projectile.pitch).toBeGreaterThan(1024);
+    });
+
+    it("points straight down for a rock falling with no horizontal travel", () => {
+        const rock = new Projectile(
             JAD_RANGED_ROCK_SPEC,
             Faction.ENEMY,
             0,
-            500,
-            500,
-            0,
-            1,
-            0,
+            { x: 500, y: 500, height: 3000 },
+            point(500, 500),
         );
-        expect(projectile.height).toBeGreaterThan(0);
-        expect(update(projectile, 0.01)).toBe(ProjectileOutcome.ALIVE);
-        expect(projectile.height).toBeGreaterThan(0);
+        update(rock, 0.1);
+        expect(rock.pitch).toBe(1536);
     });
+});
+
+describe("Projectile landing at a fixed point", () => {
+    const fixedSpec: ProjectileSpec = {
+        ...ARROW_SPEC,
+        landing: { kind: "FIXED_POINT", endHeight: 40, hitRadius: 48, origin: { kind: "CASTER" } },
+    };
 
     it("damages every combatant in radius, not just the closest one, on landing", () => {
-        const near = new FakeCombatant(500, 0, 0, Faction.PLAYER);
-        const far = new FakeCombatant(500, 100, 0, Faction.PLAYER);
-        const projectile = new Projectile(JAD_RANGED_ROCK_SPEC, Faction.ENEMY, 0, 500, 0, 0, 1, 0);
-        if (projectile.spec.flight.kind !== "DROP") {
-            throw new Error("expected the rock to have a DROP flight");
-        }
-        const fallSeconds = projectile.spec.flight.startHeight / projectile.spec.speed;
-        const outcome = update(projectile, fallSeconds, [near, far], []);
-        expect(outcome).toBe(ProjectileOutcome.HIT);
-        expect(near.health).toBe(100 - JAD_RANGED_ROCK_SPEC.damage);
-        expect(far.health).toBe(100 - JAD_RANGED_ROCK_SPEC.damage);
+        const near = new FakeCombatant(500, 0, 0, Faction.ENEMY);
+        const far = new FakeCombatant(500, 60, 0, Faction.ENEMY);
+        const projectile = new Projectile(fixedSpec, Faction.PLAYER, 0, START, point(500, 0));
+        const outcome = update(
+            projectile,
+            travelSeconds(fixedSpec.travelTime, 500),
+            [near, far],
+            [],
+        );
+        expect(outcome).toEqual({ kind: "LANDED", x: 500, y: 0 });
+        expect(near.health).toBe(100 - fixedSpec.damage);
+        expect(far.health).toBe(100 - fixedSpec.damage);
     });
 
-    it("expires without damaging anything if nothing is in radius on landing", () => {
-        const outOfRange = new FakeCombatant(5000, 5000, 0, Faction.PLAYER);
-        const projectile = new Projectile(JAD_RANGED_ROCK_SPEC, Faction.ENEMY, 0, 500, 0, 0, 1, 0);
-        if (projectile.spec.flight.kind !== "DROP") {
-            throw new Error("expected the rock to have a DROP flight");
-        }
-        const fallSeconds = projectile.spec.flight.startHeight / projectile.spec.speed;
-        const outcome = update(projectile, fallSeconds, [outOfRange], []);
-        expect(outcome).toBe(ProjectileOutcome.EXPIRED);
-        expect(outOfRange.health).toBe(100);
+    it("lands without damaging anything that moved out of radius", () => {
+        const dodged = new FakeCombatant(2000, 2000, 0, Faction.ENEMY);
+        const projectile = new Projectile(fixedSpec, Faction.PLAYER, 0, START, point(500, 0));
+        const outcome = update(projectile, travelSeconds(fixedSpec.travelTime, 500), [dodged], []);
+        expect(outcome).toEqual({ kind: "LANDED", x: 500, y: 0 });
+        expect(dodged.health).toBe(100);
+    });
+
+    it("drops Jad's rock straight down from its start height onto the point", () => {
+        const player = new FakeCombatant(500, 0, 0, Faction.PLAYER);
+        const rock = new Projectile(
+            JAD_RANGED_ROCK_SPEC,
+            Faction.ENEMY,
+            0,
+            { x: 500, y: 0, height: 3000 },
+            point(500, 0),
+        );
+        expect(update(rock, 0.8, [player], [])).toEqual({ kind: "ALIVE" });
+        expect(rock.x).toBe(500);
+        expect(rock.height).toBeGreaterThan(0);
+        expect(rock.height).toBeLessThan(3000);
+        const outcome = update(rock, 0.8, [player], []);
+        expect(outcome).toEqual({ kind: "LANDED", x: 500, y: 0 });
+        expect(rock.height).toBe(0);
+        expect(player.health).toBe(100 - JAD_RANGED_ROCK_SPEC.damage);
     });
 });
