@@ -850,35 +850,6 @@ export function drawGroundImpactFlash(
     });
 }
 
-// A cone melee's actual damage area (e.g. Maul Smash): a wedge outline from the caster's position
-// out to the cone's boundary arc, fading out over its short lifetime. `boundaryScreenPoints` are
-// the arc's screen-projected points in order (apex not included), already projected via
-// worldToScreen the same way ground shadows are.
-export function drawGroundConeFlash(
-    ctx: CanvasRenderingContext2D,
-    apexScreen: { x: number; y: number },
-    boundaryScreenPoints: readonly { x: number; y: number }[],
-    progress: number,
-): void {
-    if (boundaryScreenPoints.length < 2) {
-        return;
-    }
-    const alpha = 1 - clamp(progress, 0, 1);
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(apexScreen.x, apexScreen.y);
-    for (const point of boundaryScreenPoints) {
-        ctx.lineTo(point.x, point.y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = `rgba(${GROUND_IMPACT_MID_COLOR}, ${0.35 * alpha})`;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = `rgba(${GROUND_IMPACT_CORE_COLOR}, ${0.85 * alpha})`;
-    ctx.stroke();
-    ctx.restore();
-}
-
 const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
 const GROUND_ITEM_LABEL_TAG_COLOR = "#8fe88f";
 const GROUND_ITEM_LABEL_BG_COLOR = "rgba(6, 6, 10, 0.78)";

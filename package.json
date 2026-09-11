@@ -50,6 +50,7 @@
         "render-music": "npx tsx scripts/cache/render-music.ts",
         "anim-table": "npx tsx scripts/cache/anim-table.ts",
         "gfx-table": "npx tsx scripts/cache/gfx-table.ts",
+        "render-gfx": "npx tsx scripts/cache/render-gfx.ts",
         "bundles": "npx tsx scripts/cache/bundle-encounter.ts all",
         "bundles:check": "npx tsx scripts/cache/bundle-encounter.ts --check",
         "prebuild": "npm run bundles"

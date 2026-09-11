@@ -14,7 +14,7 @@ import {
 import { Combatant } from "./Combatant";
 import { Affects, combatantsInCircle, matchesAffects } from "./Effect";
 import { TILE_SIZE } from "./Terrain";
-import { isWithinMeleeReach } from "./abilityRules";
+import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import { isPointInCone } from "./projectileMath";
 
 // The deliveries that pick their affected set at cast impact, as opposed to PROJECTILE (picked on
@@ -70,6 +70,64 @@ export function affectedCombatants<T extends Combatant>(
             );
         }
     }
+}
+
+// Each tile a cone covers gets its own ground graphic, staggered by its distance from the caster so
+// the impact ripples outward, and jittered off the tile centre so the copies don't read as a grid.
+export const CONE_TILE_STAGGER_SECONDS = 0.05;
+export const CONE_TILE_MAX_JITTER = TILE_SIZE / 3;
+
+export type ConeTileSpawn = {
+    readonly x: number;
+    readonly y: number;
+    readonly delaySeconds: number;
+};
+
+// The tiles whose centres lie in the cone, the caster's own tile excluded, nearest first.
+export function coneTileSpawns(
+    originX: number,
+    originY: number,
+    facingRotation: number,
+    delivery: ConeDelivery,
+    random: RandomSource,
+): ConeTileSpawn[] {
+    const originTileX = Math.floor(originX / TILE_SIZE);
+    const originTileY = Math.floor(originY / TILE_SIZE);
+    const reachTiles = Math.ceil(delivery.reach / TILE_SIZE);
+    const covered: { centerX: number; centerY: number; distanceTiles: number }[] = [];
+    for (let tileY = originTileY - reachTiles; tileY <= originTileY + reachTiles; tileY++) {
+        for (let tileX = originTileX - reachTiles; tileX <= originTileX + reachTiles; tileX++) {
+            if (tileX === originTileX && tileY === originTileY) {
+                continue;
+            }
+            const centerX = (tileX + 0.5) * TILE_SIZE;
+            const centerY = (tileY + 0.5) * TILE_SIZE;
+            const inCone = isPointInCone(
+                originX,
+                originY,
+                facingRotation,
+                delivery.angleRadians,
+                delivery.reach,
+                centerX,
+                centerY,
+            );
+            if (!inCone) {
+                continue;
+            }
+            const distanceTiles = Math.hypot(centerX - originX, centerY - originY) / TILE_SIZE;
+            covered.push({ centerX, centerY, distanceTiles });
+        }
+    }
+    covered.sort((a, b) => a.distanceTiles - b.distanceTiles);
+    return covered.map((tile) => {
+        const jitterAngle = random() * Math.PI * 2;
+        const jitterRadius = random() * CONE_TILE_MAX_JITTER;
+        return {
+            x: tile.centerX + Math.sin(jitterAngle) * jitterRadius,
+            y: tile.centerY + Math.cos(jitterAngle) * jitterRadius,
+            delaySeconds: tile.distanceTiles * CONE_TILE_STAGGER_SECONDS,
+        };
+    });
 }
 
 export type PendingDelayedDelivery = {

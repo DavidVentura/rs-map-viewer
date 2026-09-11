@@ -1,12 +1,22 @@
-import { AbilityTarget, AbilityTargetKind, CircleCenter, DeliveryKind } from "./Ability";
+import {
+    AbilityTarget,
+    AbilityTargetKind,
+    CircleCenter,
+    ConeDelivery,
+    DeliveryKind,
+} from "./Ability";
 import { Combatant, Faction } from "./Combatant";
 import { Affects } from "./Effect";
 import {
+    CONE_TILE_MAX_JITTER,
+    CONE_TILE_STAGGER_SECONDS,
     DirectDelivery,
     PendingDelayedDelivery,
     affectedCombatants,
+    coneTileSpawns,
     delayedDeliveryProgress,
 } from "./EffectResolution";
+import { TILE_SIZE } from "./Terrain";
 import { directionToRotation } from "./projectileMath";
 
 function makeCombatant(
@@ -198,5 +208,93 @@ describe("delayedDeliveryProgress", () => {
 
     it("is complete immediately for a zero-length telegraph", () => {
         expect(delayedDeliveryProgress({ startSeconds: 5, strikeAtSeconds: 5 }, 5)).toBe(1);
+    });
+});
+
+describe("coneTileSpawns", () => {
+    const facingNorth = directionToRotation(0, 1);
+    const wideCone: ConeDelivery = {
+        kind: DeliveryKind.CONE,
+        angleRadians: (2 * Math.PI) / 3,
+        reach: 3 * TILE_SIZE,
+    };
+    const casterX = 0.5 * TILE_SIZE;
+    const casterY = 0.5 * TILE_SIZE;
+    const noJitter = () => 0;
+
+    function tileOf(spawn: { x: number; y: number }): [number, number] {
+        return [Math.floor(spawn.x / TILE_SIZE), Math.floor(spawn.y / TILE_SIZE)];
+    }
+
+    it("covers exactly the tiles whose centres lie within the arc and reach", () => {
+        const tiles = coneTileSpawns(casterX, casterY, facingNorth, wideCone, noJitter).map(tileOf);
+        expect(new Set(tiles.map(String))).toEqual(
+            new Set(
+                [
+                    [0, 1],
+                    [-1, 1],
+                    [1, 1],
+                    [0, 2],
+                    [-1, 2],
+                    [1, 2],
+                    [-2, 2],
+                    [2, 2],
+                    [0, 3],
+                ].map(String),
+            ),
+        );
+    });
+
+    it("never includes the caster's own tile", () => {
+        const spawns = coneTileSpawns(casterX, casterY, facingNorth, wideCone, noJitter);
+        expect(spawns.map(tileOf)).not.toContainEqual([0, 0]);
+        expect(spawns.length).toBeGreaterThan(0);
+    });
+
+    it("follows the facing rotation", () => {
+        const facingEast = directionToRotation(1, 0);
+        const tiles = coneTileSpawns(casterX, casterY, facingEast, wideCone, noJitter).map(tileOf);
+        expect(tiles).toContainEqual([3, 0]);
+        expect(tiles).not.toContainEqual([0, 3]);
+    });
+
+    it("orders nearest first with a delay that grows with distance in tiles", () => {
+        const spawns = coneTileSpawns(casterX, casterY, facingNorth, wideCone, noJitter);
+        const delays = spawns.map((spawn) => spawn.delaySeconds);
+        expect(delays).toEqual([...delays].sort((a, b) => a - b));
+        expect(delays[0]).toBeCloseTo(1 * CONE_TILE_STAGGER_SECONDS);
+        expect(delays[delays.length - 1]).toBeCloseTo(3 * CONE_TILE_STAGGER_SECONDS);
+        expect(spawns[1].delaySeconds).toBeCloseTo(Math.SQRT2 * CONE_TILE_STAGGER_SECONDS);
+    });
+
+    it("lands on the exact tile centre without jitter", () => {
+        const [nearest] = coneTileSpawns(casterX, casterY, facingNorth, wideCone, noJitter);
+        expect(nearest).toEqual({
+            x: 0.5 * TILE_SIZE,
+            y: 1.5 * TILE_SIZE,
+            delaySeconds: CONE_TILE_STAGGER_SECONDS,
+        });
+    });
+
+    it("jitters each spawn off its tile centre by at most the jitter bound, deterministically", () => {
+        const lcg = () => {
+            let seed = 12345;
+            return () => {
+                seed = (seed * 1103515245 + 12345) % 2147483648;
+                return seed / 2147483648;
+            };
+        };
+        const first = coneTileSpawns(casterX, casterY, facingNorth, wideCone, lcg());
+        const second = coneTileSpawns(casterX, casterY, facingNorth, wideCone, lcg());
+        expect(second).toEqual(first);
+        for (const spawn of first) {
+            const [tileX, tileY] = tileOf(spawn);
+            const offset = Math.hypot(
+                spawn.x - (tileX + 0.5) * TILE_SIZE,
+                spawn.y - (tileY + 0.5) * TILE_SIZE,
+            );
+            expect(offset).toBeLessThanOrEqual(CONE_TILE_MAX_JITTER);
+        }
+        expect(first.some((spawn) => spawn.x % TILE_SIZE !== 0.5 * TILE_SIZE)).toBe(true);
     });
 });

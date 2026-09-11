@@ -4,6 +4,7 @@ import {
     AbilityTarget,
     AbilityTargetKind,
     CircleCenter,
+    ConeDelivery,
     CooldownGroup,
     DeliveryKind,
     ResolvedAbility,
@@ -13,13 +14,15 @@ import {
 import { CombatEventKind } from "./CombatEvent";
 import { Combatant, Faction } from "./Combatant";
 import { Affects, PayloadKind, damagePayload } from "./Effect";
+import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
 import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
-import { AbilitySlotInput, GameWorld, SimInput } from "./GameWorld";
+import { AbilitySlotInput, GameWorld, ScheduledVisualEffect, SimInput } from "./GameWorld";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { ARROW_SPEC } from "./Projectile";
-import { Terrain } from "./Terrain";
+import { TILE_SIZE, Terrain } from "./Terrain";
+import { VisualEffectKind } from "./VisualEffect";
 import {
     BOW_SHOT,
     CLEAVE,
@@ -27,6 +30,7 @@ import {
     HEALING_POTION,
     ICE_BARRAGE,
     MAGIC_BOLT,
+    MAUL_SMASH,
     POWER_SHOT,
     SCIMITAR_SLASH,
     VOLLEY,
@@ -287,6 +291,125 @@ describe("Melee style", () => {
         advanceSeconds(world, holdSlot(1, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth);
+    });
+});
+
+describe("Scheduled visual effects", () => {
+    const dustWave = MAUL_SMASH.effect.hitEffect!;
+
+    it("starts a pending effect once its start time is due, not before", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.pendingVisualEffects.push({
+            hitEffect: dustWave,
+            anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+            startsAt: 0.5,
+        });
+
+        advanceSeconds(world, idleInput(), 0.4);
+        expect(world.visualEffects.length).toBe(0);
+        expect(world.pendingVisualEffects.length).toBe(1);
+
+        advanceSeconds(world, idleInput(), 0.2);
+        expect(world.pendingVisualEffects.length).toBe(0);
+        expect(world.visualEffects.length).toBe(1);
+        expect(world.visualEffects[0].kind).toBe(dustWave.kind);
+        expect(world.visualEffects[0].height).toBe(dustWave.height);
+    });
+
+    it("counts pending effects against the visual effect budget", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
+        world.player!.style = WeaponStyle.MAGIC;
+        for (let i = 0; i < GameWorld.MAX_VISUAL_EFFECTS; i++) {
+            world.pendingVisualEffects.push({
+                hitEffect: dustWave,
+                anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+                startsAt: 1000,
+            });
+        }
+
+        advanceSeconds(world, holdSlot(1, at(world.enemies[0])), impactOf(ICE_BARRAGE) + 0.05);
+
+        expect(world.visualEffects.length).toBe(0);
+    });
+});
+
+describe("Maul Smash ground dust", () => {
+    const coneDelivery = MAUL_SMASH.effect.delivery;
+    if (coneDelivery.kind !== DeliveryKind.CONE) {
+        throw new Error("expected a CONE delivery");
+    }
+    const cone: ConeDelivery = coneDelivery;
+
+    // Casts the smash from the centre of tile (0, 0) aiming north, with `reserved` far-future
+    // effects already holding part of the budget, and returns the newly scheduled dust waves.
+    function castSmash(reserved: number): {
+        world: GameWorld;
+        scheduled: ScheduledVisualEffect[];
+    } {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0.5 * TILE_SIZE, 0.5 * TILE_SIZE, 0, STYLE_SEQ_IDS);
+        world.player!.style = WeaponStyle.MELEE;
+        const placeholders: ScheduledVisualEffect[] = Array.from({ length: reserved }, () => ({
+            hitEffect: MAUL_SMASH.effect.hitEffect!,
+            anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+            startsAt: 1000,
+        }));
+        world.pendingVisualEffects.push(...placeholders);
+
+        advanceSeconds(
+            world,
+            holdSlot(2, point(0.5 * TILE_SIZE, 5 * TILE_SIZE)),
+            impactOf(MAUL_SMASH) + 0.05,
+        );
+
+        const scheduled = world.pendingVisualEffects.filter(
+            (pending) => !placeholders.includes(pending),
+        );
+        return { world, scheduled };
+    }
+
+    it("schedules one dust wave per covered tile, staggered outward", () => {
+        const { world, scheduled } = castSmash(0);
+        const player = world.player!;
+        const expectedTiles = coneTileSpawns(player.x, player.y, player.rotation, cone, () => 0);
+
+        expect(expectedTiles.length).toBeGreaterThan(1);
+        expect(scheduled.length + world.visualEffects.length).toBe(expectedTiles.length);
+        for (const pending of scheduled) {
+            expect(pending.hitEffect.kind).toBe(VisualEffectKind.DUST_WAVE);
+            expect(pending.hitEffect.height).toBe(0);
+            expect(pending.anchor.kind).toBe("POINT");
+        }
+        const starts = scheduled.map((pending) => pending.startsAt);
+        expect(Math.max(...starts)).toBeGreaterThan(Math.min(...starts));
+
+        advanceSeconds(world, idleInput(), 0.5);
+        expect(world.pendingVisualEffects.length).toBe(0);
+        expect(world.visualEffects.length).toBe(expectedTiles.length);
+    });
+
+    it("keeps the farthest tiles when the budget runs short", () => {
+        const full = castSmash(0).scheduled.map((pending) => pending.startsAt);
+        const { scheduled } = castSmash(GameWorld.MAX_VISUAL_EFFECTS - 2);
+
+        const latestTwo = [...full].sort((a, b) => b - a).slice(0, 2);
+        expect(scheduled.map((pending) => pending.startsAt).sort((a, b) => b - a)).toEqual(
+            latestTwo,
+        );
+    });
+
+    it("Cleave has no ground graphic", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.player!.style = WeaponStyle.MELEE;
+
+        advanceSeconds(world, holdSlot(1, point(0, 200)), impactOf(CLEAVE) + 0.05);
+
+        expect(world.pendingVisualEffects.length).toBe(0);
+        expect(world.visualEffects.length).toBe(0);
     });
 });
 

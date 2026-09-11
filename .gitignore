@@ -24,3 +24,5 @@ yarn-error.log*
 
 caches/
 public/audio/*.opus
+
+render-out/

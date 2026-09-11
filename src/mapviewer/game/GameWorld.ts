@@ -22,7 +22,7 @@ import {
     hitEffectHoldSeconds,
     matchesAffects,
 } from "./Effect";
-import { PendingDelayedDelivery, affectedCombatants } from "./EffectResolution";
+import { PendingDelayedDelivery, affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
@@ -97,12 +97,18 @@ export type SimInput = {
 
 const UPGRADE_OFFER_SIZE = 3;
 
+export type ScheduledVisualEffect = {
+    readonly hitEffect: HitEffect;
+    readonly anchor: VisualEffectAnchor;
+    readonly startsAt: number;
+};
+
 export class GameWorld {
     static readonly FIXED_STEP_SECONDS = 1 / 120;
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
-    static readonly MAX_VISUAL_EFFECTS = 32;
+    static readonly MAX_VISUAL_EFFECTS = 64;
     static readonly MAX_DELAYED_DELIVERIES = 16;
     static readonly BASIC_ATTACK_SLOT = 0;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
@@ -118,6 +124,9 @@ export class GameWorld {
     enemies: Enemy[] = [];
     projectiles: Projectile[] = [];
     visualEffects: VisualEffect[] = [];
+    // Effects due to start later (see landCone's outward ripple), holding their share of the
+    // MAX_VISUAL_EFFECTS budget from the moment they're scheduled.
+    pendingVisualEffects: ScheduledVisualEffect[] = [];
     pendingDelayedDeliveries: PendingDelayedDelivery[] = [];
     groundItems: GroundItem[] = [];
     private events: CombatEvent[] = [];
@@ -304,6 +313,7 @@ export class GameWorld {
 
         this.updateProjectiles(dtSeconds);
         this.resolveDelayedDeliveries();
+        this.startDueVisualEffects();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
             effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
@@ -808,26 +818,39 @@ export class GameWorld {
         for (const hit of hits) {
             applyPayloads(hit, effect.payloads, this.timeSeconds, this.random, this.events);
         }
-        if (!effect.hitEffect) {
+        const hitEffect = effect.hitEffect;
+        if (!hitEffect) {
             return;
         }
-        const facing = rotationToDirection(caster.rotation);
-        const landingDistance = delivery.reach * 0.5;
-        this.spawnVisualEffect(effect.hitEffect, {
-            kind: "POINT",
-            x: caster.x + facing.x * landingDistance,
-            y: caster.y + facing.y * landingDistance,
-            level: caster.level,
-        });
-        this.events.push({
-            kind: CombatEventKind.CONE_MELEE_LANDED,
-            x: caster.x,
-            y: caster.y,
-            level: caster.level,
-            facingRotation: caster.rotation,
-            angleRadians: delivery.angleRadians,
-            reach: delivery.reach,
-        });
+        // The nearest tiles sit under the caster's own model, so when the budget runs short it's
+        // the far end of the cone that keeps its graphics.
+        const spawns = coneTileSpawns(caster.x, caster.y, caster.rotation, delivery, this.random);
+        const budget =
+            GameWorld.MAX_VISUAL_EFFECTS -
+            this.visualEffects.length -
+            this.pendingVisualEffects.length;
+        const farthest = spawns.slice(Math.max(0, spawns.length - budget));
+        for (const spawn of farthest) {
+            this.pendingVisualEffects.push({
+                hitEffect,
+                anchor: { kind: "POINT", x: spawn.x, y: spawn.y, level: caster.level },
+                startsAt: this.timeSeconds + spawn.delaySeconds,
+            });
+        }
+    }
+
+    private startDueVisualEffects(): void {
+        const due = this.pendingVisualEffects.filter(
+            (pending) => this.timeSeconds >= pending.startsAt,
+        );
+        this.pendingVisualEffects = this.pendingVisualEffects.filter(
+            (pending) => this.timeSeconds < pending.startsAt,
+        );
+        for (const { hitEffect, anchor } of due) {
+            this.visualEffects.push(
+                new VisualEffect(hitEffect.kind, anchor, hitEffect.height, hitEffect.seqId),
+            );
+        }
     }
 
     private scheduleDelayedDelivery(
@@ -1022,7 +1045,8 @@ export class GameWorld {
         anchor: VisualEffectAnchor,
         holdSeconds?: number,
     ): void {
-        if (this.visualEffects.length >= GameWorld.MAX_VISUAL_EFFECTS) {
+        const inUse = this.visualEffects.length + this.pendingVisualEffects.length;
+        if (inUse >= GameWorld.MAX_VISUAL_EFFECTS) {
             return;
         }
         this.visualEffects.push(

@@ -8,15 +8,19 @@ export enum VisualEffectKind {
     ICE_BARRAGE_HIT = 1,
     JAD_FIRE_HIT = 2,
     TZHAAR_HEAL = 3,
-    MAUL_SMASH_HIT = 4,
+    DUST_WAVE = 4,
+    MAUL_IMPACT_SPARK = 5,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
 export const TZHAAR_HEAL_SEQ_ID = 2640;
-// Elder maul special (SpotAnimType id 2804): found by scanning the cache for spot animations
-// driven by a sequence in the same block as the maul's own cast seq (MAUL_SMASH_CAST_SEQ_ID,
-// 11124) - this one uses seq 11125, immediately after it.
-export const MAUL_SMASH_HIT_SEQ_ID = 11125;
+// Zebak's roar dust wave (SpotAnimType id 2184), a ground-level puff that reads as any heavy
+// impact's dust; OSRS plays the elder maul's own special graphic (2804) on the player, not the
+// ground, so the smash borrows this one instead.
+export const DUST_WAVE_SEQ_ID = 9647;
+// Elder maul special ground impact (SpotAnimType 2805): the spark alternative to the dust wave
+// for the smash's per-tile impact.
+export const MAUL_IMPACT_SPARK_SEQ_ID = 11126;
 
 // A COMBATANT anchor reads the combatant's current position whenever the effect is drawn, so an
 // impact or buff graphic stays on a moving body instead of freezing where it was spawned.

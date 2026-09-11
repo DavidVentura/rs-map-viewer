@@ -25,8 +25,8 @@ import {
     VOLLEY_ARROW_SPEC,
 } from "./Projectile";
 import {
+    DUST_WAVE_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
-    MAUL_SMASH_HIT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
 } from "./VisualEffect";
@@ -408,11 +408,9 @@ export const MAUL_SMASH: AbilityDefinition = {
         delivery: { kind: DeliveryKind.CONE, angleRadians: (2 * Math.PI) / 3, reach: 3 * 128 },
         affects: Affects.HOSTILE,
         payloads: [MELEE_SPECIAL_DAMAGE],
-        hitEffect: {
-            kind: VisualEffectKind.MAUL_SMASH_HIT,
-            seqId: MAUL_SMASH_HIT_SEQ_ID,
-            height: 0,
-        },
+        // Swap to MAUL_IMPACT_SPARK / MAUL_IMPACT_SPARK_SEQ_ID to compare the spark impact in the
+        // same per-tile placement.
+        hitEffect: { kind: VisualEffectKind.DUST_WAVE, seqId: DUST_WAVE_SEQ_ID, height: 0 },
     },
 };
 

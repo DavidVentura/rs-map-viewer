@@ -26,7 +26,6 @@ export enum SplatKind {
     DAMAGE = 0,
     HEAL = 1,
     GROUND_IMPACT = 3,
-    CONE_IMPACT = 4,
 }
 
 export type SplatPosition = {
@@ -51,20 +50,7 @@ export type GroundImpactSplatEvent = SplatPosition & {
     radius: number;
 };
 
-// A cone-melee's actual damage area (see CombatEvent.ConeMeleeLandedEvent), drawn as a wedge
-// outline rather than GroundImpactSplatEvent's circle.
-export type ConeImpactSplatEvent = SplatPosition & {
-    kind: SplatKind.CONE_IMPACT;
-    facingRotation: number;
-    angleRadians: number;
-    reach: number;
-};
-
-export type SplatEvent =
-    | DamageSplatEvent
-    | HealSplatEvent
-    | GroundImpactSplatEvent
-    | ConeImpactSplatEvent;
+export type SplatEvent = DamageSplatEvent | HealSplatEvent | GroundImpactSplatEvent;
 
 export type GroundShadowHudInfo = {
     readonly screenX: number;

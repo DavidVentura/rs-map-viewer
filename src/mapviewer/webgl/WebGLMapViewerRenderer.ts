@@ -35,7 +35,7 @@ import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour } from "../game/EnemyType";
 import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
-import { AbilityInput, AbilitySlotInput, PickupTarget } from "../game/GameWorld";
+import { AbilityInput, AbilitySlotInput, GameWorld, PickupTarget } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
@@ -117,9 +117,9 @@ const GROUND_ITEM_LABEL_HEIGHT_PX = 44;
 const GROUND_ITEM_PICK_RADIUS_PX = 32;
 
 // Projectiles and visual effects share the actor buffer's instance capacity with the player and
-// every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
-const MAX_PROJECTILES = 32;
-const MAX_VISUAL_EFFECTS = 32;
+// every enemy spawn.
+const MAX_PROJECTILES = GameWorld.MAX_PROJECTILES;
+const MAX_VISUAL_EFFECTS = GameWorld.MAX_VISUAL_EFFECTS;
 
 const ACTOR_DATA_TEXTURE_BUFFER_SIZE = 5;
 
@@ -1939,18 +1939,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 splatEvents.push({
                     kind: SplatKind.GROUND_IMPACT,
                     radius: event.radius,
-                    worldX: event.x,
-                    worldY: event.y,
-                    groundHeight: this.terrain.getHeight(event.level, event.x, event.y),
-                });
-                continue;
-            }
-            if (event.kind === CombatEventKind.CONE_MELEE_LANDED) {
-                splatEvents.push({
-                    kind: SplatKind.CONE_IMPACT,
-                    facingRotation: event.facingRotation,
-                    angleRadians: event.angleRadians,
-                    reach: event.reach,
                     worldX: event.x,
                     worldY: event.y,
                     groundHeight: this.terrain.getHeight(event.level, event.x, event.y),

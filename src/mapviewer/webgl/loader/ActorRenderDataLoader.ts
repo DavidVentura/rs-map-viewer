@@ -24,8 +24,9 @@ import {
     ProjectileKind,
 } from "../../game/Projectile";
 import {
+    DUST_WAVE_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
-    MAUL_SMASH_HIT_SEQ_ID,
+    MAUL_IMPACT_SPARK_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
 } from "../../game/VisualEffect";
@@ -434,10 +435,10 @@ const JAD_RANGED_ROCK_SPOTANIM_ID = 451;
 // TzHaar healer heal graphic (SpotAnimType id): 444.
 const TZHAAR_HEAL_SPOTANIM_ID = 444;
 
-// Elder maul special impact graphic (SpotAnimType id): 2804, found by scanning the cache for spot
-// animations driven by a sequence in the same block as the maul's own cast seq (11124) - this one
-// uses seq 11125 (MAUL_SMASH_HIT_SEQ_ID), immediately after it.
-const MAUL_SMASH_HIT_SPOTANIM_ID = 2804;
+// Zebak's roar dust wave (SpotAnimType id): 2184, driven by seq 9647 (DUST_WAVE_SEQ_ID).
+const DUST_WAVE_SPOTANIM_ID = 2184;
+// Elder maul special impact (SpotAnimType id): 2805, driven by seq 11126.
+const MAUL_IMPACT_SPARK_SPOTANIM_ID = 2805;
 
 // Tok-Xil's ranged shot (SpotAnimType id): 443, a static spike model without a sequence.
 const TOK_XIL_SHOT_SPOTANIM_ID = 443;
@@ -590,17 +591,30 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
         ICE_BARRAGE_HIT_SEQ_ID,
     );
 
-    const maulSmashHitSpotAnim = spotAnimTypeLoader.load(MAUL_SMASH_HIT_SPOTANIM_ID);
-    const maulSmashHitModel = buildSpotAnimModel(modelLoader, textureLoader, maulSmashHitSpotAnim);
-    if (!maulSmashHitModel || maulSmashHitSpotAnim.sequenceId !== MAUL_SMASH_HIT_SEQ_ID) {
-        throw new Error("Maul smash hit spot animation does not match the expected sequence");
+    const dustWaveSpotAnim = spotAnimTypeLoader.load(DUST_WAVE_SPOTANIM_ID);
+    const dustWaveModel = buildSpotAnimModel(modelLoader, textureLoader, dustWaveSpotAnim);
+    if (!dustWaveModel || dustWaveSpotAnim.sequenceId !== DUST_WAVE_SEQ_ID) {
+        throw new Error("Dust wave spot animation does not match the expected sequence");
     }
-    const maulSmashHitAnim = addSpotAnimAnimationFrames(
+    const dustWaveAnim = addSpotAnimAnimationFrames(
         sceneBuf,
         seqTypeLoader,
         seqFrameLoader,
-        maulSmashHitModel,
-        MAUL_SMASH_HIT_SEQ_ID,
+        dustWaveModel,
+        DUST_WAVE_SEQ_ID,
+    );
+
+    const maulSparkSpotAnim = spotAnimTypeLoader.load(MAUL_IMPACT_SPARK_SPOTANIM_ID);
+    const maulSparkModel = buildSpotAnimModel(modelLoader, textureLoader, maulSparkSpotAnim);
+    if (!maulSparkModel || maulSparkSpotAnim.sequenceId !== MAUL_IMPACT_SPARK_SEQ_ID) {
+        throw new Error("Maul impact spark spot animation does not match the expected sequence");
+    }
+    const maulSparkAnim = addSpotAnimAnimationFrames(
+        sceneBuf,
+        seqTypeLoader,
+        seqFrameLoader,
+        maulSparkModel,
+        MAUL_IMPACT_SPARK_SEQ_ID,
     );
 
     const tokXilShotSpotAnim = spotAnimTypeLoader.load(TOK_XIL_SHOT_SPOTANIM_ID);
@@ -638,7 +652,8 @@ function createProjectileActorData(state: WorkerState, sceneBuf: SceneBuffer): P
             [VisualEffectKind.ICE_BARRAGE_HIT]: iceBarrageAnim,
             [VisualEffectKind.JAD_FIRE_HIT]: jadFireHitAnim,
             [VisualEffectKind.TZHAAR_HEAL]: tzhaarHealAnim,
-            [VisualEffectKind.MAUL_SMASH_HIT]: maulSmashHitAnim,
+            [VisualEffectKind.DUST_WAVE]: dustWaveAnim,
+            [VisualEffectKind.MAUL_IMPACT_SPARK]: maulSparkAnim,
         },
     };
 }
