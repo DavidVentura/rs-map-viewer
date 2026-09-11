@@ -28,28 +28,10 @@ export type SdMapData = {
     modelTextureData: Uint16Array;
     modelTextureDataAlpha: Uint16Array;
 
-    modelTextureDataLod: Uint16Array;
-    modelTextureDataLodAlpha: Uint16Array;
-
-    modelTextureDataInteract: Uint16Array;
-    modelTextureDataInteractAlpha: Uint16Array;
-
-    modelTextureDataInteractLod: Uint16Array;
-    modelTextureDataInteractLodAlpha: Uint16Array;
-
     heightMapTextureData: Int16Array;
 
     drawRanges: DrawRange[];
     drawRangesAlpha: DrawRange[];
-
-    drawRangesLod: DrawRange[];
-    drawRangesLodAlpha: DrawRange[];
-
-    drawRangesInteract: DrawRange[];
-    drawRangesInteractAlpha: DrawRange[];
-
-    drawRangesInteractLod: DrawRange[];
-    drawRangesInteractLodAlpha: DrawRange[];
 
     locsAnimated: LocAnimatedData[];
     npcs: NpcData[];

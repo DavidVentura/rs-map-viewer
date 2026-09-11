@@ -4,7 +4,7 @@ import { Renderer } from "../components/renderer/Renderer";
 import { SceneBuilder } from "../rs/scene/SceneBuilder";
 import { clamp } from "../util/MathUtil";
 import { getAxisDeadzone } from "./InputManager";
-import { MapManager, MapSquare } from "./MapManager";
+import { MapManager, MapSquare, ResidencyPolicy, ResidencyPolicyKind } from "./MapManager";
 import { MapViewer } from "./MapViewer";
 import { MapViewerRendererType } from "./MapViewerRenderers";
 import { Terrain } from "./game/Terrain";
@@ -22,12 +22,25 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
     // changes a value driven by the game/render loop rather than by leva's own store.
     notifyControlsChanged?: () => void;
 
-    constructor(public mapViewer: MapViewer) {
+    constructor(
+        public mapViewer: MapViewer,
+        residencyKind: ResidencyPolicyKind,
+    ) {
         super();
         this.mapManager = new MapManager(
             mapViewer.workerPool.size * 2,
             this.queueLoadMap.bind(this),
+            residencyKind,
         );
+    }
+
+    // The per-frame input of the residency policy this renderer constructed its MapManager with.
+    residencyPolicy(): ResidencyPolicy {
+        return {
+            kind: ResidencyPolicyKind.CAMERA_FLY_OVER,
+            renderDistance: this.mapViewer.renderDistance,
+            unloadDistance: this.mapViewer.unloadDistance,
+        };
     }
 
     // Whether the map squares around the encounter's spawn point have loaded. Renderers without an
@@ -59,8 +72,7 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
         this.mapManager.update(
             this.mapViewer.camera,
             this.stats.frameCount,
-            this.mapViewer.renderDistance,
-            this.mapViewer.unloadDistance,
+            this.residencyPolicy(),
         );
     }
 
@@ -167,10 +179,6 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
     handleMouseInput() {
         const inputManager = this.mapViewer.inputManager;
         const camera = this.mapViewer.camera;
-
-        if (inputManager.isPointerLock()) {
-            this.mapViewer.closeMenu();
-        }
 
         // mouse/touch controls
         const deltaMouseX = inputManager.getDeltaMouseX();

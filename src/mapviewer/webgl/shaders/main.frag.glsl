@@ -13,7 +13,6 @@ in vec2 v_texCoord;
 flat in uint v_texId;
 flat in float v_alphaCutOff;
 in float v_fogAmount;
-flat in vec4 v_interactId;
 #ifdef NPC_PROGRAM
 in float v_highlight;
 #else
@@ -21,7 +20,6 @@ in float v_roofHidden;
 #endif
 
 layout(location = 0) out vec4 fragColor;
-layout(location = 1) out vec4 interactId;
 
 void main() {
 #ifndef NPC_PROGRAM
@@ -41,5 +39,4 @@ void main() {
     fragColor.rgb = mix(fragColor.rgb, vec3(1.0), v_highlight * 0.35);
 #endif
     fragColor = mix(fragColor, u_skyColor, v_fogAmount);
-    interactId = v_interactId;
 }

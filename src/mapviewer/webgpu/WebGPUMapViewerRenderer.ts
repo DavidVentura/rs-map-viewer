@@ -1,4 +1,6 @@
 import { isWebGPUSupported } from "../../util/DeviceUtil";
+import { ResidencyPolicyKind } from "../MapManager";
+import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGPU } from "../MapViewerRenderers";
 import { Terrain } from "../game/Terrain";
@@ -24,6 +26,10 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
     textureArray!: GPUTexture;
 
     showResultBindGroup!: GPUBindGroup;
+
+    constructor(mapViewer: MapViewer) {
+        super(mapViewer, ResidencyPolicyKind.CAMERA_FLY_OVER);
+    }
 
     createTerrain(): Terrain {
         throw new Error("Not supported");

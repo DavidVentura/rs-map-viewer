@@ -37,7 +37,6 @@ out vec2 v_texCoord;
 flat out uint v_texId;
 flat out float v_alphaCutOff;
 out float v_fogAmount;
-flat out vec4 v_interactId;
 out float v_roofHidden;
 
 #include "./includes/branchless-logic.glsl";
@@ -56,8 +55,6 @@ struct ModelInfo {
     uint plane;
     uint priority;
     float contourGround;
-    uint interactType;
-    uint interactId;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -74,8 +71,6 @@ ModelInfo decodeModelInfo(int offset) {
     info.plane = data.r >> 14;
     info.priority = data.b & 0x7u;
     info.contourGround = float((data.g >> 14) & 0x3u);
-    info.interactType = (data.b >> 4) & 0x3u;
-    info.interactId = data.a | (((data.b >> 3u) & 0x1u) << 16u);
 
     return info;
 }
@@ -135,15 +130,6 @@ void main() {
     v_fogAmount = fogFactorLinear(dist, 0.0, fogDepth);
     v_fogAmount = isLoading * max(1.0 - loadAlpha, v_fogAmount) +
         (1.0 - isLoading) * v_fogAmount;
-
-    float interactType = when_neq(v_fogAmount, 1.0) * float(modelInfo.interactType);
-
-    v_interactId = vec4(
-        float(modelInfo.interactId),
-        float(uint(u_mapPos.x) << 8u | uint(u_mapPos.y)),
-        interactType,
-        1.0
-    );
 
     gl_Position = u_viewMatrix * vec4(localPos, 1.0);
     // gl_Position.z += (float(vertex.priority)) * 0.0007;

@@ -296,15 +296,6 @@ export const MapViewerControls = memo(
                                 mapViewer.unloadDistance = v;
                             },
                         },
-                        Lod: {
-                            value: mapViewer.lodDistance,
-                            min: 0,
-                            max: 30,
-                            step: 1,
-                            onChange: (v: number) => {
-                                mapViewer.lodDistance = v;
-                            },
-                        },
                     },
                     { collapsed: false },
                 ),
@@ -416,23 +407,6 @@ export const MapViewerControls = memo(
                             mapViewer.updateVars();
                             mapViewer.renderer.mapManager.clearMaps();
                         }),
-                    },
-                    { collapsed: true },
-                ),
-                Menu: folder(
-                    {
-                        Tooltips: {
-                            value: mapViewer.tooltips,
-                            onChange: (v: boolean) => {
-                                mapViewer.tooltips = v;
-                            },
-                        },
-                        "Debug Id": {
-                            value: mapViewer.debugId,
-                            onChange: (v: boolean) => {
-                                mapViewer.debugId = v;
-                            },
-                        },
                     },
                     { collapsed: true },
                 ),

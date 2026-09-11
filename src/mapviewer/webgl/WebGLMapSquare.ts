@@ -18,6 +18,7 @@ import { CollisionMap } from "../../rs/scene/CollisionMap";
 import { Scene } from "../../rs/scene/Scene";
 import { tileKey } from "../game/roofHiding";
 import { DrawRange, newDrawRange } from "./DrawRange";
+import { MapDrawPass } from "./MapDrawPass";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
@@ -26,7 +27,7 @@ const DEFAULT_HIDE_ABOVE_PLANE = Scene.MAX_LEVELS - 1;
 
 const FRAME_RENDER_DELAY = 3;
 
-const NPC_DATA_TEXTURE_BUFFER_SIZE = 5;
+export const NPC_DATA_TEXTURE_BUFFER_SIZE = 5;
 
 function createModelInfoTexture(app: PicoApp, data: Uint16Array): Texture {
     return app.createTexture2D(data, 16, Math.max(Math.ceil(data.length / 16 / 4), 1), {
@@ -85,30 +86,6 @@ export class WebGLMapSquare {
 
         const modelInfoTexture = createModelInfoTexture(app, mapData.modelTextureData);
         const modelInfoTextureAlpha = createModelInfoTexture(app, mapData.modelTextureDataAlpha);
-
-        const modelInfoTextureLod = createModelInfoTexture(app, mapData.modelTextureDataLod);
-        const modelInfoTextureLodAlpha = createModelInfoTexture(
-            app,
-            mapData.modelTextureDataLodAlpha,
-        );
-
-        const modelInfoTextureInteract = createModelInfoTexture(
-            app,
-            mapData.modelTextureDataInteract,
-        );
-        const modelInfoTextureInteractAlpha = createModelInfoTexture(
-            app,
-            mapData.modelTextureDataInteractAlpha,
-        );
-
-        const modelInfoTextureInteractLod = createModelInfoTexture(
-            app,
-            mapData.modelTextureDataInteractLod,
-        );
-        const modelInfoTextureInteractLodAlpha = createModelInfoTexture(
-            app,
-            mapData.modelTextureDataInteractLodAlpha,
-        );
 
         const heightMapSize = Scene.MAP_SQUARE_SIZE + borderSize * 2;
         const heightMapTexture = app.createTextureArray(
@@ -172,35 +149,6 @@ export class WebGLMapSquare {
             mapData.drawRangesAlpha,
         );
 
-        const drawCallLod = createDrawCall(mainProgram, modelInfoTextureLod, mapData.drawRangesLod);
-        const drawCallLodAlpha = createDrawCall(
-            mainAlphaProgram,
-            modelInfoTextureLodAlpha,
-            mapData.drawRangesLodAlpha,
-        );
-
-        const drawCallInteract = createDrawCall(
-            mainProgram,
-            modelInfoTextureInteract,
-            mapData.drawRangesInteract,
-        );
-        const drawCallInteractAlpha = createDrawCall(
-            mainAlphaProgram,
-            modelInfoTextureInteractAlpha,
-            mapData.drawRangesInteractAlpha,
-        );
-
-        const drawCallInteractLod = createDrawCall(
-            mainProgram,
-            modelInfoTextureInteractLod,
-            mapData.drawRangesInteractLod,
-        );
-        const drawCallInteractLodAlpha = createDrawCall(
-            mainAlphaProgram,
-            modelInfoTextureInteractLodAlpha,
-            mapData.drawRangesInteractLodAlpha,
-        );
-
         const cycle = time / 0.02;
 
         const locsAnimated: LocAnimated[] = [];
@@ -210,15 +158,6 @@ export class WebGLMapSquare {
                 new LocAnimated(
                     loc.drawRangeIndex,
                     loc.drawRangeAlphaIndex,
-
-                    loc.drawRangeLodIndex,
-                    loc.drawRangeLodAlphaIndex,
-
-                    loc.drawRangeInteractIndex,
-                    loc.drawRangeInteractAlphaIndex,
-
-                    loc.drawRangeInteractLodIndex,
-                    loc.drawRangeInteractLodAlphaIndex,
 
                     loc.anim,
                     seqType,
@@ -293,26 +232,8 @@ export class WebGLMapSquare {
             modelInfoTexture,
             modelInfoTextureAlpha,
 
-            modelInfoTextureLod,
-            modelInfoTextureLodAlpha,
-
-            modelInfoTextureInteract,
-            modelInfoTextureInteractAlpha,
-
-            modelInfoTextureInteractLod,
-            modelInfoTextureInteractLodAlpha,
-
             drawCall,
             drawCallAlpha,
-
-            drawCallLod,
-            drawCallLodAlpha,
-
-            drawCallInteract,
-            drawCallInteractAlpha,
-
-            drawCallInteractLod,
-            drawCallInteractLodAlpha,
 
             drawCallNpc,
 
@@ -346,27 +267,9 @@ export class WebGLMapSquare {
         readonly modelInfoTexture: Texture,
         readonly modelInfoTextureAlpha: Texture,
 
-        readonly modelInfoTextureLod: Texture,
-        readonly modelInfoTextureLodAlpha: Texture,
-
-        readonly modelInfoTextureInteract: Texture,
-        readonly modelInfoTextureInteractAlpha: Texture,
-
-        readonly modelInfoTextureInteractLod: Texture,
-        readonly modelInfoTextureInteractLodAlpha: Texture,
-
         // Draw calls
         readonly drawCall: DrawCallRange,
         readonly drawCallAlpha: DrawCallRange,
-
-        readonly drawCallLod: DrawCallRange,
-        readonly drawCallLodAlpha: DrawCallRange,
-
-        readonly drawCallInteract: DrawCallRange,
-        readonly drawCallInteractAlpha: DrawCallRange,
-
-        readonly drawCallInteractLod: DrawCallRange,
-        readonly drawCallInteractLodAlpha: DrawCallRange,
 
         readonly drawCallNpc: DrawCallRange,
 
@@ -378,16 +281,7 @@ export class WebGLMapSquare {
     ) {
         this.id = getMapSquareId(mapX, mapY);
         this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
-        this.mainDrawCalls = [
-            drawCall,
-            drawCallAlpha,
-            drawCallLod,
-            drawCallLodAlpha,
-            drawCallInteract,
-            drawCallInteractAlpha,
-            drawCallInteractLod,
-            drawCallInteractLodAlpha,
-        ];
+        this.mainDrawCalls = [drawCall, drawCallAlpha];
     }
 
     canRender(frameCount: number): boolean {
@@ -457,20 +351,8 @@ export class WebGLMapSquare {
         return (height0 * (128 - offsetY) + height1 * offsetY) >> 7;
     }
 
-    getDrawCall(isAlpha: boolean, isInteract: boolean, isLod: boolean): DrawCallRange {
-        if (isInteract) {
-            if (isLod) {
-                return isAlpha ? this.drawCallInteractLodAlpha : this.drawCallInteractLod;
-            } else {
-                return isAlpha ? this.drawCallInteractAlpha : this.drawCallInteract;
-            }
-        } else {
-            if (isLod) {
-                return isAlpha ? this.drawCallLodAlpha : this.drawCallLod;
-            } else {
-                return isAlpha ? this.drawCallAlpha : this.drawCall;
-            }
-        }
+    getDrawCall(pass: MapDrawPass): DrawCallRange {
+        return pass === MapDrawPass.ALPHA ? this.drawCallAlpha : this.drawCall;
     }
 
     delete() {
@@ -484,14 +366,5 @@ export class WebGLMapSquare {
         // Model info
         this.modelInfoTexture.delete();
         this.modelInfoTextureAlpha.delete();
-
-        this.modelInfoTextureLod.delete();
-        this.modelInfoTextureLodAlpha.delete();
-
-        this.modelInfoTextureInteract.delete();
-        this.modelInfoTextureInteractAlpha.delete();
-
-        this.modelInfoTextureInteractLod.delete();
-        this.modelInfoTextureInteractLodAlpha.delete();
     }
 }

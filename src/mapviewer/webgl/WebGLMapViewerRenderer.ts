@@ -16,13 +16,13 @@ import {
     VertexBuffer,
 } from "picogl";
 
-import { OsrsMenuEntry } from "../../components/rs/menu/OsrsMenu";
 import { createTextureArray } from "../../picogl/PicoTexture";
 import { RS_TO_RADIANS } from "../../rs/MathConstants";
-import { MenuTargetType } from "../../rs/MenuEntry";
 import { NpcType } from "../../rs/config/npctype/NpcType";
 import { Scene } from "../../rs/scene/Scene";
-import { isTouchDevice, isWebGL2Supported, pixelRatio } from "../../util/DeviceUtil";
+import { isWebGL2Supported } from "../../util/DeviceUtil";
+import { PlayerCentredResidency, ResidencyPolicyKind } from "../MapManager";
+import { MapSquareCoord } from "../MapSquareCoord";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
@@ -58,10 +58,11 @@ import {
     WaveStatus,
 } from "../hud/HudFrame";
 import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
+import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextureRing";
 import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
-import { Interactions } from "./Interactions";
-import { WebGLMapSquare } from "./WebGLMapSquare";
+import { MapDrawPass } from "./MapDrawPass";
+import { NPC_DATA_TEXTURE_BUFFER_SIZE, WebGLMapSquare } from "./WebGLMapSquare";
 import { WebGLTerrain } from "./WebGLTerrain";
 import {
     ACTOR_INSTANCE_TEXELS,
@@ -92,12 +93,10 @@ import {
     createMainProgram,
     createNpcProgram,
 } from "./shaders/Shaders";
+import { isWithinTickRange, worldToMapSquare } from "./tickRange";
 
 const MAX_TEXTURES = 2048;
 const TEXTURE_SIZE = 128;
-
-const INTERACT_BUFFER_COUNT = 2;
-const INTERACTION_RADIUS = 5;
 
 // When the cursor isn't exactly over an enemy's pixels, pick the nearest enemy whose projected
 // screen rect is within this radius, so aiming stays forgiving without becoming auto-aim.
@@ -118,6 +117,8 @@ const GROUND_ITEM_PICK_RADIUS_PX = 32;
 // every enemy spawn; keep these in step with GameWorld.MAX_PROJECTILES / MAX_VISUAL_EFFECTS.
 const MAX_PROJECTILES = 32;
 const MAX_VISUAL_EFFECTS = 32;
+
+const ACTOR_DATA_TEXTURE_BUFFER_SIZE = 5;
 
 // The gfx preview hovers its current spot anim one tile above the ground (TILE_SIZE) so it reads
 // clearly in the ortho camera instead of sinking into the terrain.
@@ -225,15 +226,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     needsFramebufferUpdate: boolean = false;
 
     colorTarget?: Renderbuffer;
-    interactTarget?: Renderbuffer;
     depthTarget?: Renderbuffer;
     framebuffer?: Framebuffer;
 
     textureColorTarget?: Texture;
     textureFramebuffer?: Framebuffer;
-
-    interactColorTarget?: Texture;
-    interactFramebuffer?: Framebuffer;
 
     // Textures
     textureFilterMode: TextureFilterMode = TextureFilterMode.DISABLED;
@@ -276,10 +273,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     lastClientTick: number = 0;
     lastTick: number = 0;
 
-    interactions: Interactions[];
-    hoveredMapIds: Set<number> = new Set();
-    closestInteractIndices: Map<number, number[]> = new Map();
-    interactBuffer?: Float32Array;
     highlightedEnemy?: Enemy;
     // Set by a click on a ground item's label/mesh (see buildPickupInput); cleared by a later click
     // elsewhere, by the item being picked up or expiring, or by resolving to nothing on load.
@@ -288,7 +281,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     npcRenderCount: number = 0;
     npcRenderData: Uint16Array = new Uint16Array(16 * 4);
 
-    npcDataTextureBuffer: (Texture | undefined)[] = new Array(5);
+    npcDataTextures?: DataTextureRing;
 
     // Actors: player, enemies, projectiles and visual effects, decoupled from any map square.
     actorBuffer?: WebGLActorBuffer;
@@ -297,7 +290,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private pendingActorTextures?: Map<number, Int32Array>;
     actorInstanceCount: number = 0;
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
-    actorDataTextureBuffer: (Texture | undefined)[] = new Array(5);
+    actorDataTextures?: DataTextureRing;
     activeActors: ActiveActor[] = [];
 
     // The gfx preview's currently shown spot anim id and playback mode (see AnimPreview.ts's
@@ -326,13 +319,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private roofMaskedSquares: Set<WebGLMapSquare> = new Set();
 
     constructor(public mapViewer: MapViewer) {
-        super(mapViewer);
+        super(mapViewer, ResidencyPolicyKind.PLAYER_CENTRED);
         this.terrain = new WebGLTerrain(this.mapManager);
         this.encounter = mapViewer.encounter;
-        this.interactions = new Array(INTERACT_BUFFER_COUNT);
-        for (let i = 0; i < INTERACT_BUFFER_COUNT; i++) {
-            this.interactions[i] = new Interactions(INTERACTION_RADIUS);
-        }
     }
 
     createTerrain(): Terrain {
@@ -353,6 +342,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         optimizeAssumingFlatsHaveSameFirstAndLastData(this.gl);
 
         this.timer = this.app.createTimer();
+
+        this.npcDataTextures = new DataTextureRing(
+            this.app,
+            NPC_DATA_TEXTURE_BUFFER_SIZE,
+            DataTextureFormat.RGBA16UI,
+        );
+        this.actorDataTextures = new DataTextureRing(
+            this.app,
+            ACTOR_DATA_TEXTURE_BUFFER_SIZE,
+            DataTextureFormat.RGBA32UI,
+        );
 
         // hack to get the right multi draw extension for picogl
         const state: any = this.app.state;
@@ -447,23 +447,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.textureFramebuffer = this.app
             .createFramebuffer()
             .colorTarget(0, this.textureColorTarget);
-
-        // Interact
-        this.interactColorTarget = this.app.createTexture2D(this.app.width, this.app.height, {
-            internalFormat: PicoGL.RGBA32F,
-            type: PicoGL.FLOAT,
-            minFilter: PicoGL.NEAREST,
-            magFilter: PicoGL.NEAREST,
-        });
-        this.interactFramebuffer = this.app
-            .createFramebuffer()
-            .colorTarget(0, this.interactColorTarget);
     }
 
     initFramebuffer(): void {
         this.framebuffer?.delete();
         this.colorTarget?.delete();
-        this.interactTarget?.delete();
         this.depthTarget?.delete();
 
         let samples = 0;
@@ -477,12 +465,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             PicoGL.RGBA8,
             samples,
         );
-        this.interactTarget = this.app.createRenderbuffer(
-            this.app.width,
-            this.app.height,
-            PicoGL.RGBA32F,
-            samples,
-        );
         this.depthTarget = this.app.createRenderbuffer(
             this.app.width,
             this.app.height,
@@ -492,20 +474,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.framebuffer = this.app
             .createFramebuffer()
             .colorTarget(0, this.colorTarget)
-            .colorTarget(1, this.interactTarget)
             .depthTarget(this.depthTarget);
 
         this.needsFramebufferUpdate = false;
     }
 
     override initCache(): void {
+        this.encounter = this.mapViewer.encounter;
         super.initCache();
 
-        this.encounter = this.mapViewer.encounter;
         this.queueLoadActors();
-        for (const { mapX, mapY } of this.encounter.mapSquares) {
-            this.mapManager.loadMap(mapX, mapY);
-        }
 
         if (this.app) {
             this.initTextures();
@@ -1176,8 +1154,18 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     override get isEncounterMapLoaded(): boolean {
-        const { playerSpawn } = this.encounter;
-        return this.terrain.isLoaded(playerSpawn.level, playerSpawn.x, playerSpawn.y);
+        return this.encounter.mapSquares.every(
+            ({ mapX, mapY }) => this.mapManager.getMapSquare(mapX, mapY) !== undefined,
+        );
+    }
+
+    override residencyPolicy(): PlayerCentredResidency {
+        const focus = this.mapViewer.world.player ?? this.encounter.playerSpawn;
+        return {
+            kind: ResidencyPolicyKind.PLAYER_CENTRED,
+            encounterSquares: this.encounter.mapSquares,
+            focusTile: { tileX: focus.x >> 7, tileY: focus.y >> 7 },
+        };
     }
 
     // True once the encounter has spawned and the camera has settled onto its real third-person
@@ -1199,7 +1187,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const world = this.mapViewer.world;
         const { playerSpawn } = this.encounter;
-        if (!this.terrain.isLoaded(playerSpawn.level, playerSpawn.x, playerSpawn.y)) {
+        if (!this.isEncounterMapLoaded) {
             return;
         }
 
@@ -1373,7 +1361,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             !this.framebuffer ||
             !this.textureFramebuffer ||
             !this.frameDrawCall ||
-            !this.interactFramebuffer ||
             !this.textureArray ||
             !this.textureMaterials
         ) {
@@ -1383,13 +1370,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (resized) {
             this.framebuffer.resize();
             this.textureFramebuffer.resize();
-            this.interactFramebuffer.resize();
 
             this.resolutionUni[0] = this.app.width;
             this.resolutionUni[1] = this.app.height;
         }
 
-        const inputManager = this.mapViewer.inputManager;
         const camera = this.mapViewer.camera;
 
         this.handleInput(deltaTime);
@@ -1409,7 +1394,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const renderDistance = this.mapViewer.renderDistance;
 
         const mapManagerStart = performance.now();
-        this.mapManager.update(camera, frameCount, renderDistance, this.mapViewer.unloadDistance);
+        this.mapManager.update(camera, frameCount, this.residencyPolicy());
         const mapManagerTime = performance.now() - mapManagerStart;
 
         this.trySpawnEncounter();
@@ -1430,16 +1415,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             .set(9, this.colorBanding as any)
             .set(10, this.mapViewer.isNewTextureAnim as any)
             .update();
-
-        const currInteractions = this.interactions[frameCount % this.interactions.length];
-
-        const interactionsStart = performance.now();
-        if (!inputManager.isPointerLock()) {
-            this.checkInteractions(currInteractions);
-        } else if (this.hoveredMapIds.size > 0) {
-            this.hoveredMapIds.clear();
-        }
-        const interactionsTime = performance.now() - interactionsStart;
 
         this.highlightedEnemy = this.getHoveredEnemy();
         this.hudFrame = this.buildHudFrame();
@@ -1463,12 +1438,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.tickPass(timeSec, ticksElapsed, clientTicksElapsed);
         const tickTime = performance.now() - tickStart;
 
-        const npcDataTextureIndex = this.updateNpcDataTexture();
-        const npcDataTexture = this.npcDataTextureBuffer[npcDataTextureIndex];
+        const { index: npcDataTextureIndex, texture: npcDataTexture } = this.updateNpcDataTexture();
 
         this.buildActorInstanceData();
-        const actorDataTextureIndex = this.updateActorDataTexture();
-        const actorDataTexture = this.actorDataTextureBuffer[actorDataTextureIndex];
+        const actorDataTexture = this.updateActorDataTexture().texture;
 
         this.app.disable(PicoGL.BLEND);
         const opaquePassStart = performance.now();
@@ -1494,30 +1467,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.app.drawFramebuffer(this.textureFramebuffer);
         this.gl.readBuffer(PicoGL.COLOR_ATTACHMENT0);
         this.app.blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
-
-        if (!inputManager.isPointerLock()) {
-            const mouseX = inputManager.mouseX;
-            const mouseY = inputManager.mouseY;
-            if (mouseX !== -1 && mouseY !== -1) {
-                if (this.msaaEnabled) {
-                    // TODO: reading from the multisampled framebuffer is not accurate
-                    this.app.drawFramebuffer(this.interactFramebuffer);
-                    this.gl.readBuffer(PicoGL.COLOR_ATTACHMENT1);
-                    this.app.blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
-
-                    this.app.readFramebuffer(this.interactFramebuffer);
-                    this.gl.readBuffer(PicoGL.COLOR_ATTACHMENT0);
-                } else {
-                    this.gl.readBuffer(PicoGL.COLOR_ATTACHMENT1);
-                }
-
-                currInteractions.read(
-                    this.gl,
-                    (mouseX * pixelRatio) | 0,
-                    (mouseY * pixelRatio) | 0,
-                );
-            }
-        }
 
         this.app.disable(PicoGL.DEPTH_TEST);
         this.app.depthMask(false);
@@ -1567,9 +1516,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         if (this.mapViewer.inputManager.isKeyDown("KeyH")) {
             this.mapViewer.debugText = `MapManager: ${mapManagerTime.toFixed(2)}ms`;
-        }
-        if (this.mapViewer.inputManager.isKeyDown("KeyJ")) {
-            this.mapViewer.debugText = `Interactions: ${interactionsTime.toFixed(2)}ms`;
         }
         if (this.mapViewer.inputManager.isKeyDown("KeyK")) {
             this.mapViewer.debugText = `Tick: ${tickTime.toFixed(2)}ms`;
@@ -1762,10 +1708,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     private getHoveredEnemy(): Enemy | undefined {
-        const exact = this.getExactHoveredEnemy();
-        if (exact) {
-            return exact;
-        }
         const inputManager = this.mapViewer.inputManager;
         if (inputManager.mouseX === -1 || inputManager.mouseY === -1) {
             return undefined;
@@ -1776,28 +1718,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             ENEMY_HOVER_PICK_RADIUS_PX,
         );
         return pickedId !== undefined ? this.mapViewer.world.findEnemy(pickedId) : undefined;
-    }
-
-    private getExactHoveredEnemy(): Enemy | undefined {
-        if (!this.interactBuffer) {
-            return undefined;
-        }
-        for (let i = 0; i < INTERACTION_RADIUS + 1; i++) {
-            const indices = this.closestInteractIndices.get(i);
-            if (!indices) {
-                continue;
-            }
-            for (const index of indices) {
-                if (this.interactBuffer[index + 2] !== InteractType.ENEMY) {
-                    continue;
-                }
-                const enemy = this.mapViewer.world.findEnemy(this.interactBuffer[index]);
-                if (enemy && enemy.health > 0) {
-                    return enemy;
-                }
-            }
-        }
-        return undefined;
     }
 
     private buildEnemyScreenCandidates(): EnemyScreenCandidate[] {
@@ -2250,9 +2170,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const pathfinder = this.mapViewer.pathfinder;
 
+        const focus = this.ambientTickFocus();
+        const frameCount = this.stats.frameCount;
+
         this.npcRenderCount = 0;
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
+
+            if (!isWithinTickRange(focus, map.mapX, map.mapY)) {
+                map.npcDataTextureOffsets[frameCount % map.npcDataTextureOffsets.length] = -1;
+                continue;
+            }
 
             for (const loc of map.locsAnimated) {
                 loc.update(seqFrameLoader, cycle);
@@ -2272,6 +2200,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
             this.addNpcRenderData(map);
         }
+    }
+
+    // The square whose neighbourhood gets ambient simulation: the player's, or the encounter's
+    // spawn square while the player hasn't been spawned yet.
+    private ambientTickFocus(): MapSquareCoord {
+        const player = this.mapViewer.world.player;
+        if (player) {
+            return worldToMapSquare(player.x, player.y);
+        }
+        const { playerSpawn } = this.encounter;
+        return worldToMapSquare(playerSpawn.x, playerSpawn.y);
     }
 
     addNpcRenderData(map: WebGLMapSquare) {
@@ -2318,23 +2257,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    updateNpcDataTexture() {
-        const frameCount = this.stats.frameCount;
-
-        const newNpcDataTextureIndex = frameCount % this.npcDataTextureBuffer.length;
-        this.npcDataTextureBuffer[newNpcDataTextureIndex]?.delete();
-        this.npcDataTextureBuffer[newNpcDataTextureIndex] = this.app.createTexture2D(
+    updateNpcDataTexture(): DataTextureSlot {
+        if (!this.npcDataTextures) {
+            throw new Error("NPC data texture ring used before init()");
+        }
+        return this.npcDataTextures.upload(
+            this.stats.frameCount,
             this.npcRenderData,
-            16,
-            Math.max(Math.ceil(this.npcRenderCount / 16), 1),
-            {
-                internalFormat: PicoGL.RGBA16UI,
-                minFilter: PicoGL.NEAREST,
-                magFilter: PicoGL.NEAREST,
-            },
+            this.npcRenderCount,
         );
-
-        return newNpcDataTextureIndex;
     }
 
     private tryGetHeight(level: number, x: number, y: number): number | undefined {
@@ -2529,23 +2460,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    updateActorDataTexture(): number {
-        const frameCount = this.stats.frameCount;
-
-        const newIndex = frameCount % this.actorDataTextureBuffer.length;
-        this.actorDataTextureBuffer[newIndex]?.delete();
-        this.actorDataTextureBuffer[newIndex] = this.app.createTexture2D(
+    updateActorDataTexture(): DataTextureSlot {
+        if (!this.actorDataTextures) {
+            throw new Error("Actor data texture ring used before init()");
+        }
+        return this.actorDataTextures.upload(
+            this.stats.frameCount,
             this.actorInstanceData,
-            16,
-            Math.max(Math.ceil((this.actorInstanceCount * ACTOR_INSTANCE_TEXELS) / 16), 1),
-            {
-                internalFormat: PicoGL.RGBA32UI,
-                minFilter: PicoGL.NEAREST,
-                magFilter: PicoGL.NEAREST,
-            },
+            this.actorInstanceCount * ACTOR_INSTANCE_TEXELS,
         );
-
-        return newIndex;
     }
 
     draw(drawCall: DrawCall, drawRanges: number[][]) {
@@ -2579,24 +2502,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     renderOpaquePass(): void {
-        const camera = this.mapViewer.camera;
-        const cameraMapX = camera.getMapX();
-        const cameraMapY = camera.getMapY();
-
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
-            const dist = map.getMapDistance(cameraMapX, cameraMapY);
 
-            const isInteract = this.hoveredMapIds.has(map.id);
-            const isLod = dist >= this.mapViewer.lodDistance;
-
-            const { drawCall, drawRanges } = map.getDrawCall(false, isInteract, isLod);
+            const { drawCall, drawRanges } = map.getDrawCall(MapDrawPass.OPAQUE);
 
             for (const loc of map.locsAnimated) {
                 const frameId = loc.frame;
                 const frame = loc.anim.frames[frameId | 0];
 
-                const index = loc.getDrawRangeIndex(false, isInteract, isLod);
+                const index = loc.getDrawRangeIndex(MapDrawPass.OPAQUE);
                 if (index !== -1) {
                     drawCall.offsets[index] = frame[0];
                     (drawCall as any).numElements[index] = frame[1];
@@ -2609,8 +2524,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    renderOpaqueNpcPass(npcDataTextureIndex: number, npcDataTexture: Texture | undefined): void {
-        if (!npcDataTexture || !this.loadNpcs) {
+    renderOpaqueNpcPass(npcDataTextureIndex: number, npcDataTexture: Texture): void {
+        if (!this.loadNpcs) {
             return;
         }
 
@@ -2739,40 +2654,26 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.draw(drawCall, drawRanges);
     }
 
-    renderOpaqueActorPass(actorDataTexture: Texture | undefined): void {
-        if (!actorDataTexture) {
-            return;
-        }
+    renderOpaqueActorPass(actorDataTexture: Texture): void {
         this.drawActorPass(actorDataTexture, false);
     }
 
-    renderTransparentActorPass(actorDataTexture: Texture | undefined): void {
-        if (!actorDataTexture) {
-            return;
-        }
+    renderTransparentActorPass(actorDataTexture: Texture): void {
         this.drawActorPass(actorDataTexture, true);
     }
 
     renderTransparentPass(): void {
-        const camera = this.mapViewer.camera;
-        const cameraMapX = camera.getMapX();
-        const cameraMapY = camera.getMapY();
-
         for (let i = this.mapManager.visibleMapCount - 1; i >= 0; i--) {
             const map = this.mapManager.visibleMaps[i];
-            const dist = map.getMapDistance(cameraMapX, cameraMapY);
 
-            const isInteract = this.hoveredMapIds.has(map.id);
-            const isLod = dist >= this.mapViewer.lodDistance;
-
-            const { drawCall, drawRanges } = map.getDrawCall(true, isInteract, isLod);
+            const { drawCall, drawRanges } = map.getDrawCall(MapDrawPass.ALPHA);
 
             for (const loc of map.locsAnimated) {
                 if (loc.anim.framesAlpha) {
                     const frameId = loc.frame;
                     const frame = loc.anim.framesAlpha[frameId | 0];
 
-                    const index = loc.getDrawRangeIndex(true, isInteract, isLod);
+                    const index = loc.getDrawRangeIndex(MapDrawPass.ALPHA);
                     if (index !== -1) {
                         drawCall.offsets[index] = frame[0];
                         (drawCall as any).numElements[index] = frame[1];
@@ -2786,11 +2687,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    renderTransparentNpcPass(
-        npcDataTextureIndex: number,
-        npcDataTexture: Texture | undefined,
-    ): void {
-        if (!npcDataTexture || !this.loadNpcs) {
+    renderTransparentNpcPass(npcDataTextureIndex: number, npcDataTexture: Texture): void {
+        if (!this.loadNpcs) {
             return;
         }
 
@@ -2834,225 +2732,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    checkInteractions(interactions: Interactions): void {
-        const interactReady = interactions.check(
-            this.gl,
-            this.hoveredMapIds,
-            this.closestInteractIndices,
-        );
-        if (interactReady) {
-            this.interactBuffer = interactions.interactBuffer;
-        }
-
-        if (!this.interactBuffer) {
-            return;
-        }
-
-        const frameCount = this.stats.frameCount;
-
-        const inputManager = this.mapViewer.inputManager;
-        const isMouseDown = inputManager.dragX !== -1 || inputManager.dragY !== -1;
-        const picked = inputManager.pickX !== -1 && inputManager.pickY !== -1;
-
-        if (!interactReady && !picked) {
-            return;
-        }
-
-        const menuCooldown = isTouchDevice ? 50 : 10;
-
-        if (
-            inputManager.mouseX === -1 ||
-            inputManager.mouseY === -1 ||
-            frameCount - this.mapViewer.menuOpenedFrame < menuCooldown
-        ) {
-            return;
-        }
-
-        // Don't auto close menu on touch devices
-        if (this.mapViewer.menuOpen && !picked && !isMouseDown && isTouchDevice) {
-            return;
-        }
-
-        if (!picked && !this.mapViewer.tooltips) {
-            this.mapViewer.closeMenu();
-            return;
-        }
-
-        const menuEntries: OsrsMenuEntry[] = [];
-        const examineEntries: OsrsMenuEntry[] = [];
-
-        const locIds = new Set<number>();
-        const objIds = new Set<number>();
-        const npcIds = new Set<number>();
-        const enemyIds = new Set<number>();
-
-        for (let i = 0; i < INTERACTION_RADIUS + 1; i++) {
-            const indices = this.closestInteractIndices.get(i);
-            if (!indices) {
-                continue;
-            }
-            for (const index of indices) {
-                const interactId = this.interactBuffer[index];
-                const interactType = this.interactBuffer[index + 2];
-                if (interactType === InteractType.LOC) {
-                    const locType = this.mapViewer.locTypeLoader.load(interactId);
-                    if (locType.name === "null" && !this.mapViewer.debugId) {
-                        continue;
-                    }
-                    if (locIds.has(interactId)) {
-                        continue;
-                    }
-                    locIds.add(interactId);
-
-                    for (const option of locType.actions) {
-                        if (!option) {
-                            continue;
-                        }
-                        menuEntries.push({
-                            option,
-                            targetId: locType.id,
-                            targetType: MenuTargetType.LOC,
-                            targetName: locType.name,
-                            targetLevel: -1,
-                            onClick: this.mapViewer.closeMenu,
-                        });
-                    }
-
-                    examineEntries.push({
-                        option: "Examine",
-                        targetId: locType.id,
-                        targetType: MenuTargetType.LOC,
-                        targetName: locType.name,
-                        targetLevel: -1,
-                        onClick: this.mapViewer.onExamine,
-                    });
-                } else if (interactType === InteractType.OBJ) {
-                    const objType = this.mapViewer.objTypeLoader.load(interactId);
-                    if (objType.name === "null" && !this.mapViewer.debugId) {
-                        continue;
-                    }
-                    if (objIds.has(interactId)) {
-                        continue;
-                    }
-                    objIds.add(interactId);
-
-                    for (const option of objType.groundActions) {
-                        if (!option) {
-                            continue;
-                        }
-                        menuEntries.push({
-                            option,
-                            targetId: objType.id,
-                            targetType: MenuTargetType.OBJ,
-                            targetName: objType.name,
-                            targetLevel: -1,
-                            onClick: this.mapViewer.closeMenu,
-                        });
-                    }
-
-                    examineEntries.push({
-                        option: "Examine",
-                        targetId: objType.id,
-                        targetType: MenuTargetType.OBJ,
-                        targetName: objType.name,
-                        targetLevel: -1,
-                        onClick: this.mapViewer.onExamine,
-                    });
-                } else if (interactType === InteractType.NPC) {
-                    let npcType = this.mapViewer.npcTypeLoader.load(interactId);
-                    if (npcType.transforms) {
-                        const transformed = npcType.transform(
-                            this.mapViewer.varManager,
-                            this.mapViewer.npcTypeLoader,
-                        );
-                        if (!transformed) {
-                            continue;
-                        }
-                        npcType = transformed;
-                    }
-                    if (npcType.name === "null" && !this.mapViewer.debugId) {
-                        continue;
-                    }
-                    if (npcIds.has(interactId)) {
-                        continue;
-                    }
-                    npcIds.add(interactId);
-
-                    for (const option of npcType.actions) {
-                        if (!option) {
-                            continue;
-                        }
-                        menuEntries.push({
-                            option,
-                            targetId: npcType.id,
-                            targetType: MenuTargetType.NPC,
-                            targetName: npcType.name,
-                            targetLevel: npcType.combatLevel,
-                            onClick: this.mapViewer.closeMenu,
-                        });
-                    }
-
-                    examineEntries.push({
-                        option: "Examine",
-                        targetId: npcType.id,
-                        targetType: MenuTargetType.NPC,
-                        targetName: npcType.name,
-                        targetLevel: npcType.combatLevel,
-                        onClick: this.mapViewer.onExamine,
-                    });
-                } else if (interactType === InteractType.ENEMY) {
-                    const enemy = this.mapViewer.world.findEnemy(interactId);
-                    if (!enemy || enemy.health <= 0) {
-                        continue;
-                    }
-                    const npcType = this.resolveEnemyNpcType(enemy);
-                    if (!npcType) {
-                        continue;
-                    }
-                    if (enemyIds.has(interactId)) {
-                        continue;
-                    }
-                    enemyIds.add(interactId);
-
-                    menuEntries.push({
-                        option: "Attack",
-                        targetId: enemy.id,
-                        targetType: MenuTargetType.NPC,
-                        targetName: npcType.name,
-                        targetLevel: npcType.combatLevel,
-                        onClick: this.mapViewer.closeMenu,
-                    });
-                }
-            }
-        }
-
-        menuEntries.push({
-            option: "Walk here",
-            targetId: -1,
-            targetType: MenuTargetType.NONE,
-            targetName: "",
-            targetLevel: -1,
-            onClick: this.mapViewer.closeMenu,
-        });
-        menuEntries.push(...examineEntries);
-        menuEntries.push({
-            option: "Cancel",
-            targetId: -1,
-            targetType: MenuTargetType.NONE,
-            targetName: "",
-            targetLevel: -1,
-            onClick: this.mapViewer.closeMenu,
-        });
-
-        this.mapViewer.menuOpen = picked;
-        if (picked) {
-            this.mapViewer.menuOpenedFrame = frameCount;
-        }
-        this.mapViewer.menuX = inputManager.mouseX;
-        this.mapViewer.menuY = inputManager.mouseY;
-        this.mapViewer.menuEntries = menuEntries;
-    }
-
     override async cleanUp(): Promise<void> {
         super.cleanUp();
         this.mapViewer.workerPool.resetLoader(this.dataLoader);
@@ -3075,9 +2754,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.colorTarget?.delete();
         this.colorTarget = undefined;
 
-        this.interactTarget?.delete();
-        this.interactTarget = undefined;
-
         this.depthTarget?.delete();
         this.depthTarget = undefined;
 
@@ -3087,12 +2763,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.textureColorTarget?.delete();
         this.textureColorTarget = undefined;
 
-        this.interactFramebuffer?.delete();
-        this.interactFramebuffer = undefined;
-
-        this.interactColorTarget?.delete();
-        this.interactColorTarget = undefined;
-
         // Textures
         this.textureArray?.delete();
         this.textureArray = undefined;
@@ -3100,13 +2770,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.textureMaterials?.delete();
         this.textureMaterials = undefined;
 
-        for (const texture of this.npcDataTextureBuffer) {
-            texture?.delete();
-        }
+        this.npcDataTextures?.delete();
+        this.npcDataTextures = undefined;
 
-        for (const texture of this.actorDataTextureBuffer) {
-            texture?.delete();
-        }
+        this.actorDataTextures?.delete();
+        this.actorDataTextures = undefined;
 
         this.actorBuffer?.delete();
         this.actorBuffer = undefined;

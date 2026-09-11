@@ -6,7 +6,6 @@ import { SceneTile } from "../../../rs/scene/SceneTile";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { clamp } from "../../../util/MathUtil";
 import { DrawRange, newDrawRange } from "../DrawRange";
-import { InteractType } from "../InteractType";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
@@ -25,8 +24,6 @@ export type ModelInfo = {
     level: number;
     contourGround: ContourGroundType;
     priority: number;
-    interactType: InteractType;
-    interactId: number;
 };
 
 export type DrawCommand = {
@@ -38,13 +35,11 @@ export type DrawCommand = {
 export type SceneModel = {
     model: Model;
     sceneHeight: number;
-    lowDetail: boolean;
     forceMerge: boolean;
 } & ModelInfo;
 
 export type ModelMergeGroup = {
     transparent: boolean;
-    lowDetail: boolean;
     level: number;
     priority: number;
     models: SceneModel[];
@@ -56,15 +51,6 @@ export class SceneBuffer {
 
     drawCommands: DrawCommand[] = [];
     drawCommandsAlpha: DrawCommand[] = [];
-
-    drawCommandsLod: DrawCommand[] = [];
-    drawCommandsLodAlpha: DrawCommand[] = [];
-
-    drawCommandsInteract: DrawCommand[] = [];
-    drawCommandsInteractAlpha: DrawCommand[] = [];
-
-    drawCommandsInteractLod: DrawCommand[] = [];
-    drawCommandsInteractLodAlpha: DrawCommand[] = [];
 
     usedTextureIds = new Set<number>();
 
@@ -149,16 +135,11 @@ export class SceneBuffer {
                             level,
                             contourGround: ContourGroundType.NONE,
                             priority: 0,
-                            interactType: InteractType.NONE,
-                            interactId: 0xffff,
                         },
                     ],
                 };
 
                 this.drawCommands.push(command);
-                this.drawCommandsLod.push(command);
-                this.drawCommandsInteract.push(command);
-                this.drawCommandsInteractLod.push(command);
             }
         }
 
@@ -197,7 +178,6 @@ export class SceneBuffer {
     addLocAnimated(group: LocAnimatedGroup, loc: SceneLocEntity): LocAnimatedData {
         const anim = group.anim;
 
-        // Normal (merged)
         const drawRangeIndex = this.drawCommands.length;
         this.drawCommands.push({
             offset: 0,
@@ -212,73 +192,9 @@ export class SceneBuffer {
                 instances: [loc],
             });
         }
-        // Lod (merged)
-        let drawRangeLodIndex = -1;
-        let drawRangeLodAlphaIndex = -1;
-        if (!loc.lowDetail) {
-            drawRangeLodIndex = this.drawCommandsLod.length;
-            this.drawCommandsLod.push({
-                offset: 0,
-                elements: 0,
-                instances: [loc],
-            });
-            if (anim.framesAlpha) {
-                drawRangeLodAlphaIndex = this.drawCommandsLodAlpha.length;
-                this.drawCommandsLodAlpha.push({
-                    offset: 0,
-                    elements: 0,
-                    instances: [loc],
-                });
-            }
-        }
-
-        // Interact (non merged)
-        const drawRangeInteractIndex = this.drawCommandsInteract.length;
-        this.drawCommandsInteract.push({
-            offset: 0,
-            elements: 0,
-            instances: [loc],
-        });
-        const drawRangeInteractAlphaIndex = this.drawCommandsInteractAlpha.length;
-        if (anim.framesAlpha) {
-            this.drawCommandsInteractAlpha.push({
-                offset: 0,
-                elements: 0,
-                instances: [loc],
-            });
-        }
-
-        // Interact Lod (non merged)
-        let drawRangeInteractLodIndex = -1;
-        let drawRangeInteractLodAlphaIndex = -1;
-        if (!loc.lowDetail) {
-            drawRangeInteractLodIndex = this.drawCommandsInteractLod.length;
-            this.drawCommandsInteractLod.push({
-                offset: 0,
-                elements: 0,
-                instances: [loc],
-            });
-            if (anim.framesAlpha) {
-                drawRangeInteractLodAlphaIndex = this.drawCommandsInteractLodAlpha.length;
-                this.drawCommandsInteractLodAlpha.push({
-                    offset: 0,
-                    elements: 0,
-                    instances: [loc],
-                });
-            }
-        }
         return {
             drawRangeIndex,
             drawRangeAlphaIndex,
-
-            drawRangeLodIndex,
-            drawRangeLodAlphaIndex,
-
-            drawRangeInteractIndex,
-            drawRangeInteractAlphaIndex,
-
-            drawRangeInteractLodIndex,
-            drawRangeInteractLodAlphaIndex,
 
             anim,
             seqId: loc.entity.seqId,
@@ -304,37 +220,7 @@ export class SceneBuffer {
             if (sceneModel.heightOffset !== 0) {
                 vertexOffset[1] = -sceneModel.heightOffset;
             }
-            const offset = this.indexByteOffset();
             this.addModel(model, faces, vertexOffset);
-            const elements = (this.indexByteOffset() - offset) / 4;
-
-            const drawCommand: DrawCommand = {
-                offset: offset,
-                elements: elements,
-                instances: [
-                    {
-                        sceneX: 0,
-                        sceneZ: 0,
-                        heightOffset: 0,
-                        level: group.level,
-                        contourGround: ContourGroundType.NONE,
-                        priority: group.priority,
-                        interactType: sceneModel.interactType,
-                        interactId: sceneModel.interactId,
-                    },
-                ],
-            };
-            if (group.transparent) {
-                this.drawCommandsInteractAlpha.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsInteractLodAlpha.push(drawCommand);
-                }
-            } else {
-                this.drawCommandsInteract.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsInteractLod.push(drawCommand);
-                }
-            }
         }
 
         const groupElements = (this.indexByteOffset() - groupOffset) / 4;
@@ -351,22 +237,14 @@ export class SceneBuffer {
                         level: group.level,
                         contourGround: ContourGroundType.NONE,
                         priority: group.priority,
-                        interactType: InteractType.NONE,
-                        interactId: 0xffff,
                     },
                 ],
             };
 
             if (group.transparent) {
                 this.drawCommandsAlpha.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsLodAlpha.push(drawCommand);
-                }
             } else {
                 this.drawCommands.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsLod.push(drawCommand);
-                }
             }
         }
     }
@@ -579,20 +457,15 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
     });
 
     instances.forEach((data, index) => {
-        let offset = drawCommands.length * 4 + index * 4;
+        const offset = drawCommands.length * 4 + index * 4;
 
         const contourGround = data.contourGround;
 
         const height = data.heightOffset;
 
-        textureData[offset++] = data.sceneX | (data.level << 14);
-        textureData[offset++] = data.sceneZ | (contourGround << 14);
-        textureData[offset++] =
-            (data.priority & 0x7) |
-            ((data.interactId >> 16) << 3) |
-            (data.interactType << 4) |
-            (Math.round(height / 8) << 6);
-        textureData[offset++] = data.interactId;
+        textureData[offset] = data.sceneX | (data.level << 14);
+        textureData[offset + 1] = data.sceneZ | (contourGround << 14);
+        textureData[offset + 2] = (data.priority & 0x7) | (Math.round(height / 8) << 6);
     });
 
     return textureData;

@@ -15,7 +15,6 @@ import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoade
 import { WorkerState } from "../../worker/RenderDataWorker";
 import { AnimationFrames } from "../AnimationFrames";
 import { DrawRange, NULL_DRAW_RANGE, newDrawRange } from "../DrawRange";
-import { InteractType } from "../InteractType";
 import { ModelHashBuffer, getModelHash } from "../buffer/ModelHashBuffer";
 import {
     ContourGroundType,
@@ -30,7 +29,7 @@ import {
 } from "../buffer/SceneBuffer";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
-import { getSceneLocs, isLowDetail } from "../loc/SceneLocs";
+import { getSceneLocs } from "../loc/SceneLocs";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
 import { addNpcAnimationFrames } from "./AnimationBaking";
@@ -122,7 +121,6 @@ function createObjSceneModel(
 
     sceneModels.push({
         model,
-        lowDetail: false,
         forceMerge: false,
         sceneHeight,
         sceneX: localX * 128 + 64,
@@ -131,8 +129,6 @@ function createObjSceneModel(
         level: renderLevel,
         contourGround,
         priority: 10,
-        interactType: InteractType.OBJ,
-        interactId: spawn.id,
     });
 }
 
@@ -142,11 +138,7 @@ function createModelGroups(
     transparent: boolean,
 ): void {
     for (const sceneModel of sceneModels) {
-        const key =
-            Number(transparent) |
-            ((sceneModel.lowDetail ? 1 : 0) << 1) |
-            (sceneModel.level << 2) |
-            (sceneModel.priority << 4);
+        const key = Number(transparent) | (sceneModel.level << 1) | (sceneModel.priority << 3);
 
         const group = modelGroupMap.get(key);
         if (group) {
@@ -154,7 +146,6 @@ function createModelGroups(
         } else {
             modelGroupMap.set(key, {
                 transparent,
-                lowDetail: sceneModel.lowDetail,
                 level: sceneModel.level,
                 priority: sceneModel.priority,
                 models: [sceneModel],
@@ -199,15 +190,11 @@ function addSceneModels(
 
         const mergeModels: SceneModel[] = [];
         const instancedModels: SceneModel[] = [];
-        const lodModels: SceneModel[] = [];
         for (const sceneModel of sceneModels) {
             if (sceneModel.forceMerge) {
                 mergeModels.push(sceneModel);
             } else {
                 instancedModels.push(sceneModel);
-                if (!sceneModel.lowDetail) {
-                    lodModels.push(sceneModel);
-                }
             }
         }
 
@@ -241,16 +228,6 @@ function addSceneModels(
             };
 
             sceneBuf.drawCommands.push(drawCommand);
-            sceneBuf.drawCommandsInteract.push(drawCommand);
-            if (lodModels.length > 0) {
-                const drawCommandLod: DrawCommand = {
-                    offset: indexOffset,
-                    elements: elementCount,
-                    instances: lodModels,
-                };
-                sceneBuf.drawCommandsLod.push(drawCommandLod);
-                sceneBuf.drawCommandsInteractLod.push(drawCommandLod);
-            }
         }
 
         if (mergeTransparent && transparentFaces.length > 0) {
@@ -267,16 +244,6 @@ function addSceneModels(
             };
 
             sceneBuf.drawCommandsAlpha.push(drawCommand);
-            sceneBuf.drawCommandsInteractAlpha.push(drawCommand);
-            if (lodModels.length > 0) {
-                const drawCommandLod: DrawCommand = {
-                    offset: indexOffset,
-                    elements: elementCount,
-                    instances: lodModels,
-                };
-                sceneBuf.drawCommandsLodAlpha.push(drawCommandLod);
-                sceneBuf.drawCommandsInteractLodAlpha.push(drawCommandLod);
-            }
         }
     }
 
@@ -405,18 +372,11 @@ function addLocEntities(
             entityY: centerHeight,
             entityZ: entityZ,
         };
-        const lowDetail = isLowDetail(scene, level, tileX, tileY, locType, type);
         if (entity.seqId !== -1) {
-            const loc = {
-                ...sceneLocEntity,
-                lowDetail,
-                interactId: locType.id,
-            };
-
             const key = rotation + (type << 3) + (locType.id << 10);
             const group = locAnimatedGroupMap.get(key);
             if (group) {
-                group.locs.push(loc);
+                group.locs.push(sceneLocEntity);
             } else {
                 const anim = addLocAnimationFrames(locModelLoader, sceneBuf, entity, locType);
                 if (!anim) {
@@ -425,7 +385,7 @@ function addLocEntities(
 
                 locAnimatedGroupMap.set(key, {
                     anim,
-                    locs: [loc],
+                    locs: [sceneLocEntity],
                 });
             }
         } else {
@@ -445,9 +405,7 @@ function addLocEntities(
 
                 model,
                 sceneHeight: centerHeight,
-                lowDetail,
                 forceMerge: locType.contourGroundType > 1,
-                interactId: locType.id,
             });
         }
     }
@@ -613,9 +571,6 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         );
         const npcs = createNpcDatas(npcSpawnGroups);
 
-        // Draw ranges
-
-        // Normal (merged)
         const drawRanges = sceneBuf.drawCommands.map((cmd) =>
             newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
         );
@@ -629,56 +584,8 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             mapY,
         );
 
-        // Lod (merged)
-        const drawRangesLod = sceneBuf.drawCommandsLod.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-        const drawRangesLodAlpha = sceneBuf.drawCommandsLodAlpha.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-
-        console.log(
-            `draw ranges lod: ${drawRangesLod.length}, alpha: ${drawRangesLodAlpha.length}`,
-            mapX,
-            mapY,
-        );
-
-        // Interact (non merged)
-        const drawRangesInteract = sceneBuf.drawCommandsInteract.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-        const drawRangesInteractAlpha = sceneBuf.drawCommandsInteractAlpha.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-
-        console.log(`draw ranges interact: ${drawRangesInteract.length}`, mapX, mapY);
-
-        // Interact Lod (non merged)
-        const drawRangesInteractLod = sceneBuf.drawCommandsInteractLod.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-        const drawRangesInteractLodAlpha = sceneBuf.drawCommandsInteractLodAlpha.map((cmd) =>
-            newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-        );
-
-        // Model info textures
         const modelTextureData = createModelInfoTextureData(sceneBuf.drawCommands);
         const modelTextureDataAlpha = createModelInfoTextureData(sceneBuf.drawCommandsAlpha);
-
-        const modelTextureDataLod = createModelInfoTextureData(sceneBuf.drawCommandsLod);
-        const modelTextureDataLodAlpha = createModelInfoTextureData(sceneBuf.drawCommandsLodAlpha);
-
-        const modelTextureDataInteract = createModelInfoTextureData(sceneBuf.drawCommandsInteract);
-        const modelTextureDataInteractAlpha = createModelInfoTextureData(
-            sceneBuf.drawCommandsInteractAlpha,
-        );
-
-        const modelTextureDataInteractLod = createModelInfoTextureData(
-            sceneBuf.drawCommandsInteractLod,
-        );
-        const modelTextureDataInteractLodAlpha = createModelInfoTextureData(
-            sceneBuf.drawCommandsInteractLodAlpha,
-        );
 
         const heightMapTextureData = loadHeightMapTextureData(scene);
 
@@ -716,15 +623,6 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
             modelTextureData.buffer,
             modelTextureDataAlpha.buffer,
-
-            modelTextureDataLod.buffer,
-            modelTextureDataLodAlpha.buffer,
-
-            modelTextureDataInteract.buffer,
-            modelTextureDataInteractAlpha.buffer,
-
-            modelTextureDataInteractLod.buffer,
-            modelTextureDataInteractLodAlpha.buffer,
         ];
 
         const totalBytes = transferables.reduce((sum, buf) => sum + buf.byteLength, 0);
@@ -760,28 +658,10 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 modelTextureData,
                 modelTextureDataAlpha,
 
-                modelTextureDataLod,
-                modelTextureDataLodAlpha,
-
-                modelTextureDataInteract,
-                modelTextureDataInteractAlpha,
-
-                modelTextureDataInteractLod,
-                modelTextureDataInteractLodAlpha,
-
                 heightMapTextureData,
 
                 drawRanges,
                 drawRangesAlpha,
-
-                drawRangesLod,
-                drawRangesLodAlpha,
-
-                drawRangesInteract,
-                drawRangesInteractAlpha,
-
-                drawRangesInteractLod,
-                drawRangesInteractLodAlpha,
 
                 locsAnimated,
                 npcs,

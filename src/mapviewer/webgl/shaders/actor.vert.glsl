@@ -34,7 +34,6 @@ out vec2 v_texCoord;
 flat out uint v_texId;
 flat out float v_alphaCutOff;
 out float v_fogAmount;
-flat out vec4 v_interactId;
 out float v_highlight;
 
 #include "./includes/branchless-logic.glsl";
@@ -158,15 +157,6 @@ void main() {
     v_fogAmount = fogFactorLinear(dist, 0.0, fogDepth);
     v_fogAmount = isLoading * max(1.0 - loadAlpha, v_fogAmount) +
         (1.0 - isLoading) * v_fogAmount;
-
-    float interactType = float(actorInfo.interactType) * when_neq(v_fogAmount, 1.0);
-
-    v_interactId = vec4(
-        float(actorInfo.interactId),
-        0.0,
-        interactType,
-        1.0
-    );
 
     gl_Position = u_viewMatrix * localPos;
     gl_Position.z += float(actorInfo.level) * 0.005 + (float(vertex.priority) + 20.0) * 0.0007;

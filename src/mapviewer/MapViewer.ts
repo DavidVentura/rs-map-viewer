@@ -1,8 +1,6 @@
 import { vec3 } from "gl-matrix";
 import { URLSearchParamsInit } from "react-router-dom";
 
-import { OsrsMenuEntry } from "../components/rs/menu/OsrsMenu";
-import { MenuTargetType } from "../rs/MenuEntry";
 import { CacheSystem } from "../rs/cache/CacheSystem";
 import { CacheLoaderFactory, getCacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
 import { BasTypeLoader } from "../rs/config/bastype/BasTypeLoader";
@@ -15,7 +13,7 @@ import { MapFileIndex, getMapSquareId } from "../rs/map/MapFileIndex";
 import { SeqFrameLoader } from "../rs/model/seq/SeqFrameLoader";
 import { Pathfinder } from "../rs/pathfinder/Pathfinder";
 import { TextureLoader } from "../rs/texture/TextureLoader";
-import { isTouchDevice, isWallpaperEngine } from "../util/DeviceUtil";
+import { isWallpaperEngine } from "../util/DeviceUtil";
 import { CacheList, LoadedCache } from "./Caches";
 import { Camera, CameraView, ProjectionType } from "./Camera";
 import { InputManager } from "./InputManager";
@@ -71,21 +69,10 @@ export class MapViewer {
     renderDistance: number = DEFAULT_RENDER_DISTANCE;
     // Map square distance
     unloadDistance: number = 2;
-    // Map square distance
-    lodDistance: number = 3;
-
-    tooltips: boolean = !isTouchDevice;
-    debugId: boolean = false;
 
     // State
     needsSearchParamUpdate: boolean = false;
     lastTimeSearchParamsUpdated: number = 0;
-
-    menuOpen: boolean = false;
-    menuOpenedFrame: number = 0;
-    menuX: number = -1;
-    menuY: number = -1;
-    menuEntries: OsrsMenuEntry[] = [];
 
     debugText?: string;
 
@@ -249,17 +236,16 @@ export class MapViewer {
 
         this.isNewTextureAnim = cache.info.game === "runescape" && cache.info.revision >= 681;
 
-        this.renderer.initCache();
         this.initWorld();
+        this.renderer.initCache();
 
         this.updateSearchParams();
     }
 
     setRenderer(renderer: MapViewerRenderer): void {
         this.renderer = renderer;
-        this.renderer.initCache();
         this.initWorld();
-        this.resetMenu();
+        this.renderer.initCache();
     }
 
     private initWorld(): void {
@@ -298,40 +284,6 @@ export class MapViewer {
         this.needsSearchParamUpdate = true;
         this.lastTimeSearchParamsUpdated = performance.now();
     }
-
-    closeMenu = () => {
-        this.menuOpen = false;
-        this.menuX = -1;
-        this.menuY = -1;
-        this.renderer.canvas.focus();
-    };
-
-    resetMenu = () => {
-        this.closeMenu();
-        this.menuOpenedFrame = 0;
-    };
-
-    onExamine = (entry: OsrsMenuEntry) => {
-        let lookupType: string | undefined;
-        switch (entry.targetType) {
-            case MenuTargetType.NPC:
-                lookupType = "npc";
-                break;
-            case MenuTargetType.LOC:
-                lookupType = "object";
-                break;
-            case MenuTargetType.OBJ:
-                lookupType = "item";
-                break;
-        }
-        if (lookupType) {
-            window.open(
-                `https://oldschool.runescape.wiki/w/Special:Lookup?type=${lookupType}&id=${entry.targetId}`,
-                "_blank",
-            );
-        }
-        this.closeMenu();
-    };
 
     updateVars(): void {
         this.workerPool.setVars(this.varManager.values);

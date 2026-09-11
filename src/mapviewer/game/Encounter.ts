@@ -1,4 +1,7 @@
+import { MapSquareCoord } from "../MapSquareCoord";
 import { EnemyTypeId } from "./EnemyType";
+
+export type { MapSquareCoord };
 
 export enum EncounterId {
     LUMBRIDGE = "lumbridge",
@@ -6,11 +9,6 @@ export enum EncounterId {
     QUICK_CAVE = "quickcave",
     SANDBOX = "sandbox",
 }
-
-export type MapSquareCoord = {
-    readonly mapX: number;
-    readonly mapY: number;
-};
 
 export type PlayerSpawn = {
     readonly x: number;

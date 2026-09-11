@@ -4,7 +4,6 @@ import { useSearchParams } from "react-router-dom";
 
 import { RendererCanvas } from "../components/renderer/RendererCanvas";
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
-import { OsrsMenu, OsrsMenuProps } from "../components/rs/menu/OsrsMenu";
 import { MinimapContainer } from "../components/rs/minimap/MinimapContainer";
 import { WorldMapModal } from "../components/rs/worldmap/WorldMapModal";
 import { RS_TO_DEGREES } from "../rs/MathConstants";
@@ -47,8 +46,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     const lastFpsUpdateRef = useRef(0);
     const [cameraYaw, setCameraYaw] = useState(mapViewer.camera.getYaw());
     const [isWorldMapOpen, setWorldMapOpen] = useState<boolean>(false);
-
-    const [menuProps, setMenuProps] = useState<OsrsMenuProps | undefined>(undefined);
 
     const requestRef = useRef<number | undefined>();
 
@@ -130,18 +127,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                 setFps(Math.round(renderer.stats.frameTimeFps));
             }
             setCameraYaw(mapViewer.camera.getYaw());
-        }
-
-        if (mapViewer.menuEntries.length > 0 && mapViewer.menuX !== -1 && mapViewer.menuY !== -1) {
-            setMenuProps({
-                x: mapViewer.menuX,
-                y: mapViewer.menuY,
-                tooltip: !mapViewer.menuOpen,
-                entries: mapViewer.menuEntries,
-                debugId: mapViewer.debugId,
-            });
-        } else {
-            setMenuProps(undefined);
         }
 
         requestRef.current = requestAnimationFrame(animate);
@@ -232,8 +217,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     return (
         <div className="max-height">
-            {revealed && menuProps && <OsrsMenu {...menuProps} />}
-
             <MapViewerControls
                 renderer={renderer}
                 hideUi={hideUi}

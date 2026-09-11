@@ -1,6 +1,7 @@
 import { SeqType } from "../../../rs/config/seqtype/SeqType";
 import { SeqFrameLoader } from "../../../rs/model/seq/SeqFrameLoader";
 import { AnimationFrames } from "../AnimationFrames";
+import { MapDrawPass } from "../MapDrawPass";
 
 export class LocAnimated {
     seqType?: SeqType;
@@ -11,15 +12,6 @@ export class LocAnimated {
     constructor(
         readonly drawRangeIndex: number,
         readonly drawRangeAlphaIndex: number,
-
-        readonly drawRangeLodIndex: number,
-        readonly drawRangeLodAlphaIndex: number,
-
-        readonly drawRangeInteractIndex: number,
-        readonly drawRangeInteractAlphaIndex: number,
-
-        readonly drawRangeInteractLodIndex: number,
-        readonly drawRangeInteractLodAlphaIndex: number,
 
         readonly anim: AnimationFrames,
         seqType: SeqType,
@@ -39,22 +31,8 @@ export class LocAnimated {
         }
     }
 
-    getDrawRangeIndex(isAlpha: boolean, isInteract: boolean, isLod: boolean) {
-        if (isInteract) {
-            if (isLod) {
-                return isAlpha
-                    ? this.drawRangeInteractLodAlphaIndex
-                    : this.drawRangeInteractLodIndex;
-            } else {
-                return isAlpha ? this.drawRangeInteractAlphaIndex : this.drawRangeInteractIndex;
-            }
-        } else {
-            if (isLod) {
-                return isAlpha ? this.drawRangeLodAlphaIndex : this.drawRangeLodIndex;
-            } else {
-                return isAlpha ? this.drawRangeAlphaIndex : this.drawRangeIndex;
-            }
-        }
+    getDrawRangeIndex(pass: MapDrawPass): number {
+        return pass === MapDrawPass.ALPHA ? this.drawRangeAlphaIndex : this.drawRangeIndex;
     }
 
     update(seqFrameLoader: SeqFrameLoader, cycle: number): number {
