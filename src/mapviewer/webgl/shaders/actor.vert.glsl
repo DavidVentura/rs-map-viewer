@@ -26,8 +26,11 @@ uniform float u_timeLoaded;
 uniform int u_highlightId;
 
 uniform highp usampler2D u_actorDataTexture;
+uniform highp usampler2D u_actorInfluences;
+uniform highp sampler2D u_actorMatrices;
 
 layout(location = 0) in uvec3 a_vertex;
+layout(location = 1) in uint a_skinning;
 
 out vec4 v_color;
 out vec2 v_texCoord;
@@ -59,6 +62,8 @@ struct ActorInfo {
     uint interactId;
     uint interactType;
     uint pitch;
+    uint matrixOffset;
+    uint alphaOffset;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -89,8 +94,46 @@ ActorInfo decodeActorInfo(int index) {
     info.interactId = data.a >> 16;
 
     info.pitch = data2.r & 0x7FFu;
+    info.matrixOffset = data2.g;
+    info.alphaOffset = data2.b;
 
     return info;
+}
+
+ivec2 getActorTableCoord(uint index) {
+    return ivec2(int(index % 4096u), int(index / 4096u));
+}
+
+vec3 skinPosition(vec3 position, ActorInfo actorInfo) {
+    uint influenceStart = a_skinning & 0xFFFFFu;
+    uint influenceCount = ((a_skinning >> 20u) & 0xFu) + 1u;
+    vec3 result = vec3(0.0);
+    for (uint index = 0u; index < influenceCount; index++) {
+        uint influence = texelFetch(u_actorInfluences, getActorTableCoord(influenceStart + index), 0).r;
+        uint matrixIndex = influence & 0xFFFFu;
+        float weight = float((influence >> 16u) & 0xFFu) / 255.0;
+        uint matrixOffset = actorInfo.matrixOffset + matrixIndex * 3u;
+        vec4 row0 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset), 0);
+        vec4 row1 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 1u), 0);
+        vec4 row2 = texelFetch(u_actorMatrices, getActorTableCoord(matrixOffset + 2u), 0);
+        vec4 point = vec4(position, 1.0);
+        result += vec3(dot(row0, point), dot(row1, point), dot(row2, point)) * weight;
+    }
+    return result;
+}
+
+float animatedAlpha(float renderedAlpha, ActorInfo actorInfo) {
+    uint alphaLabel = a_skinning >> 24u;
+    if (alphaLabel == 0u) {
+        return renderedAlpha;
+    }
+    vec3 transform = texelFetch(
+        u_actorMatrices,
+        getActorTableCoord(actorInfo.alphaOffset + alphaLabel - 1u),
+        0
+    ).rgb;
+    float sourceAlpha = 255.0 - renderedAlpha * 255.0;
+    return (255.0 - clamp(sourceAlpha + transform.x, transform.y, transform.z)) / 255.0;
 }
 
 mat4 rotationY( in float angle ) {
@@ -127,6 +170,9 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     ActorInfo actorInfo = decodeActorInfo(DRAW_ID);
+    vertex.pos = skinPosition(vertex.pos, actorInfo);
+    vertex.color.a = animatedAlpha(vertex.color.a, actorInfo);
+    v_color = vertex.color;
 
     v_highlight = float(
         u_highlightId != 0 &&
@@ -161,4 +207,7 @@ void main() {
     gl_Position = u_viewMatrix * localPos;
     gl_Position.z += float(actorInfo.level) * 0.005 + (float(vertex.priority) + 20.0) * 0.0007;
     gl_Position = u_projectionMatrix * gl_Position;
+    if (vertex.color.a <= (1.0 / 255.0)) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
 }

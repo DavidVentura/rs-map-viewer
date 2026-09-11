@@ -7,6 +7,8 @@ export type ActorBufferData = {
 
     vertices: Uint8Array;
     indices: Int32Array;
+    influences: Uint32Array;
+    matrixTable: Float32Array;
 
     actorData: ActorRenderData;
 

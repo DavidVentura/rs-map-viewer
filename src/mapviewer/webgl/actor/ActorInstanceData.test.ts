@@ -18,9 +18,11 @@ describe("actor instance encoding", () => {
             interactType: InteractType.ENEMY,
             interactId: 4242,
             pitch: 0,
+            matrixOffset: 120,
+            alphaOffset: 900,
         };
-        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
     });
 
     it("round-trips zero and max field values", () => {
@@ -33,9 +35,11 @@ describe("actor instance encoding", () => {
             interactType: InteractType.NONE,
             interactId: 0,
             pitch: 0,
+            matrixOffset: 0,
+            alphaOffset: 0,
         };
-        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
 
         const maxInstance: ActorInstance = {
             worldX: 0x7fffffff,
@@ -46,9 +50,13 @@ describe("actor instance encoding", () => {
             interactType: InteractType.ENEMY,
             interactId: 65535,
             pitch: 2047,
+            matrixOffset: 0xffffffff,
+            alphaOffset: 0xffffffff,
         };
-        const [r2, g2, b2, a2, pitchR2] = encodeActorInfo(maxInstance);
-        expect(decodeActorInfo(r2, g2, b2, a2, pitchR2)).toEqual(maxInstance);
+        const [r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2] = encodeActorInfo(maxInstance);
+        expect(decodeActorInfo(r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2)).toEqual(
+            maxInstance,
+        );
     });
 
     it("round-trips a negative ground height", () => {
@@ -61,9 +69,11 @@ describe("actor instance encoding", () => {
             interactType: InteractType.LOC,
             interactId: 12,
             pitch: 0,
+            matrixOffset: 1,
+            alphaOffset: 2,
         };
-        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
     });
 
     it("wraps a pitch already outside the 11-bit range rather than throwing", () => {
@@ -76,9 +86,13 @@ describe("actor instance encoding", () => {
             interactType: InteractType.NONE,
             interactId: 0,
             pitch: -300,
+            matrixOffset: 0,
+            alphaOffset: 0,
         };
-        const [r, g, b, a, pitchR] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR).pitch).toBe(2048 - 300);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset).pitch).toBe(
+            2048 - 300,
+        );
     });
 
     it("writeActorInstance writes at the correct offset into a shared buffer", () => {
@@ -92,13 +106,17 @@ describe("actor instance encoding", () => {
             interactType: InteractType.NPC,
             interactId: 7,
             pitch: 42,
+            matrixOffset: 33,
+            alphaOffset: 44,
         };
         writeActorInstance(data, 1, instance);
         expect(data.slice(0, ACTOR_INSTANCE_COMPONENTS)).toEqual(
             new Uint32Array(ACTOR_INSTANCE_COMPONENTS),
         );
         const texel = data.slice(ACTOR_INSTANCE_COMPONENTS, ACTOR_INSTANCE_COMPONENTS * 2);
-        expect(decodeActorInfo(texel[0], texel[1], texel[2], texel[3], texel[4])).toEqual(instance);
+        expect(
+            decodeActorInfo(texel[0], texel[1], texel[2], texel[3], texel[4], texel[5], texel[6]),
+        ).toEqual(instance);
         expect(data.slice(ACTOR_INSTANCE_COMPONENTS * 2)).toEqual(
             new Uint32Array(ACTOR_INSTANCE_COMPONENTS),
         );

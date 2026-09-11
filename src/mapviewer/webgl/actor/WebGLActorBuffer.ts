@@ -30,7 +30,7 @@ export class WebGLActorBuffer {
         capacity: number,
         time: number,
     ): WebGLActorBuffer {
-        const interleavedBuffer = app.createInterleavedBuffer(12, data.vertices.byteLength);
+        const interleavedBuffer = app.createInterleavedBuffer(16, data.vertices.byteLength);
         // picogl's own type declarations only accept an ArrayBufferView here, but the
         // implementation also accepts an element count to allocate an empty (zero-filled) buffer
         // without copying any data - the fast path uploadNextChunk then fills incrementally.
@@ -45,10 +45,20 @@ export class WebGLActorBuffer {
             .vertexAttributeBuffer(0, interleavedBuffer, {
                 type: PicoGL.UNSIGNED_INT,
                 size: 3,
-                stride: 12,
+                stride: 16,
+                integer: true as any,
+            })
+            .vertexAttributeBuffer(1, interleavedBuffer, {
+                type: PicoGL.UNSIGNED_INT,
+                size: 1,
+                stride: 16,
+                offset: 12,
                 integer: true as any,
             })
             .indexBuffer(indexBuffer);
+
+        const influenceTexture = createUintTexture(app, data.influences);
+        const matrixTexture = createFloatTexture(app, data.matrixTable);
 
         const drawRanges: DrawRange[] = Array.from({ length: capacity }, () =>
             newDrawRange(0, 0, 1),
@@ -60,6 +70,8 @@ export class WebGLActorBuffer {
             .uniform("u_timeLoaded", time)
             .texture("u_textures", textureArray)
             .texture("u_textureMaterials", textureMaterials)
+            .texture("u_actorInfluences", influenceTexture)
+            .texture("u_actorMatrices", matrixTexture)
             .drawRanges(...drawRanges);
 
         return new WebGLActorBuffer(
@@ -69,6 +81,8 @@ export class WebGLActorBuffer {
             interleavedBuffer,
             indexBuffer,
             vertexArray,
+            influenceTexture,
+            matrixTexture,
             { drawCall, drawRanges },
             capacity,
             new Uint8Array(
@@ -91,6 +105,8 @@ export class WebGLActorBuffer {
         readonly interleavedBuffer: VertexBuffer,
         readonly indexBuffer: VertexBuffer,
         readonly vertexArray: VertexArray,
+        readonly influenceTexture: Texture,
+        readonly matrixTexture: Texture,
 
         readonly drawCall: DrawCallRange,
         public capacity: number,
@@ -153,5 +169,34 @@ export class WebGLActorBuffer {
         this.vertexArray.delete();
         this.interleavedBuffer.delete();
         this.indexBuffer.delete();
+        this.influenceTexture.delete();
+        this.matrixTexture.delete();
     }
+}
+
+const ACTOR_TABLE_WIDTH = 4096;
+
+function createUintTexture(app: PicoApp, source: Uint32Array): Texture {
+    const height = Math.max(Math.ceil(source.length / ACTOR_TABLE_WIDTH), 1);
+    const data = new Uint32Array(ACTOR_TABLE_WIDTH * height);
+    data.set(source);
+    return app.createTexture2D(data, ACTOR_TABLE_WIDTH, height, {
+        internalFormat: PicoGL.R32UI,
+        type: PicoGL.UNSIGNED_INT,
+        minFilter: PicoGL.NEAREST,
+        magFilter: PicoGL.NEAREST,
+    });
+}
+
+function createFloatTexture(app: PicoApp, source: Float32Array): Texture {
+    const texelCount = Math.ceil(source.length / 4);
+    const height = Math.max(Math.ceil(texelCount / ACTOR_TABLE_WIDTH), 1);
+    const data = new Float32Array(ACTOR_TABLE_WIDTH * height * 4);
+    data.set(source);
+    return app.createTexture2D(data, ACTOR_TABLE_WIDTH, height, {
+        internalFormat: PicoGL.RGBA32F,
+        type: PicoGL.FLOAT,
+        minFilter: PicoGL.NEAREST,
+        magFilter: PicoGL.NEAREST,
+    });
 }

@@ -11,6 +11,8 @@ export type ActorInstance = {
     // Local-axis tilt applied before yaw, in the same 11-bit RS rotation units as `rotation`. Only
     // arcing projectiles ever set this away from 0; every other actor renders pitch-level.
     pitch: number;
+    matrixOffset: number;
+    alphaOffset: number;
 };
 
 // The first texel's 4 components (worldX, worldY, groundHeight, packed level/rotation/interactId/
@@ -33,8 +35,8 @@ export function encodeActorInfo(
         instance.groundHeight >>> 0,
         packed >>> 0,
         (Math.round(instance.pitch) & 0x7ff) >>> 0,
-        0,
-        0,
+        instance.matrixOffset >>> 0,
+        instance.alphaOffset >>> 0,
         0,
     ];
 }
@@ -45,6 +47,8 @@ export function decodeActorInfo(
     b: number,
     a: number,
     pitchR: number,
+    matrixOffset: number,
+    alphaOffset: number,
 ): ActorInstance {
     return {
         worldX: r >>> 0,
@@ -55,6 +59,8 @@ export function decodeActorInfo(
         rotation: (a >> 5) & 0x7ff,
         interactId: a >>> 16,
         pitch: pitchR & 0x7ff,
+        matrixOffset: matrixOffset >>> 0,
+        alphaOffset: alphaOffset >>> 0,
     };
 }
 
