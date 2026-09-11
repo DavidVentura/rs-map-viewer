@@ -106,6 +106,9 @@ const ENEMY_BODY_HEIGHT_SCALE = 3;
 // Leva never overwrites an existing input's value when a schema is re-registered, so read-only
 // preview labels are polled monitors instead of static values.
 const PREVIEW_LABEL_MONITOR = { graph: false, interval: 200 };
+// Ids baked either side of a gfx id typed into the viewer, so Prev/Next still have neighbours to
+// step through without the bake growing to the whole cache.
+const PREVIEW_GFX_REBAKE_WINDOW = 10;
 
 // Generous click target for a ground item: covers its floor label above the point, plus a radius
 // around the item's own projected screen point.
@@ -297,6 +300,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // SPOT_ANIMS mode): unlike the npc seq preview, there's no Enemy to own this state on, since a
     // gfx preview never spawns one.
     private previewGfxId?: number;
+    // An id typed into the viewer that lies outside the baked range: honoured once the re-bake
+    // around it has landed (see initPreviewGfxIfNeeded), re-queued if a later jump moved the
+    // range again while a bake was already in flight.
+    private requestedPreviewGfxId?: number;
     private previewGfxPlayback: AnimationPlayback = AnimationPlayback.LOOP;
     private readonly previewGfxAnimation = new AnimationState(-1);
 
@@ -898,9 +905,25 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const playbackName = this.previewGfxPlayback === AnimationPlayback.LOOP ? "Loop" : "Once";
         return folder(
             {
-                "Gfx Id": monitor(
+                // A command box, not the state: leva keeps an input's own value across panel
+                // rebuilds (so it would not follow Prev/Next) and re-fires onChange with that stale
+                // value on rebuild, hence the fromPanel gate and the separate Current read-out.
+                "Go to": {
+                    value: preview.range.from,
+                    step: 1,
+                    onChange: (
+                        value: number,
+                        _path: string,
+                        context: { initial: boolean; fromPanel: boolean },
+                    ) => {
+                        if (context.fromPanel && !context.initial) {
+                            this.jumpToPreviewGfx(value);
+                        }
+                    },
+                },
+                Current: monitor(
                     () =>
-                        `${this.previewGfxId ?? preview.range.from} (${preview.range.from}-${
+                        `${this.previewGfxId ?? preview.range.from} (loaded ${preview.range.from}-${
                             preview.range.to
                         })`,
                     PREVIEW_LABEL_MONITOR,
@@ -925,6 +948,31 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 : AnimationPlayback.LOOP;
         this.restartPreviewGfxAnimation();
         this.notifyControlsChanged?.();
+    }
+
+    // Typing an id inside the baked range just switches to it; outside it, the range is re-centred
+    // on the id and the actor buffer re-baked, since the bake only ever holds the url's range.
+    private jumpToPreviewGfx(value: number): void {
+        const preview = this.mapViewer.animPreview;
+        if (!preview || preview.kind !== "SPOT_ANIMS" || !Number.isFinite(value)) {
+            return;
+        }
+        const gfxId = Math.max(0, Math.round(value));
+        if (gfxId === this.previewGfxId) {
+            return;
+        }
+        if (gfxId >= preview.range.from && gfxId <= preview.range.to) {
+            this.previewGfxId = gfxId;
+            this.restartPreviewGfxAnimation();
+            this.notifyControlsChanged?.();
+            return;
+        }
+        this.requestedPreviewGfxId = gfxId;
+        this.mapViewer.setSpotAnimPreviewRange({
+            from: Math.max(0, gfxId - PREVIEW_GFX_REBAKE_WINDOW),
+            to: gfxId + PREVIEW_GFX_REBAKE_WINDOW,
+        });
+        this.queueLoadActors();
     }
 
     private stepPreviewGfx(direction: -1 | 1): void {
@@ -1246,8 +1294,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         ) {
             return;
         }
-        this.previewGfxId = preview.range.from;
+        const requested = this.requestedPreviewGfxId;
+        const requestedLoaded =
+            requested !== undefined &&
+            requested >= preview.range.from &&
+            requested <= preview.range.to;
+        if (requested !== undefined && !requestedLoaded) {
+            this.queueLoadActors();
+        }
+        this.previewGfxId = requestedLoaded ? requested : preview.range.from;
+        if (requestedLoaded) {
+            this.requestedPreviewGfxId = undefined;
+        }
         this.restartPreviewGfxAnimation();
+        this.notifyControlsChanged?.();
     }
 
     private resolveEnemyNpcType(enemy: Enemy): NpcType {

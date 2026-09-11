@@ -23,7 +23,7 @@ import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
-import { AnimPreviewParams } from "./game/AnimPreview";
+import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
 import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
 import { GameWorld } from "./game/GameWorld";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
@@ -93,7 +93,7 @@ export class MapViewer {
         readonly encounterId: EncounterId,
         rendererType: MapViewerRendererType,
         cache: LoadedCache,
-        readonly animPreview?: AnimPreviewParams,
+        public animPreview?: AnimPreviewParams,
         readonly godMode: boolean = false,
     ) {
         // Starting the camera at this encounter's spawn (rather than a fixed literal) matters for
@@ -105,6 +105,16 @@ export class MapViewer {
         this.camera = new Camera(playerSpawn.x / 128, -26, playerSpawn.y / 128, -245, 1862);
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
+    }
+
+    // The gfx viewer re-bakes around an id typed outside the loaded range (see the renderer's
+    // jumpToPreviewGfx); the url follows so a reload lands on the same range.
+    setSpotAnimPreviewRange(range: SeqRange): void {
+        if (this.animPreview?.kind !== "SPOT_ANIMS") {
+            throw new Error("Spot anim preview range set outside the spot anim viewer");
+        }
+        this.animPreview = { kind: "SPOT_ANIMS", range };
+        this.updateSearchParams();
     }
 
     get encounter(): Encounter {

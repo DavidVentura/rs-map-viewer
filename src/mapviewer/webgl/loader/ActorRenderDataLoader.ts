@@ -403,10 +403,14 @@ function createPreviewGfxAnimationSet(
             continue;
         }
         const seqId = spotAnim.sequenceId !== -1 ? spotAnim.sequenceId : undefined;
-        const anim =
-            seqId !== undefined
-                ? addSpotAnimAnimationFrames(sceneBuf, seqTypeLoader, seqFrameLoader, model, seqId)
-                : addStaticModelAnimationFrames(sceneBuf, model);
+        // Newer spot anims use skeletal sequences with no old-style frames, which this baker
+        // can't pose; the viewer shows their rest model (the Info line reports 0 frames) rather
+        // than one such id in the range aborting the whole actor buffer load.
+        const hasFrames =
+            seqId !== undefined && (seqTypeLoader.load(seqId).frameIds?.length ?? 0) > 0;
+        const anim = hasFrames
+            ? addSpotAnimAnimationFrames(sceneBuf, seqTypeLoader, seqFrameLoader, model, seqId!)
+            : addStaticModelAnimationFrames(sceneBuf, model);
         bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
     }
     return { bakesByGfxId };
