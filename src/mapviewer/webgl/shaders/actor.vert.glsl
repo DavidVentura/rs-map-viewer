@@ -46,11 +46,10 @@ out float v_highlight;
 #include "./includes/vertex.glsl";
 #include "./includes/skinning.glsl";
 
-// Keep in sync with ACTOR_INSTANCE_TEXELS in ActorInstanceData.ts: each instance occupies this
-// many consecutive RGBA32UI texels (a plain rotation/level/interactId/interactType texel, plus a
+// ACTOR_INSTANCE_TEXELS is defined from ActorInstanceData.ts: each instance occupies this many
+// consecutive RGBA32UI texels (a plain rotation/level/interactId/interactType texel, plus a
 // second texel whose r-channel carries pitch - the first texel's packed component has no bits
 // left to spare).
-#define ACTOR_INSTANCE_TEXELS 2
 
 struct ActorInfo {
     vec2 worldPos;

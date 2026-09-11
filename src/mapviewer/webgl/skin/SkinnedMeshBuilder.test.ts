@@ -17,6 +17,18 @@ function alphaFrame(...labels: number[]): SeqFrame {
     return new SeqFrame(1, base, 1, [0], [1], [0], [0], [-1], true);
 }
 
+function translateFrame(...labels: number[]): SeqFrame {
+    const base = new SeqBase(
+        0,
+        1,
+        [SeqTransformType.TRANSLATE],
+        [true],
+        new Uint16Array([0xffff]),
+        [labels],
+    );
+    return new SeqFrame(1, base, 1, [0], [4], [0], [0], [-1], false);
+}
+
 function actorModel(): Model {
     const model = new Model();
     model.verticesCount = 3;
@@ -48,7 +60,7 @@ function actorModel(): Model {
 describe("SkinnedMeshBuilder", () => {
     it("writes fixed opaque and transparent ranges with packed rig metadata", () => {
         const model = actorModel();
-        const rig = SkinRig.oldStyle([model], [alphaFrame(7)]);
+        const rig = SkinRig.oldStyle([model], [alphaFrame(7), translateFrame(10, 20)]);
         const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
 
         const mesh = builder.addModel(model, rig, SkinFaceSelection.all());
@@ -111,5 +123,21 @@ describe("SkinnedMeshBuilder", () => {
 
         builder.addModel(model, rig, SkinFaceSelection.all());
         expect(builder.build().influences).toContain(0x00ff0000);
+    });
+
+    it("gives rows only to labels the rig's models have and its frames move or fade", () => {
+        const model = actorModel();
+        const rig = SkinRig.oldStyle([model], [translateFrame(20, 40), alphaFrame(8, 50)]);
+
+        expect(rig.matrixSourceLabels).toEqual([SkinRig.REST_MATRIX_SOURCE_LABEL, 20]);
+        expect(rig.alphaSourceLabels).toEqual([8]);
+        expect(rig.matrixIndex(10)).toBe(0);
+        expect(rig.matrixIndex(20)).toBe(1);
+    });
+
+    it("rejects vertex labels from models that are not part of the rig", () => {
+        const rig = SkinRig.oldStyle([actorModel()], [translateFrame(10)]);
+
+        expect(() => rig.matrixIndex(30)).toThrow("Vertex label 30 is absent");
     });
 });

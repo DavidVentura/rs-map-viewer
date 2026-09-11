@@ -17,6 +17,23 @@ export interface SkinMeshSource {
     readonly selection: SkinFaceSelection;
 }
 
+// Everything a worker hands the main thread to draw skinned meshes: see SkinGpu.
+export interface SkinnedGeometry {
+    readonly vertices: Uint8Array;
+    readonly indices: Int32Array;
+    readonly influences: Uint32Array;
+    readonly matrixTable: Float32Array;
+}
+
+export function skinnedGeometryTransferables(geometry: SkinnedGeometry): ArrayBuffer[] {
+    return [
+        geometry.vertices.buffer,
+        geometry.indices.buffer,
+        geometry.influences.buffer,
+        geometry.matrixTable.buffer,
+    ] as ArrayBuffer[];
+}
+
 export interface SkinnedRig {
     readonly meshes: readonly SkinnedMesh[];
     readonly restFrame: SkinFrame;
@@ -91,6 +108,19 @@ export class Skinning {
             PoseSpace.identity(),
         );
         return { mesh: set.mesh, frames: set.animationsBySeqId.get(seqId)! };
+    }
+
+    build(): { readonly geometry: SkinnedGeometry; readonly usedTextureIds: ReadonlySet<number> } {
+        const meshData = this.meshes.build();
+        return {
+            geometry: {
+                vertices: meshData.vertices,
+                indices: meshData.indices,
+                influences: meshData.influences,
+                matrixTable: this.palettes.build(),
+            },
+            usedTextureIds: meshData.usedTextureIds,
+        };
     }
 
     // Undefined when the cache has nothing poseable for the sequence: no frames, or a frame that

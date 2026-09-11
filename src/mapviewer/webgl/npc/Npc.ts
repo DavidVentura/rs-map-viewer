@@ -7,7 +7,8 @@ import { ExactRouteStrategy } from "../../../rs/pathfinder/RouteStrategy";
 import { CollisionFlag } from "../../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../../rs/scene/CollisionMap";
 import { clamp } from "../../../util/MathUtil";
-import { AnimationFrames } from "../AnimationFrames";
+import { SkinFrame } from "../skin/SkinAnimation";
+import { NpcAnimation } from "./NpcAnimation";
 
 export enum MovementType {
     CRAWL = 0,
@@ -45,10 +46,8 @@ export class Npc {
         readonly spawnX: number,
         readonly spawnY: number,
         readonly level: number,
-        readonly idleAnim: AnimationFrames,
-        readonly walkAnim: AnimationFrames | undefined,
+        readonly animation: NpcAnimation,
         readonly npcType: NpcType,
-        readonly idleSeqId: number,
         readonly walkSeqId: number,
     ) {
         this.rotation = DIRECTION_ROTATIONS[npcType.spawnDirection];
@@ -68,7 +67,7 @@ export class Npc {
         if (this.npcType.cacheInfo.revision >= 508) {
             return (this.npcType.loginScreenProps & 0x2) > 0 && this.walkSeqId !== -1;
         }
-        return this.walkSeqId !== -1 && this.walkSeqId !== this.idleSeqId;
+        return this.walkSeqId !== -1 && this.walkSeqId !== this.animation.idle.seqId;
     }
 
     queuePathDir(dir: number, movementType: MovementType) {
@@ -137,7 +136,7 @@ export class Npc {
     }
 
     updateMovement(seqTypeLoader: SeqTypeLoader, seqFrameLoader: SeqFrameLoader) {
-        this.movementSeqId = this.idleSeqId;
+        this.movementSeqId = this.animation.idle.seqId;
         if (this.pathLength > 0) {
             const currX = this.x;
             const currY = this.y;
@@ -166,7 +165,7 @@ export class Npc {
                 this.orientation = 0;
             }
 
-            this.movementSeqId = this.walkSeqId;
+            this.movementSeqId = (this.animation.walk ?? this.animation.idle).seqId;
 
             const movementType = this.pathMovementType[this.pathLength - 1];
             if (
@@ -453,9 +452,10 @@ export class Npc {
         }
     }
 
-    getAnimationFrames(): AnimationFrames {
-        return this.walkAnim && this.movementSeqId === this.walkSeqId
-            ? this.walkAnim
-            : this.idleAnim;
+    // movementFrame always counts frames of movementSeqId, which is idle or the posed walk.
+    currentFrame(): SkinFrame {
+        const { idle, walk } = this.animation;
+        const current = walk && this.movementSeqId === walk.seqId ? walk : idle;
+        return current.frames[this.movementFrame];
     }
 }

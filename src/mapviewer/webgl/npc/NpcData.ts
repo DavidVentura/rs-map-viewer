@@ -1,5 +1,5 @@
 import { NpcSpawn } from "../../data/npc/NpcSpawn";
-import { AnimationFrames } from "../AnimationFrames";
+import { NpcAnimation } from "./NpcAnimation";
 import { NpcSpawnGroup } from "./NpcSpawnGroup";
 
 export type NpcData = {
@@ -7,8 +7,7 @@ export type NpcData = {
     tileX: number;
     tileY: number;
     level: number;
-    idleAnim: AnimationFrames;
-    walkAnim: AnimationFrames | undefined;
+    animation: NpcAnimation;
 };
 
 export function createNpcDatas(groups: NpcSpawnGroup[]): NpcData[] {
@@ -32,7 +31,6 @@ export function createNpcData(group: NpcSpawnGroup, spawn: NpcSpawn): NpcData {
         tileX,
         tileY,
         level,
-        idleAnim: group.idleAnim,
-        walkAnim: group.walkAnim,
+        animation: group.animation,
     };
 }

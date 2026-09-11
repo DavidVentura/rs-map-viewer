@@ -51,6 +51,8 @@ out float v_highlight;
 #include "./includes/height-map.glsl";
 
 #include "./includes/vertex.glsl";
+#include "./includes/skinning.glsl";
+
 
 struct NpcInfo {
     vec2 tilePos;
@@ -58,6 +60,8 @@ struct NpcInfo {
     uint rotation;
     uint interactId;
     uint interactType;
+    uint matrixOffset;
+    uint alphaOffset;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -65,7 +69,17 @@ ivec2 getDataTexCoordFromIndex(int index) {
 }
 
 NpcInfo decodeNpcInfo(int offset) {
-    uvec4 data = texelFetch(u_npcDataTexture, getDataTexCoordFromIndex(offset + gl_InstanceID), 0);
+    int instanceIndex = offset + gl_InstanceID;
+    uvec4 data = texelFetch(
+        u_npcDataTexture,
+        getDataTexCoordFromIndex(instanceIndex * NPC_INSTANCE_TEXELS),
+        0
+    );
+    uvec4 frame = texelFetch(
+        u_npcDataTexture,
+        getDataTexCoordFromIndex(instanceIndex * NPC_INSTANCE_TEXELS + 1),
+        0
+    );
 
     NpcInfo info;
 
@@ -74,6 +88,8 @@ NpcInfo decodeNpcInfo(int offset) {
     info.rotation = (data.b >> 2) & 0x7FFu;
     info.interactType = data.b >> 13;
     info.interactId = data.a;
+    info.matrixOffset = frame.r;
+    info.alphaOffset = frame.g;
 
     return info;
 }
@@ -102,6 +118,9 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     NpcInfo npcInfo = decodeNpcInfo(DRAW_ID + u_npcDataOffset);
+    vertex.pos = skinPosition(vertex.pos, npcInfo.matrixOffset);
+    vertex.color.a = skinAlpha(vertex.color.a, npcInfo.alphaOffset);
+    v_color = vertex.color;
 
     v_highlight = float(
         u_highlightId != 0 &&
@@ -136,5 +155,6 @@ void main() {
     gl_Position = u_viewMatrix * localPos;
     gl_Position.z += float(npcInfo.plane) * 0.005 + (float(vertex.priority) + 20.0) * 0.0007;
     gl_Position = u_projectionMatrix * gl_Position;
+    gl_Position = hideFadedSkinnedVertex(gl_Position, vertex.color.a);
     // gl_Position.z -= float(modelInfo.plane) * 0.0005 + (float(vertex.priority) + float(modelInfo.priority)) * 0.00007;
 }

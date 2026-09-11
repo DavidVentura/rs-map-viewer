@@ -46,7 +46,7 @@ import {
 import { SkinAnimation } from "../skin/SkinAnimation";
 import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
 import { SkinFaceSelection, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
-import { SkinSeqFrames, Skinning } from "../skin/Skinning";
+import { SkinSeqFrames, Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
 import { brightenModel, buildSpotAnimModel } from "./AnimationBaking";
@@ -540,11 +540,9 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const npcModelLoader = state.npcModelLoader;
 
         const textureIdIndexMap = buildTextureIdIndexMap(textureLoader);
-        const meshBuilder = new SkinnedMeshBuilder(textureLoader, textureIdIndexMap);
-        const paletteBuilder = new SkinPaletteBuilder();
         const skinning = new Skinning(
-            meshBuilder,
-            paletteBuilder,
+            new SkinnedMeshBuilder(textureLoader, textureIdIndexMap),
+            new SkinPaletteBuilder(),
             state.seqTypeLoader,
             state.seqFrameLoader,
         );
@@ -589,14 +587,10 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const projectiles = createProjectileActorData(state, skinning);
         const groundItems = createGroundItemActorData(state, skinning);
 
-        const meshData = meshBuilder.build();
-        const vertices = meshData.vertices;
-        const indices = meshData.indices;
-        const influences = meshData.influences;
-        const matrixTable = paletteBuilder.build();
+        const { geometry: skinned, usedTextureIds } = skinning.build();
 
         const loadedTextures = new Map<number, Int32Array>();
-        for (const textureId of meshData.usedTextureIds) {
+        for (const textureId of usedTextureIds) {
             if (!loadedTextureIds.has(textureId)) {
                 try {
                     const pixels = textureLoader.getPixelsArgb(textureId, 128, true, 1.0);
@@ -608,10 +602,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         console.timeEnd(`load actors ${encounterId}`);
 
         const transferables = [
-            vertices.buffer,
-            indices.buffer,
-            influences.buffer,
-            matrixTable.buffer,
+            ...skinnedGeometryTransferables(skinned),
             ...Array.from(loadedTextures.values()).map((pixels) => pixels.buffer),
         ];
 
@@ -620,10 +611,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 cacheName: state.cache.info.name,
                 encounterId,
 
-                vertices,
-                indices,
-                influences,
-                matrixTable,
+                skinned,
 
                 actorData: { player, enemyTypes, projectiles, groundItems, previewGfx },
 

@@ -2,6 +2,7 @@ import { BasTypeLoader } from "../../../rs/config/bastype/BasTypeLoader";
 import { ContourGroundInfo, LocModelLoader } from "../../../rs/config/loctype/LocModelLoader";
 import { LocType } from "../../../rs/config/loctype/LocType";
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
+import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
 import { Model } from "../../../rs/model/Model";
@@ -30,9 +31,12 @@ import {
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs } from "../loc/SceneLocs";
+import { NpcAnimation } from "../npc/NpcAnimation";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
-import { addNpcAnimationFrames } from "./AnimationBaking";
+import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
+import { SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
+import { Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
 import { SdMapData } from "./SdMapData";
 import { SdMapLoaderInput } from "./SdMapLoaderInput";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
@@ -416,7 +420,7 @@ function addLocEntities(
 function createNpcSpawnGroups(
     npcModelLoader: NpcModelLoader,
     basTypeLoader: BasTypeLoader,
-    sceneBuf: SceneBuffer,
+    skinning: Skinning,
     npcSpawns: NpcSpawn[],
 ): NpcSpawnGroup[] {
     const groupedSpawns = new Map<number, NpcSpawn[]>();
@@ -433,32 +437,48 @@ function createNpcSpawnGroups(
 
     for (const spawns of groupedSpawns.values()) {
         const npcType = npcModelLoader.npcTypeLoader.load(spawns[0].id);
-
-        const idleSeqId = npcType.getIdleSeqId(basTypeLoader);
-        const walkSeqId = npcType.getWalkSeqId(basTypeLoader);
-
-        if (idleSeqId === -1) {
+        const animation = createNpcAnimation(npcModelLoader, basTypeLoader, skinning, npcType);
+        if (!animation) {
             continue;
         }
-
-        const idleAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, idleSeqId);
-        let walkAnim = idleAnim;
-        if (walkSeqId !== -1 && walkSeqId !== idleSeqId) {
-            walkAnim = addNpcAnimationFrames(npcModelLoader, sceneBuf, npcType, walkSeqId);
-        }
-
-        if (!idleAnim) {
-            continue;
-        }
-
-        groups.push({
-            idleAnim,
-            walkAnim,
-            spawns,
-        });
+        groups.push({ animation, spawns });
     }
 
     return groups;
+}
+
+// Undefined when the npc has no model or no poseable idle sequence, which the map simply omits.
+function createNpcAnimation(
+    npcModelLoader: NpcModelLoader,
+    basTypeLoader: BasTypeLoader,
+    skinning: Skinning,
+    npcType: NpcType,
+): NpcAnimation | undefined {
+    const idleSeqId = npcType.getIdleSeqId(basTypeLoader);
+    const walkSeqId = npcType.getWalkSeqId(basTypeLoader);
+    if (idleSeqId === -1) {
+        return undefined;
+    }
+    const rest = npcModelLoader.getRestModel(npcType);
+    const idleFrames = skinning.loadFrames(idleSeqId);
+    if (!rest || !idleFrames) {
+        return undefined;
+    }
+    const walkFrames =
+        walkSeqId !== -1 && walkSeqId !== idleSeqId ? skinning.loadFrames(walkSeqId) : undefined;
+
+    const framesBySeqId = new Map([[idleSeqId, idleFrames]]);
+    if (walkFrames) {
+        framesBySeqId.set(walkSeqId, walkFrames);
+    }
+    const set = skinning.addAnimationSet(rest.model, framesBySeqId, rest.poseSpace);
+    return {
+        mesh: set.mesh,
+        idle: { seqId: idleSeqId, frames: set.animationsBySeqId.get(idleSeqId)! },
+        walk: walkFrames
+            ? { seqId: walkSeqId, frames: set.animationsBySeqId.get(walkSeqId)! }
+            : undefined,
+    };
 }
 
 export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMapData | undefined> {
@@ -512,6 +532,12 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         console.timeEnd(`build scene ${mapX},${mapY}`);
 
         const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 100000);
+        const skinning = new Skinning(
+            new SkinnedMeshBuilder(textureLoader, textureIdIndexMap),
+            new SkinPaletteBuilder(),
+            state.seqTypeLoader,
+            state.seqFrameLoader,
+        );
         sceneBuf.addTerrain(scene, borderSize, maxLevel);
 
         const sceneLocs = getSceneLocs(locTypeLoader, scene, borderSize, maxLevel);
@@ -566,7 +592,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         const npcSpawnGroups = createNpcSpawnGroups(
             npcModelLoader,
             basTypeLoader,
-            sceneBuf,
+            skinning,
             npcSpawns,
         );
         const npcs = createNpcDatas(npcSpawnGroups);
@@ -591,6 +617,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
         const vertices = sceneBuf.vertexBuf.byteArray();
         const indices = new Int32Array(sceneBuf.indices);
+        const { geometry: skinned, usedTextureIds: skinnedTextureIds } = skinning.build();
 
         const minimapBlob = await loadMinimapBlob(
             state.mapImageRenderer,
@@ -601,7 +628,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         );
 
         const loadedTextures = new Map<number, Int32Array>();
-        for (const textureId of sceneBuf.usedTextureIds) {
+        for (const textureId of new Set([...sceneBuf.usedTextureIds, ...skinnedTextureIds])) {
             if (!loadedTextureIds.has(textureId)) {
                 try {
                     const pixels = textureLoader.getPixelsArgb(textureId, 128, true, 1.0);
@@ -619,6 +646,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
             vertices.buffer,
             indices.buffer,
+            ...skinnedGeometryTransferables(skinned),
             heightMapTextureData.buffer,
 
             modelTextureData.buffer,
@@ -654,6 +682,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
                 vertices,
                 indices,
+                skinned,
 
                 modelTextureData,
                 modelTextureDataAlpha,

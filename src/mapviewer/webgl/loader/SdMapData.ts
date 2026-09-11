@@ -2,6 +2,7 @@ import { CollisionData } from "../../../rs/scene/CollisionMap";
 import { DrawRange } from "../DrawRange";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { NpcData } from "../npc/NpcData";
+import { SkinnedGeometry } from "../skin/Skinning";
 
 export type SdMapData = {
     mapX: number;
@@ -24,6 +25,7 @@ export type SdMapData = {
 
     vertices: Uint8Array;
     indices: Int32Array;
+    skinned: SkinnedGeometry;
 
     modelTextureData: Uint16Array;
     modelTextureDataAlpha: Uint16Array;

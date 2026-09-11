@@ -57,7 +57,7 @@ import {
 } from "../hud/HudFrame";
 import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
 import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextureRing";
-import { DrawRange, NULL_DRAW_RANGE } from "./DrawRange";
+import { NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
 import { MapDrawPass } from "./MapDrawPass";
 import { NPC_DATA_TEXTURE_BUFFER_SIZE, WebGLMapSquare } from "./WebGLMapSquare";
@@ -83,6 +83,7 @@ import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
 import { SdMapData } from "./loader/SdMapData";
 import { SdMapDataLoader } from "./loader/SdMapDataLoader";
 import { SdMapLoaderInput } from "./loader/SdMapLoaderInput";
+import { NPC_INSTANCE_TEXELS, writeNpcInstance } from "./npc/NpcInstanceData";
 import {
     FRAME_FXAA_PROGRAM,
     FRAME_PROGRAM,
@@ -283,7 +284,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private pickupTargetItemId?: number;
 
     npcRenderCount: number = 0;
-    npcRenderData: Uint16Array = new Uint16Array(16 * 4);
+    npcRenderData: Uint32Array = new Uint32Array(16 * 4 * NPC_INSTANCE_TEXELS);
 
     npcDataTextures?: DataTextureRing;
 
@@ -354,7 +355,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.npcDataTextures = new DataTextureRing(
             this.app,
             NPC_DATA_TEXTURE_BUFFER_SIZE,
-            DataTextureFormat.RGBA16UI,
+            DataTextureFormat.RGBA32UI,
         );
         this.actorDataTextures = new DataTextureRing(
             this.app,
@@ -2236,15 +2237,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const newCount = this.npcRenderCount + npcs.length;
 
-        if (this.npcRenderData.length / 4 < newCount) {
-            const newData = new Uint16Array(Math.ceil((newCount * 2) / 16) * 16 * 4);
+        if (this.npcRenderData.length / (4 * NPC_INSTANCE_TEXELS) < newCount) {
+            const newData = new Uint32Array(
+                Math.ceil((newCount * 2 * NPC_INSTANCE_TEXELS) / 16) * 16 * 4,
+            );
             newData.set(this.npcRenderData);
             this.npcRenderData = newData;
         }
 
         for (const npc of npcs) {
-            let offset = this.npcRenderCount * 4;
-
             const tileX = npc.x >> 7;
             const tileY = npc.y >> 7;
 
@@ -2253,14 +2254,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 renderPlane++;
             }
 
-            this.npcRenderData[offset++] = npc.x;
-            this.npcRenderData[offset++] = npc.y;
-            this.npcRenderData[offset++] = encodeNpcInfo(
-                InteractType.NPC,
-                npc.rotation,
-                renderPlane,
-            );
-            this.npcRenderData[offset++] = npc.npcType.id;
+            writeNpcInstance(this.npcRenderData, this.npcRenderCount, {
+                x: npc.x,
+                y: npc.y,
+                packedInfo: encodeNpcInfo(InteractType.NPC, npc.rotation, renderPlane),
+                npcTypeId: npc.npcType.id,
+                frame: npc.currentFrame(),
+            });
 
             this.npcRenderCount++;
         }
@@ -2273,7 +2273,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return this.npcDataTextures.upload(
             this.stats.frameCount,
             this.npcRenderData,
-            this.npcRenderCount,
+            this.npcRenderCount * NPC_INSTANCE_TEXELS,
         );
     }
 
@@ -2570,11 +2570,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_highlightId", 0);
 
             for (let i = 0; i < npcs.length; i++) {
-                const npc = npcs[i];
-                const anim = npc.getAnimationFrames();
-
-                const frameId = npc.movementFrame;
-                const frame = anim.frames[frameId];
+                const frame = npcs[i].animation.mesh.opaque;
 
                 (drawCall as any).offsets[i] = frame[0];
                 (drawCall as any).numElements[i] = frame[1];
@@ -2734,14 +2730,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             drawCall.uniform("u_highlightId", 0);
 
             for (let i = 0; i < npcs.length; i++) {
-                const npc = npcs[i];
-                const anim = npc.getAnimationFrames();
-
-                const frameId = npc.movementFrame;
-                let frame: DrawRange = NULL_DRAW_RANGE;
-                if (anim.framesAlpha) {
-                    frame = anim.framesAlpha[frameId];
-                }
+                const frame = npcs[i].animation.mesh.transparent;
 
                 (drawCall as any).offsets[i] = frame[0];
                 (drawCall as any).numElements[i] = frame[1];

@@ -1,8 +1,7 @@
 import { NpcSpawn } from "../../data/npc/NpcSpawn";
-import { AnimationFrames } from "../AnimationFrames";
+import { NpcAnimation } from "./NpcAnimation";
 
 export type NpcSpawnGroup = {
-    idleAnim: AnimationFrames;
-    walkAnim: AnimationFrames | undefined;
+    animation: NpcAnimation;
     spawns: NpcSpawn[];
 };

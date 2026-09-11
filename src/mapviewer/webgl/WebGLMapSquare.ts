@@ -22,6 +22,7 @@ import { MapDrawPass } from "./MapDrawPass";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
 import { Npc } from "./npc/Npc";
+import { SKINNED_VERTEX_STRIDE, SkinTables, createSkinnedVertexArray } from "./skin/SkinGpu";
 
 const DEFAULT_HIDE_ABOVE_PLANE = Scene.MAX_LEVELS - 1;
 
@@ -84,6 +85,21 @@ export class WebGLMapSquare {
             })
             .indexBuffer(indexBuffer);
 
+        const skinnedBuffer = app.createInterleavedBuffer(
+            SKINNED_VERTEX_STRIDE,
+            mapData.skinned.vertices,
+        );
+        const skinnedIndexBuffer = app.createIndexBuffer(
+            PicoGL.UNSIGNED_INT,
+            mapData.skinned.indices,
+        );
+        const skinnedVertexArray = createSkinnedVertexArray(app, skinnedBuffer, skinnedIndexBuffer);
+        const skinTables = SkinTables.create(
+            app,
+            mapData.skinned.influences,
+            mapData.skinned.matrixTable,
+        );
+
         const modelInfoTexture = createModelInfoTexture(app, mapData.modelTextureData);
         const modelInfoTextureAlpha = createModelInfoTexture(app, mapData.modelTextureDataAlpha);
 
@@ -119,9 +135,10 @@ export class WebGLMapSquare {
             program: Program,
             modelInfoTexture: Texture | undefined,
             drawRanges: DrawRange[],
+            drawVertexArray: VertexArray = vertexArray,
         ): DrawCallRange => {
             const drawCall = app
-                .createDrawCall(program, vertexArray)
+                .createDrawCall(program, drawVertexArray)
                 .uniformBlock("SceneUniforms", sceneUniformBuffer)
                 .uniform("u_timeLoaded", time)
                 .uniform("u_mapPos", mapPos)
@@ -176,10 +193,8 @@ export class WebGLMapSquare {
                     npc.tileX,
                     npc.tileY,
                     npc.level,
-                    npc.idleAnim,
-                    npc.walkAnim,
+                    npc.animation,
                     npcType,
-                    npcType.getIdleSeqId(basTypeLoader),
                     npcType.getWalkSeqId(basTypeLoader),
                 ),
             );
@@ -206,7 +221,13 @@ export class WebGLMapSquare {
 
         const drawRangesNpc = Array.from({ length: npcs.length }, () => newDrawRange(0, 0, 1));
 
-        const drawCallNpc = createDrawCall(npcProgram, undefined, drawRangesNpc);
+        const drawCallNpc = createDrawCall(
+            npcProgram,
+            undefined,
+            drawRangesNpc,
+            skinnedVertexArray,
+        );
+        skinTables.bind(drawCallNpc.drawCall);
 
         return new WebGLMapSquare(
             mapX,
@@ -222,6 +243,11 @@ export class WebGLMapSquare {
             interleavedBuffer,
             indexBuffer,
             vertexArray,
+
+            skinnedBuffer,
+            skinnedIndexBuffer,
+            skinnedVertexArray,
+            skinTables,
 
             heightMapTexture,
             mapData.heightMapTextureData,
@@ -256,6 +282,11 @@ export class WebGLMapSquare {
         readonly interleavedBuffer: VertexBuffer,
         readonly indexBuffer: VertexBuffer,
         readonly vertexArray: VertexArray,
+
+        private readonly skinnedBuffer: VertexBuffer,
+        private readonly skinnedIndexBuffer: VertexBuffer,
+        private readonly skinnedVertexArray: VertexArray,
+        private readonly skinTables: SkinTables,
 
         readonly heightMapTexture: Texture,
         readonly heightMapTextureData: Int16Array,
@@ -359,6 +390,11 @@ export class WebGLMapSquare {
         this.vertexArray.delete();
         this.interleavedBuffer.delete();
         this.indexBuffer.delete();
+
+        this.skinnedVertexArray.delete();
+        this.skinnedBuffer.delete();
+        this.skinnedIndexBuffer.delete();
+        this.skinTables.delete();
 
         this.heightMapTexture.delete();
         this.roofMaskTexture.delete();

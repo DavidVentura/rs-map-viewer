@@ -31,9 +31,10 @@ export class WebGLActorBuffer {
         capacity: number,
         time: number,
     ): WebGLActorBuffer {
+        const { skinned } = data;
         const interleavedBuffer = app.createInterleavedBuffer(
             SKINNED_VERTEX_STRIDE,
-            data.vertices.byteLength,
+            skinned.vertices.byteLength,
         );
         // picogl's own type declarations only accept an ArrayBufferView here, but the
         // implementation also accepts an element count to allocate an empty (zero-filled) buffer
@@ -41,11 +42,11 @@ export class WebGLActorBuffer {
         const indexBuffer = (app.createIndexBuffer as any)(
             PicoGL.UNSIGNED_INT,
             3,
-            data.indices.length,
+            skinned.indices.length,
         );
 
         const vertexArray = createSkinnedVertexArray(app, interleavedBuffer, indexBuffer);
-        const skinTables = SkinTables.create(app, data.influences, data.matrixTable);
+        const skinTables = SkinTables.create(app, skinned.influences, skinned.matrixTable);
 
         const drawRanges: DrawRange[] = Array.from({ length: capacity }, () =>
             newDrawRange(0, 0, 1),
@@ -70,11 +71,15 @@ export class WebGLActorBuffer {
             { drawCall, drawRanges },
             capacity,
             new Uint8Array(
-                data.vertices.buffer,
-                data.vertices.byteOffset,
-                data.vertices.byteLength,
+                skinned.vertices.buffer,
+                skinned.vertices.byteOffset,
+                skinned.vertices.byteLength,
             ),
-            new Uint8Array(data.indices.buffer, data.indices.byteOffset, data.indices.byteLength),
+            new Uint8Array(
+                skinned.indices.buffer,
+                skinned.indices.byteOffset,
+                skinned.indices.byteLength,
+            ),
         );
     }
 

@@ -1,4 +1,6 @@
-import { ProgramSource, prependDefines } from "./ShaderUtil";
+import { ACTOR_INSTANCE_TEXELS } from "../actor/ActorInstanceData";
+import { NPC_INSTANCE_TEXELS } from "../npc/NpcInstanceData";
+import { ProgramSource, ShaderDefine, prependDefines } from "./ShaderUtil";
 import actorVertShader from "./actor.vert.glsl";
 import frameFxaaFragShader from "./frame-fxaa.frag.glsl";
 import frameFxaaVertShader from "./frame-fxaa.vert.glsl";
@@ -29,7 +31,10 @@ export function createMainProgram(hasMultiDraw: boolean, discardAlpha: boolean):
 }
 
 export function createNpcProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {
-    const defines: string[] = ["NPC_PROGRAM"];
+    const defines: ShaderDefine[] = [
+        "NPC_PROGRAM",
+        { name: "NPC_INSTANCE_TEXELS", value: NPC_INSTANCE_TEXELS },
+    ];
     if (hasMultiDraw) {
         defines.push("MULTI_DRAW");
     }
@@ -40,7 +45,10 @@ export function createNpcProgram(hasMultiDraw: boolean, discardAlpha: boolean): 
 }
 
 export function createActorProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {
-    const defines: string[] = ["NPC_PROGRAM"];
+    const defines: ShaderDefine[] = [
+        "NPC_PROGRAM",
+        { name: "ACTOR_INSTANCE_TEXELS", value: ACTOR_INSTANCE_TEXELS },
+    ];
     if (hasMultiDraw) {
         defines.push("MULTI_DRAW");
     }
