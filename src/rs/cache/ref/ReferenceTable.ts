@@ -183,7 +183,6 @@ export class ReferenceTable {
         const hasNames = (flag & 0x1) !== 0;
         const hasWhirlpool = (flag & 0x2) !== 0;
         const hasSizes = (flag & 0x4) !== 0;
-        const hasUncompressedCrcs = (flag & 0x8) !== 0;
         const archiveCount = protocol === 7 ? buffer.readBigSmart() : buffer.readUnsignedShort();
 
         let lastArchiveId = 0;

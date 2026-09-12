@@ -1,7 +1,7 @@
 import { vec3 } from "gl-matrix";
 import { Leva, button, buttonGroup, folder, useControls } from "leva";
 import { ButtonGroupOpts, Schema } from "leva/dist/declarations/src/types";
-import { memo, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 
 import { isTouchDevice } from "../util/DeviceUtil";
 import { lerp, slerp } from "../util/MathUtil";
@@ -68,7 +68,7 @@ export const MapViewerControls = memo(
         const [animationDuration, setAnimationDuration] = useState(10);
         const [cameraPoints, setCameraPoints] = useState<CameraView[]>(() => []);
 
-        const addPoint = () => {
+        const addPoint = useCallback(() => {
             setCameraPoints((pts) => [
                 ...pts,
                 {
@@ -83,7 +83,7 @@ export const MapViewerControls = memo(
                     orthoZoom: mapViewer.camera.orthoZoom,
                 },
             ]);
-        };
+        }, [mapViewer]);
 
         const removeLastPoint = () => {
             setCameraPoints((pts) => pts.slice(0, pts.length - 1));
@@ -116,7 +116,7 @@ export const MapViewerControls = memo(
             return () => {
                 document.removeEventListener("keydown", handleKeyDown);
             };
-        }, [mapViewer]);
+        }, [addPoint, setHideUi]);
 
         useEffect(() => {
             setPointControls(

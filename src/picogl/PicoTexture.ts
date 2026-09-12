@@ -1,6 +1,19 @@
 import PicoGL, { App, Texture as TextureType } from "picogl";
 
-const { Texture } = require("picogl/build/module/texture.js");
+// picogl's declarations leave out Texture's constructor, which only App's factory methods call.
+type TextureConstructor = new (
+    gl: WebGLRenderingContext,
+    appState: any,
+    binding: number,
+    image: ArrayBufferView,
+    width: number,
+    height: number,
+    depth: number,
+    is3D: boolean,
+    options: any,
+) => TextureType;
+
+const { Texture }: { Texture: TextureConstructor } = require("picogl/build/module/texture.js");
 
 // Hack to fix invalid mipmap levels
 
@@ -22,25 +35,10 @@ export function createTextureArray(
         depth,
         true,
         options,
-    ) as TextureType;
+    );
 }
 
 export class PicoTexture extends Texture {
-    constructor(
-        gl: WebGLRenderingContext,
-        appState: any,
-        binding: number,
-        image: ArrayBufferView,
-        width: number,
-        height: number,
-        depth: number,
-        mipmaps: boolean,
-        options: any,
-    ) {
-        // @ts-ignore
-        super(gl, appState, binding, image, width, height, depth, mipmaps, options);
-    }
-
     resize(width: number, height: number, depth?: number | undefined) {
         if (!(this.gl instanceof WebGL2RenderingContext)) {
             throw new Error("Only WebGL2 is supported");

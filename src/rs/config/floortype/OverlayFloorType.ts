@@ -115,7 +115,7 @@ export class OverlayFloorType extends Type implements FloorType {
                 this.secondaryTextureId = -1;
             }
         } else if (opcode === 16) {
-            const v = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else {
             throw new Error(
                 "OverlayFloorType: Opcode " + opcode + " not implemented. id: " + this.id,

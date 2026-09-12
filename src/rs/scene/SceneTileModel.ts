@@ -3,7 +3,6 @@ import {
     adjustOverlayLight,
     adjustUnderlayLight,
     mixHsl,
-    packHsl,
 } from "../util/ColorUtil";
 
 const TILE_SIZE = 128;

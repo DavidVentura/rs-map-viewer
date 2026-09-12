@@ -297,14 +297,14 @@ export class NpcType extends Type {
         } else if (opcode === 112) {
             // old
         } else if (opcode === 113) {
-            const shadowColor1 = buffer.readUnsignedShort();
-            const shadowColor2 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 114) {
             if (this.cacheInfo.game === "oldschool") {
                 this.runSeqId = buffer.readUnsignedShort();
             } else {
-                const shadowColorMod1 = buffer.readByte();
-                const shadowColorMod2 = buffer.readByte();
+                buffer.readByte();
+                buffer.readByte();
             }
         } else if (opcode === 115) {
             if (this.cacheInfo.game === "oldschool") {
@@ -340,16 +340,16 @@ export class NpcType extends Type {
                 this.isFollower = true;
             } else {
                 if (this.isLargeModelId()) {
-                    const hitBarSpriteId = buffer.readBigSmart();
+                    buffer.readBigSmart();
                 } else {
-                    const hitBarSpriteId = buffer.readUnsignedShort();
+                    buffer.readUnsignedShort();
                 }
             }
         } else if (opcode === 123) {
             if (this.cacheInfo.game === "oldschool") {
                 // lowPriorityFollowerOps = true;
             } else {
-                const iconHeight = buffer.readUnsignedShort();
+                buffer.readUnsignedShort();
             }
         } else if (opcode === 125) {
             this.spawnDirection = buffer.readByte();
@@ -360,39 +360,39 @@ export class NpcType extends Type {
         } else if (opcode === 130) {
             // readyanimduringanim = true;
         } else if (opcode === 134) {
-            const idleSound = buffer.readUnsignedShort();
-            const crawlSound = buffer.readUnsignedShort();
-            const walkSound = buffer.readUnsignedShort();
-            const runSound = buffer.readUnsignedShort();
-            const soundRadius = buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
         } else if (opcode === 135) {
-            const cursor1op = buffer.readUnsignedByte();
-            const cursor1 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 136) {
-            const cursor2op = buffer.readUnsignedByte();
-            const cursor2 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 137) {
-            const attackCursor = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 138) {
             if (this.isLargeModelId()) {
-                const icon = buffer.readBigSmart();
+                buffer.readBigSmart();
             } else {
-                const icon = buffer.readUnsignedShort();
+                buffer.readUnsignedShort();
             }
         } else if (opcode === 139) {
             if (this.isLargeModelId()) {
-                const icon = buffer.readBigSmart();
+                buffer.readBigSmart();
             } else {
-                const icon = buffer.readUnsignedShort();
+                buffer.readUnsignedShort();
             }
         } else if (opcode === 140) {
-            const ambientSoundVolume = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 141) {
-            const bool = true;
+            // bool = true;
         } else if (opcode === 142) {
-            const mapFunctionId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 143) {
-            const bool = true;
+            // bool = true;
         } else if (opcode === 144) {
             buffer.readUnsignedShort();
         } else if (opcode === 145) {
@@ -438,32 +438,32 @@ export class NpcType extends Type {
                 delete this.actions[opcode - 150];
             }
         } else if (opcode === 155) {
-            const b0 = buffer.readByte();
-            const b1 = buffer.readByte();
-            const b2 = buffer.readByte();
-            const b3 = buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
         } else if (opcode === 158) {
-            const b = 1;
+            // b = 1;
         } else if (opcode === 159) {
-            const b = 0;
+            // b = 0;
         } else if (opcode === 160) {
             const count = buffer.readUnsignedByte();
             for (let i = 0; i < count; i++) {
-                const v = buffer.readUnsignedShort();
+                buffer.readUnsignedShort();
             }
         } else if (opcode === 161) {
-            const bool = true;
+            // bool = true;
         } else if (opcode === 162) {
-            const bool = true;
+            // bool = true;
         } else if (opcode === 163) {
-            const v = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 164) {
-            const v0 = buffer.readUnsignedShort();
-            const v1 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 165) {
-            const v = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 168) {
-            const v = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode >= 170 && opcode < 176) {
             buffer.readUnsignedShort();
         } else if (opcode === 249) {

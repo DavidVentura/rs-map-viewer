@@ -1,6 +1,5 @@
 import {
     AbilityDefinition,
-    AbilityEffect,
     AbilityTarget,
     AbilityTargetKind,
     CircleCenter,
@@ -738,12 +737,15 @@ describe("Projectile telegraph", () => {
         expect(world.visualEffects[0].x).toBe(contactX);
         expect(world.visualEffects[0].y).toBe(contactY);
 
+        const fallPositions: { x: number; y: number }[] = [];
         for (let i = 0; i < 1000 && world.projectiles.length > 0; i++) {
             world.advance(tick, idleInput());
             if (world.projectiles.length > 0) {
-                expect(world.projectiles[0].x).toBe(contactX);
-                expect(world.projectiles[0].y).toBe(contactY);
+                fallPositions.push({ x: world.projectiles[0].x, y: world.projectiles[0].y });
             }
+        }
+        for (const position of fallPositions) {
+            expect(position).toEqual({ x: contactX, y: contactY });
         }
 
         // The player stood still under the rock's landing point through the fall, so it lands on it.

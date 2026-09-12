@@ -336,7 +336,7 @@ export function computeTextureCoords(
                     u2 = uvTemp[0];
                     v2 = uvTemp[1];
 
-                    if ((direction & 0x1) == 0) {
+                    if ((direction & 0x1) === 0) {
                         if (u1 - u0 > 0.5) {
                             u1--;
                             // i_769_ = 1;

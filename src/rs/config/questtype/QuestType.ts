@@ -104,9 +104,9 @@ export class QuestType extends Type {
             this.pointsRequirement = buffer.readUnsignedShort();
         } else if (opcode === 17) {
             if (this.cacheInfo.game === "runescape" && this.cacheInfo.revision >= 670) {
-                const iconId = buffer.readBigSmart();
+                buffer.readBigSmart();
             } else {
-                const iconId = buffer.readUnsignedShort();
+                buffer.readUnsignedShort();
             }
         } else if (opcode === 18) {
             const count = buffer.readUnsignedByte();

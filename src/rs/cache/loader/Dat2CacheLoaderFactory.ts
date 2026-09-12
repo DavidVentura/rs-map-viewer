@@ -43,7 +43,7 @@ import {
     IndexVarBitTypeLoader,
     VarBitTypeLoader,
 } from "../../config/vartype/bit/VarBitTypeLoader";
-import { Dat2MapIndex, MapFileIndex, ModernMapFileIndex } from "../../map/MapFileIndex";
+import { Dat2MapIndex, ModernMapFileIndex } from "../../map/MapFileIndex";
 import { MapFileLoader, ModernMapFileLoader } from "../../map/MapFileLoader";
 import { IndexModelLoader, ModelLoader } from "../../model/ModelLoader";
 import { IndexSeqBaseLoader, SeqBaseLoader } from "../../model/seq/SeqBaseLoader";
@@ -55,7 +55,6 @@ import { OldProceduralTextureLoader } from "../../texture/OldProceduralTextureLo
 import { ProceduralTextureLoader } from "../../texture/ProceduralTextureLoader";
 import { SpriteTextureLoader } from "../../texture/SpriteTextureLoader";
 import { TextureLoader } from "../../texture/TextureLoader";
-import { ApiType } from "../ApiType";
 import { Archive } from "../Archive";
 import { CacheIndex } from "../CacheIndex";
 import { CacheInfo } from "../CacheInfo";

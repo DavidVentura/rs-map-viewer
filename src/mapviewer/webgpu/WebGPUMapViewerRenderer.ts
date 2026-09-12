@@ -5,8 +5,6 @@ import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGPU } from "../MapViewerRenderers";
 import { Terrain } from "../game/Terrain";
 import fullscreenTexturedQuadShader from "./shaders/fullscreenTexturedQuad.wgsl?source";
-import redFragShader from "./shaders/red.frag.wgsl?source";
-import triangleVertShader from "./shaders/triangle.vert.wgsl?source";
 
 const ENABLED = false;
 
@@ -18,7 +16,6 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
 
     context!: GPUCanvasContext;
 
-    pipeline!: GPURenderPipeline;
     fullscreenQuadPipeline!: GPURenderPipeline;
 
     sampler!: GPUSampler;
@@ -57,30 +54,6 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
             device: this.device,
             format: preferredFormat,
             alphaMode: "premultiplied",
-        });
-
-        this.pipeline = device.createRenderPipeline({
-            layout: "auto",
-            vertex: {
-                module: device.createShaderModule({
-                    code: triangleVertShader,
-                }),
-                entryPoint: "main",
-            },
-            fragment: {
-                module: device.createShaderModule({
-                    code: redFragShader,
-                }),
-                entryPoint: "main",
-                targets: [
-                    {
-                        format: preferredFormat,
-                    },
-                ],
-            },
-            primitive: {
-                topology: "triangle-list",
-            },
         });
 
         const fullscreenTexturedQuadShaderModule = device.createShaderModule({
@@ -185,7 +158,6 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
 
         const device = this.device;
         const context = this.context;
-        const pipeline = this.pipeline;
 
         const commandEncoder = device.createCommandEncoder();
         const textureView = context.getCurrentTexture().createView();
@@ -202,9 +174,6 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
         };
 
         const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-        // passEncoder.setPipeline(pipeline);
-        // passEncoder.draw(3);
-
         passEncoder.setPipeline(this.fullscreenQuadPipeline);
         passEncoder.setBindGroup(0, this.showResultBindGroup);
         passEncoder.draw(6);

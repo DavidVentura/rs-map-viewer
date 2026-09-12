@@ -36,9 +36,6 @@ export class ColorEdgeDetectorOperation extends TextureOperation {
                 0,
                 (line + 1) & textureGenerator.heightMask,
             );
-            const inputR = input[0];
-            const inputG = input[1];
-            const inputB = input[2];
             const outputR = output[0];
             const outputG = output[1];
             const outputB = output[2];
@@ -56,7 +53,7 @@ export class ColorEdgeDetectorOperation extends TextureOperation {
                 let red: number;
                 let green: number;
                 let blue: number;
-                if (local137 == 0) {
+                if (local137 === 0) {
                     red = 0;
                     green = 0;
                     blue = 0;

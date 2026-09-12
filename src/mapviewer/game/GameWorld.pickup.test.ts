@@ -122,11 +122,11 @@ describe("ground item pickup", () => {
         const events = world.drainEvents();
 
         const pickedUp = events.find((event) => event.kind === CombatEventKind.ITEM_PICKED_UP);
-        expect(pickedUp).toBeDefined();
-        if (pickedUp?.kind === CombatEventKind.ITEM_PICKED_UP) {
-            expect(pickedUp.path).toBe(EquipmentPath.AMULET);
-            expect(pickedUp.tierIndex).toBe(3);
-        }
+        expect(pickedUp).toMatchObject({
+            kind: CombatEventKind.ITEM_PICKED_UP,
+            path: EquipmentPath.AMULET,
+            tierIndex: 3,
+        });
     });
 
     it("never moves the player and never picks up when the pickup target does not exist", () => {

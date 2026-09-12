@@ -40,6 +40,9 @@ function selectCache(cacheList: CacheList, cacheName: string | null): CacheInfo 
 
 function MapViewerApp() {
     const [searchParams] = useSearchParams();
+    // The renderer rewrites the URL as the camera moves; the load must only see the URL the page
+    // was opened with, or every camera move would restart it.
+    const [initialSearchParams] = useState(searchParams);
 
     const [errorMessage, setErrorMessage] = useState<string>();
     const [mapViewer, setMapViewer] = useState<MapViewer>();
@@ -50,11 +53,11 @@ function MapViewerApp() {
 
         const load = async () => {
             const cacheList = await fetchCacheList(signal);
-            const cacheInfo = selectCache(cacheList, searchParams.get("cache"));
+            const cacheInfo = selectCache(cacheList, initialSearchParams.get("cache"));
 
-            const encounterId = parseEncounterId(searchParams.get("enc"));
-            const animPreview = parseAnimPreviewParams(searchParams);
-            const godMode = parseGodMode(searchParams);
+            const encounterId = parseEncounterId(initialSearchParams.get("enc"));
+            const animPreview = parseAnimPreviewParams(initialSearchParams);
+            const godMode = parseGodMode(initialSearchParams);
 
             // The base encounter even in the animation viewer: the actor loader bakes the preview
             // for it (see ActorRenderDataLoader), and the preview encounter maps its squares.
@@ -87,7 +90,7 @@ function MapViewerApp() {
 
             // MapViewer's constructor already starts the camera at this encounter's spawn;
             // applySearchParams only needs to override it when the URL asked for a specific spot.
-            mapViewer.applySearchParams(searchParams);
+            mapViewer.applySearchParams(initialSearchParams);
             mapViewer.init();
 
             setMapViewer(mapViewer);
@@ -108,7 +111,7 @@ function MapViewerApp() {
         return () => {
             abortController.abort();
         };
-    }, []);
+    }, [initialSearchParams]);
 
     let content: JSX.Element;
     if (errorMessage) {

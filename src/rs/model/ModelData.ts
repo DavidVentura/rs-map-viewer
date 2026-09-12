@@ -881,7 +881,7 @@ export class ModelData extends Entity {
         const hasMayaGroups = buf1.readUnsignedByte();
         const var18 = buf1.readUnsignedShort();
         const var19 = buf1.readUnsignedShort();
-        const var20 = buf1.readUnsignedShort();
+        buf1.readUnsignedShort();
         const var21 = buf1.readUnsignedShort();
         const var22 = buf1.readUnsignedShort();
         let var23 = 0;
@@ -1182,8 +1182,6 @@ export class ModelData extends Entity {
         const texFaceCount = buf1.readUnsignedByte();
         const flags = buf1.readUnsignedByte();
         const hasFaceRenderTypes = (flags & 0x1) === 1;
-        const hasParticles = (flags & 0x2) === 2;
-        const hasBillboards = (flags & 0x4) === 4;
         const hasVersion = (flags & 0x8) === 8;
         if (hasVersion) {
             buf1.offset -= 7;
@@ -1286,7 +1284,6 @@ export class ModelData extends Entity {
         offset += complexTextureFaceCount;
         const texturesTranslationOffset = offset;
         offset += complexTextureFaceCount + cubeTextureFaceCount * 2;
-        const particleEffectsOffset = offset;
         this.verticesCount = vertexCount;
         this.faceCount = faceCount;
         this.textureFaceCount = texFaceCount;
@@ -1619,7 +1616,7 @@ export class ModelData extends Entity {
         const var16 = buf1.readUnsignedByte();
         const var17 = buf1.readUnsignedShort();
         const var18 = buf1.readUnsignedShort();
-        const var19 = buf1.readUnsignedShort();
+        buf1.readUnsignedShort();
         const var20 = buf1.readUnsignedShort();
         let var21 = 0;
         let var45 = var21 + vertexCount;

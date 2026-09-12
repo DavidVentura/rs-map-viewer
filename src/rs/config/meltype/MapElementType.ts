@@ -45,16 +45,10 @@ export class MapElementType extends Type {
         } else if (opcode === 8) {
             this.randomizePosition = buffer.readUnsignedByte() === 1;
         } else if (opcode === 9) {
-            let primaryVisibleVarbit = buffer.readUnsignedShort();
-            if (primaryVisibleVarbit == 65535) {
-                primaryVisibleVarbit = -1;
-            }
-            let primaryVisibleVarp = buffer.readUnsignedShort();
-            if (primaryVisibleVarp == 65535) {
-                primaryVisibleVarp = -1;
-            }
-            const primaryMinValue = buffer.readInt();
-            const primaryMaxValue = buffer.readInt();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readInt();
+            buffer.readInt();
         } else if (opcode >= 10 && opcode <= 14) {
             this.ops[opcode - 10] = buffer.readString();
         } else if (opcode === 15) {
@@ -87,24 +81,18 @@ export class MapElementType extends Type {
                 buffer.readInt();
             }
         } else if (opcode === 16) {
-            const bool = false;
+            // bool = false;
         } else if (opcode === 17) {
-            const opBase = buffer.readString();
+            buffer.readString();
         } else if (opcode === 18) {
             buffer.readBigSmart();
         } else if (opcode === 19) {
-            const group = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 20) {
-            let secondaryVisibleVarbit = buffer.readUnsignedShort();
-            if (secondaryVisibleVarbit == 65535) {
-                secondaryVisibleVarbit = -1;
-            }
-            let secondaryVisibleVarp = buffer.readUnsignedShort();
-            if (secondaryVisibleVarp == 65535) {
-                secondaryVisibleVarp = -1;
-            }
-            const secondaryMinValue = buffer.readInt();
-            const secondaryMaxValue = buffer.readInt();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
+            buffer.readInt();
+            buffer.readInt();
         } else if (opcode === 21) {
             buffer.readInt();
         } else if (opcode === 22) {
@@ -121,11 +109,11 @@ export class MapElementType extends Type {
         } else if (opcode === 28) {
             buffer.readUnsignedByte();
         } else if (opcode === 29) {
-            const hAlign = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 30) {
-            const vAlign = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 249) {
-            const params = Type.readParamsMap(buffer);
+            Type.readParamsMap(buffer);
         } else {
             throw new Error("MapElementType: Unrecognized opcode: " + opcode);
         }

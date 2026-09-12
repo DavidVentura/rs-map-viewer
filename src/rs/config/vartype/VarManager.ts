@@ -1,4 +1,3 @@
-import { clamp } from "../../../util/MathUtil";
 import { BIT_MASKS } from "../../MathConstants";
 import { QuestTypeLoader } from "../questtype/QuestTypeLoader";
 import { VarBitTypeLoader } from "./bit/VarBitTypeLoader";

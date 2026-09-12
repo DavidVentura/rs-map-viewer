@@ -264,12 +264,9 @@ export class ProceduralTextureLoader implements TextureLoader {
         let animU = material.animU;
         let animV = material.animV;
 
-        if (!this.isRunetek5) {
-            const textureDef = this.getTexture(id);
-            if (textureDef) {
-                animU = textureDef.animU;
-                animV = textureDef.animV;
-            }
+        if (!this.isRunetek5 && texture) {
+            animU = texture.animU;
+            animV = texture.animV;
         }
 
         let alphaCutOff = 0.9;

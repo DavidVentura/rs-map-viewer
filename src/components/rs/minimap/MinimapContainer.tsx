@@ -1,6 +1,7 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useState } from "react";
 
 import { getMapSquareId } from "../../../rs/map/MapFileIndex";
+import { useAnimationFrameLoop } from "../../useAnimationFrameLoop";
 import "./MinimapContainer.css";
 import { MinimapImage } from "./MinimapImage";
 import compass from "./compass.png";
@@ -29,9 +30,8 @@ export const MinimapContainer = memo(function MinimapContainer({
     loadMapImageUrl,
 }: MinimapContainerProps) {
     const [minimapImages, setMinimapImages] = useState<JSX.Element[]>([]);
-    const requestRef = useRef<number | undefined>();
 
-    const animate = (time: DOMHighResTimeStamp) => {
+    useAnimationFrameLoop(() => {
         const pos = getPosition();
 
         const cameraX = pos.x;
@@ -63,18 +63,11 @@ export const MinimapContainer = memo(function MinimapContainer({
         }
 
         setMinimapImages(images);
-
-        requestRef.current = requestAnimationFrame(animate);
-    };
-
-    useEffect(() => {
-        requestRef.current = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(requestRef.current!);
-    }, []);
+    });
 
     return (
         <div className="minimap-container">
-            <img src={frame} />
+            <img src={frame} alt="" />
 
             <div
                 className="minimap"
@@ -91,6 +84,7 @@ export const MinimapContainer = memo(function MinimapContainer({
                     transform: `rotate(${yawDegrees}deg)`,
                 }}
                 src={compass}
+                alt="Compass"
                 onClick={onCompassClick}
             />
         </div>

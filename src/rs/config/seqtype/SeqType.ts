@@ -277,7 +277,7 @@ export class SeqType extends Type {
                 if (this.cacheInfo.revision < 226) {
                     this.decodeSkeletalDuration(buffer);
                 } else if (this.cacheInfo.revision >= 233) {
-                    const heightOffset = buffer.readUnsignedByte();
+                    buffer.readUnsignedByte();
                 }
             } else {
                 // bool = true;
@@ -292,25 +292,25 @@ export class SeqType extends Type {
                     this.skeletalMasks[buffer.readUnsignedByte()] = true;
                 }
             } else {
-                const v = buffer.readUnsignedByte();
+                buffer.readUnsignedByte();
             }
         } else if (opcode === 18) {
             if (this.cacheInfo.game === "oldschool" && this.cacheInfo.revision >= 230) {
-                const name = buffer.readString();
+                buffer.readString();
             } else {
-                const b = true;
+                // b = true;
             }
         } else if (opcode === 19) {
             if (this.cacheInfo.game === "oldschool") {
                 // crossworldsound = true;
             } else {
-                const index = buffer.readUnsignedByte();
-                const value = buffer.readUnsignedByte();
+                buffer.readUnsignedByte();
+                buffer.readUnsignedByte();
             }
         } else if (opcode === 20) {
-            const index = buffer.readUnsignedByte();
-            const max = buffer.readUnsignedShort();
-            const min = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else {
             throw new Error("SeqType: Opcode " + opcode + " not implemented.");
         }

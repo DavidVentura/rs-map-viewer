@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { RendererCanvas } from "../components/renderer/RendererCanvas";
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
 import { MinimapContainer } from "../components/rs/minimap/MinimapContainer";
+import { useAnimationFrameLoop } from "../components/useAnimationFrameLoop";
 import { RS_TO_DEGREES } from "../rs/MathConstants";
 import { isTouchDevice, pixelRatio } from "../util/DeviceUtil";
 import { MapViewer } from "./MapViewer";
@@ -20,7 +21,7 @@ interface MapViewerContainerProps {
 const FPS_COUNTER_INTERVAL_MS = 500;
 
 export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.Element {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [, setSearchParams] = useSearchParams();
 
     const [renderer, setRenderer] = useState<MapViewerRenderer>(mapViewer.renderer);
 
@@ -40,8 +41,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     const [fps, setFps] = useState(0);
     const lastFpsUpdateRef = useRef(0);
     const [cameraYaw, setCameraYaw] = useState(mapViewer.camera.getYaw());
-
-    const requestRef = useRef<number | undefined>();
 
     const hudCanvasRef = useRef<HTMLCanvasElement>(null);
     const hudRef = useRef<Hud | undefined>();
@@ -86,7 +85,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
         [renderer, hideUi],
     );
 
-    const animate = (time: DOMHighResTimeStamp) => {
+    useAnimationFrameLoop((time) => {
         mapViewer.syncMusicTrack();
 
         const ready = renderer.isReadyToReveal;
@@ -122,14 +121,7 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
             }
             setCameraYaw(mapViewer.camera.getYaw());
         }
-
-        requestRef.current = requestAnimationFrame(animate);
-    };
-
-    useEffect(() => {
-        requestRef.current = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(requestRef.current!);
-    }, [searchParams, hideUi, renderer, revealed, loadingPhaseLabel]);
+    });
 
     useEffect(() => {
         const canvas = renderer.canvas;

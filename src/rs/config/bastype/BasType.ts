@@ -18,24 +18,24 @@ export class BasType extends Type {
                 this.walkSeqId = -1;
             }
         } else if (opcode === 2) {
-            const crawlSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 3) {
-            const crawlBackSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 4) {
-            const crawlLeftSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 5) {
-            const crawlRightSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 6) {
-            const runSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 7) {
-            const runBackSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 8) {
-            const runLeftSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 9) {
-            const runRightSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 26) {
-            const anInt1059 = buffer.readUnsignedByte() * 4;
-            const anInt1050 = buffer.readUnsignedByte() * 4;
+            buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 27) {
             if (!this.modelRotateTranslate) {
                 this.modelRotateTranslate = new Array(12);
@@ -54,33 +54,33 @@ export class BasType extends Type {
                 this.modelRotateTranslate[bodyPartId][type] = buffer.readShort();
             }
         } else if (opcode === 29) {
-            const yawAcceleration = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 30) {
-            const yawMaxSpeed = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 31) {
-            const rollAcceleration = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 32) {
-            const rollMaxSpeed = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 33) {
-            const rollTargetAngle = buffer.readShort();
+            buffer.readShort();
         } else if (opcode === 34) {
-            const pitchAcceleration = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 35) {
-            const pitchMaxSpeed = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 36) {
-            const pitchTargetAngle = buffer.readShort();
+            buffer.readShort();
         } else if (opcode === 37) {
-            const movementAcceleration = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 38) {
-            const idleLeftSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 39) {
-            const idleRightSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 40) {
-            const walkBackSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 41) {
-            const walkLeftSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 42) {
-            const walkRightSeqId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 43) {
             buffer.readUnsignedShort();
         } else if (opcode === 44) {
@@ -88,17 +88,17 @@ export class BasType extends Type {
         } else if (opcode === 45) {
             buffer.readUnsignedShort();
         } else if (opcode === 46) {
-            const anInt203 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 47) {
-            const anInt198 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 48) {
-            const anInt194 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 49) {
-            const anInt211 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 50) {
-            const anInt202 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 51) {
-            const anInt222 = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 52) {
             const count = buffer.readUnsignedByte();
             for (let i = 0; i < count; i++) {
@@ -106,15 +106,15 @@ export class BasType extends Type {
                 buffer.readUnsignedByte();
             }
         } else if (opcode === 53) {
-            const bool = false;
+            // bool = false;
         } else if (opcode === 54) {
-            const v0 = buffer.readUnsignedByte() << 6;
-            const v1 = buffer.readUnsignedByte() << 6;
+            buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 55) {
-            const bodyPartId = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
             buffer.readUnsignedShort();
         } else if (opcode === 54) {
-            const bodyPartId = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
             for (let i = 0; i < 3; i++) {
                 buffer.readShort();
             }

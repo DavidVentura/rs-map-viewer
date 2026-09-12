@@ -279,7 +279,7 @@ export class ObjType extends Type {
         } else if (opcode === 95) {
             this.zan2d = buffer.readUnsignedShort();
         } else if (opcode === 96) {
-            const dummy = buffer.readUnsignedByte();
+            buffer.readUnsignedByte();
         } else if (opcode === 97) {
             this.note = buffer.readUnsignedShort();
         } else if (opcode === 98) {
@@ -305,29 +305,29 @@ export class ObjType extends Type {
         } else if (opcode === 115) {
             this.team = buffer.readUnsignedByte();
         } else if (opcode === 121) {
-            const lentId = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 122) {
-            const lentTemplate = buffer.readUnsignedShort();
+            buffer.readUnsignedShort();
         } else if (opcode === 125) {
-            const manwearxoff = buffer.readByte();
-            const manwearyoff = buffer.readByte();
-            const manwearzoff = buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
         } else if (opcode === 126) {
-            const womanwearxoff = buffer.readByte();
-            const womanwearyoff = buffer.readByte();
-            const womanwearzoff = buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
+            buffer.readByte();
         } else if (opcode === 127) {
-            const cursor1op = buffer.readUnsignedByte();
-            const cursor1 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 128) {
-            const cursor2op = buffer.readUnsignedByte();
-            const cursor2 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 129) {
-            const cursor1iop = buffer.readUnsignedByte();
-            const icursor1 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 130) {
-            const cursor2iop = buffer.readUnsignedByte();
-            const icursor2 = buffer.readUnsignedShort();
+            buffer.readUnsignedByte();
+            buffer.readUnsignedShort();
         } else if (opcode === 132) {
             const count = buffer.readUnsignedByte();
             for (let i = 0; i < count; i++) {
