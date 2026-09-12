@@ -5,13 +5,12 @@ import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
+import { NpcSpawn, ObjSpawn, getMapNpcSpawns, getMapObjSpawns } from "../../../rs/map/MapSpawns";
 import { Model } from "../../../rs/model/Model";
 import { Scene } from "../../../rs/scene/Scene";
 import { MAP_SQUARE_BORDER_SIZE, mapSquareSceneBounds } from "../../../rs/scene/SceneBuilder";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
-import { NpcSpawn, getMapNpcSpawns } from "../../data/npc/NpcSpawn";
-import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
 import { loadMinimapBlob } from "../../worker/MinimapData";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/WorkerState";
@@ -548,7 +547,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         );
 
         if (loadObjs) {
-            const objSpawns = getMapObjSpawns(state.objSpawns, maxLevel, mapX, mapY);
+            const objSpawns = getMapObjSpawns(state.spawns.objSpawns, maxLevel, mapX, mapY);
             createObjSceneModels(objModelLoader, sceneModels, scene, borderSize, objSpawns);
         }
 
@@ -574,12 +573,9 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                     return (npcType.loginScreenProps & 0x1) > 0;
                 });
             } else {
-                npcSpawns = getMapNpcSpawns(state.npcSpawns, maxLevel, mapX, mapY);
-                npcSpawns = npcSpawns.filter((spawn) => {
-                    return (
-                        spawn.name === undefined || spawn.name === npcTypeLoader.load(spawn.id).name
-                    );
-                });
+                npcSpawns = getMapNpcSpawns(state.spawns.npcSpawns, maxLevel, mapX, mapY).filter(
+                    (spawn) => spawn.name === npcTypeLoader.load(spawn.id).name,
+                );
             }
         }
         const npcSpawnGroups = createNpcSpawnGroups(

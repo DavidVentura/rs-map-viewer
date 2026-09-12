@@ -3,35 +3,26 @@ import { registerSerializer } from "threads";
 import { Transfer, expose } from "threads/worker";
 
 import { openCachePack } from "../../rs/cache/pack/openCachePack";
-import { Bzip2 } from "../../rs/compression/Bzip2";
-import { Gzip } from "../../rs/compression/Gzip";
 import { Hasher } from "../../util/Hasher";
-import { NpcSpawn } from "../data/npc/NpcSpawn";
-import { ObjSpawn } from "../data/obj/ObjSpawn";
 import { RenderDataLoader, renderDataLoaderSerializer } from "./RenderDataLoader";
 import { WorkerState, clearWorkerStateCaches, createWorkerState } from "./WorkerState";
 
 registerSerializer(renderDataLoaderSerializer);
 
-const compressionPromise = Promise.all([Bzip2.initWasm(), Gzip.initWasm()]);
 const hasherPromise = Hasher.init();
 
 let workerStatePromise: Promise<WorkerState> | undefined;
 
-async function initWorker(
-    packBuffer: SharedArrayBuffer,
-    objSpawns: ObjSpawn[],
-    npcSpawns: NpcSpawn[],
-): Promise<WorkerState> {
-    await compressionPromise;
+async function initWorker(packBuffer: SharedArrayBuffer): Promise<WorkerState> {
     await hasherPromise;
 
-    return createWorkerState(openCachePack(packBuffer), objSpawns, npcSpawns);
+    const { cache, spawns } = openCachePack(packBuffer);
+    return createWorkerState(cache, spawns);
 }
 
 const worker = {
-    initCache(packBuffer: SharedArrayBuffer, objSpawns: ObjSpawn[], npcSpawns: NpcSpawn[]) {
-        workerStatePromise = initWorker(packBuffer, objSpawns, npcSpawns);
+    initCache(packBuffer: SharedArrayBuffer) {
+        workerStatePromise = initWorker(packBuffer);
     },
     initDataLoader<I, D>(dataLoader: RenderDataLoader<I, D>) {
         dataLoader.init();

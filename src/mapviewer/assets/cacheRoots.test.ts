@@ -1,27 +1,11 @@
-import fs from "fs";
-import path from "path";
-
-import { NpcSpawn } from "../data/npc/NpcSpawn";
-import { ObjSpawn } from "../data/obj/ObjSpawn";
 import { WeaponStyle } from "../game/Ability";
 import { Encounter, EncounterId, getEncounter } from "../game/Encounter";
 import { EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import { buildPlayerAbilityBar } from "../game/abilities";
-import { cacheRoots } from "./cacheRoots";
-
-function loadJson<T>(relativePath: string): T {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, relativePath), "utf8"));
-}
-
-const npcSpawns = loadJson<NpcSpawn[]>("../data/npc/npc-spawns-osrs.json");
-const objSpawns = loadJson<ObjSpawn[]>("../data/obj/obj-spawns.json");
-
-function isInside(encounter: Encounter, x: number, y: number): boolean {
-    return encounter.mapSquares.some(({ mapX, mapY }) => x >> 6 === mapX && y >> 6 === mapY);
-}
+import { cacheRoots, packRequest } from "./cacheRoots";
 
 function rootsFor(encounter: Encounter) {
-    return cacheRoots(encounter, undefined, npcSpawns, objSpawns);
+    return cacheRoots(encounter, undefined);
 }
 
 const TZTOK_JAD_NPC_TYPE_ID = 3127;
@@ -43,22 +27,6 @@ describe("cacheRoots", () => {
         expect(roots.mapSquares).toHaveLength(8);
     });
 
-    it("Fight Caves roots leave out the npc spawns of its squares, since it has no ambient npcs", () => {
-        const encounter = getEncounter(EncounterId.FIGHT_CAVES);
-        const enemyNpcTypeIds = new Set(
-            encounter.enemyTypeIds.map((id) => getEnemyType(id).npcTypeId),
-        );
-        const ambientOnlyIds = npcSpawns
-            .filter((spawn) => isInside(encounter, spawn.x, spawn.y))
-            .map((spawn) => spawn.id)
-            .filter((id) => !enemyNpcTypeIds.has(id));
-        expect(ambientOnlyIds.length).toBeGreaterThan(0);
-        const roots = rootsFor(encounter);
-        for (const id of ambientOnlyIds) {
-            expect(roots.npcTypeIds).not.toContain(id);
-        }
-    });
-
     it("Lumbridge roots hold the 3x3 squares around the player's square", () => {
         const encounter = getEncounter(EncounterId.LUMBRIDGE);
         const playerMapX = encounter.playerSpawn.x >> 13;
@@ -69,30 +37,27 @@ describe("cacheRoots", () => {
         expect(rootsFor(encounter).mapSquares).toEqual(expected);
     });
 
-    it("Lumbridge roots include the npc and obj spawns inside its squares and none outside them", () => {
-        const encounter = getEncounter(EncounterId.LUMBRIDGE);
-        const roots = rootsFor(encounter);
-        const noSpawnRoots = cacheRoots(encounter, undefined, [], []);
+    it("Fight Caves asks for the obj spawns of its squares but not the npc spawns, since it has no ambient npcs", () => {
+        const encounter = getEncounter(EncounterId.FIGHT_CAVES);
+        const request = packRequest(encounter, undefined);
+        expect(request.roots).toEqual(rootsFor(encounter));
+        expect(request.npcSpawnSquares).toEqual([]);
+        expect(request.objSpawnSquares).toEqual(request.roots.mapSquares);
+    });
 
-        const insideNpcIds = new Set(
-            npcSpawns.filter((spawn) => isInside(encounter, spawn.x, spawn.y)).map((s) => s.id),
-        );
-        const outsideOnlyNpcIds = npcSpawns
-            .filter((spawn) => !isInside(encounter, spawn.x, spawn.y))
-            .map((spawn) => spawn.id)
-            .filter((id) => !insideNpcIds.has(id) && !noSpawnRoots.npcTypeIds.includes(id));
-        expect(insideNpcIds.size).toBeGreaterThan(0);
-        expect(outsideOnlyNpcIds.length).toBeGreaterThan(0);
-        expect(roots.npcTypeIds).toEqual(expect.arrayContaining([...insideNpcIds]));
-        for (const id of outsideOnlyNpcIds) {
-            expect(roots.npcTypeIds).not.toContain(id);
-        }
+    it("Lumbridge asks for the npc and obj spawns of all its squares", () => {
+        const request = packRequest(getEncounter(EncounterId.LUMBRIDGE), undefined);
+        expect(request.npcSpawnSquares).toEqual(request.roots.mapSquares);
+        expect(request.objSpawnSquares).toEqual(request.roots.mapSquares);
+    });
 
-        const insideObjIds = objSpawns
-            .filter((spawn) => isInside(encounter, spawn.x, spawn.y))
-            .map((spawn) => spawn.id);
-        expect(insideObjIds.length).toBeGreaterThan(0);
-        expect(roots.objTypeIds).toEqual(expect.arrayContaining(insideObjIds));
+    it("the animation viewer asks for no npc spawns, since it maps without ambient npcs", () => {
+        const request = packRequest(getEncounter(EncounterId.LUMBRIDGE), {
+            kind: "SPOT_ANIMS",
+            range: { from: 3000, to: 3003 },
+        });
+        expect(request.npcSpawnSquares).toEqual([]);
+        expect(request.objSpawnSquares).toEqual(request.roots.mapSquares);
     });
 
     it("an extra wave of enemy types already in the roster keeps the roots, a new enemy type changes them", () => {
@@ -145,21 +110,18 @@ describe("cacheRoots", () => {
 
     it("preview ranges become npc, seq and spot anim roots", () => {
         const lumbridge = getEncounter(EncounterId.LUMBRIDGE);
-        const npcPreview = cacheRoots(
-            lumbridge,
-            { kind: "NPC_SEQS", npcTypeId: 8615, seqRange: { from: 9000, to: 9002 } },
-            [],
-            [],
-        );
+        const npcPreview = cacheRoots(lumbridge, {
+            kind: "NPC_SEQS",
+            npcTypeId: 8615,
+            seqRange: { from: 9000, to: 9002 },
+        });
         expect(npcPreview.npcTypeIds).toContain(8615);
         expect(npcPreview.seqIds).toEqual(expect.arrayContaining([9000, 9001, 9002]));
 
-        const gfxPreview = cacheRoots(
-            lumbridge,
-            { kind: "SPOT_ANIMS", range: { from: 3000, to: 3003 } },
-            [],
-            [],
-        );
+        const gfxPreview = cacheRoots(lumbridge, {
+            kind: "SPOT_ANIMS",
+            range: { from: 3000, to: 3003 },
+        });
         expect(gfxPreview.spotAnimIds).toEqual(expect.arrayContaining([3000, 3001, 3002, 3003]));
     });
 });

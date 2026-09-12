@@ -1,8 +1,8 @@
 import fs from "fs";
 import sharp from "sharp";
 
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { LocModelLoader } from "../../src/rs/config/loctype/LocModelLoader";
 import { LocLoadType, SceneBuilder } from "../../src/rs/scene/SceneBuilder";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
@@ -41,7 +41,7 @@ const cacheInfo = cacheList.latest;
 
 const loadedCache = loadCache(cacheInfo);
 
-const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
 const loaderFactory = getCacheLoaderFactory(cacheInfo, cacheSystem);
 
 const underlayTypeLoader = loaderFactory.getUnderlayTypeLoader();
@@ -74,7 +74,6 @@ const sceneBuilder = new SceneBuilder(
     overlayTypeLoader,
     locTypeLoader,
     locModelLoader,
-    loadedCache.xteas,
 );
 
 function exportHeightMap() {

@@ -60,7 +60,6 @@ import { Archive } from "../Archive";
 import { CacheIndex } from "../CacheIndex";
 import { CacheInfo } from "../CacheInfo";
 import { CacheSystem } from "../CacheSystem";
-import { CacheType } from "../CacheType";
 import { ConfigType } from "../ConfigType";
 import { IndexType } from "../IndexType";
 import { CacheLoaderFactory } from "./CacheLoaderFactory";
@@ -68,7 +67,6 @@ import { CacheLoaderFactory } from "./CacheLoaderFactory";
 export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
     constructor(
         readonly cacheInfo: CacheInfo,
-        readonly cacheType: CacheType,
         readonly cacheSystem: CacheSystem,
     ) {}
 

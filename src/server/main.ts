@@ -3,6 +3,7 @@
 import { CachePacker } from "../rs/cache/pack/CachePacker";
 import { Bzip2 } from "../rs/compression/Bzip2";
 import { readCacheInfos, readSourceCache } from "./CacheDirectory";
+import { readWorldSpawns } from "./WorldSpawns";
 import { createPackServer } from "./packServer";
 
 type PackServerEnv = {
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
     const server = await createPackServer({
         caches,
         packsDir: env.packsDir,
+        worldSpawns: readWorldSpawns(),
         openPacker: (info) => {
             const start = performance.now();
             const packer = new CachePacker(readSourceCache(env.cachesDir, info));

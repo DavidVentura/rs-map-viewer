@@ -3,8 +3,6 @@ import { QueuedTask } from "threads/dist/master/pool";
 import { WorkerDescriptor } from "threads/dist/master/pool-types";
 import { ObservablePromise } from "threads/dist/observable-promise";
 
-import { NpcSpawn } from "../data/npc/NpcSpawn";
-import { ObjSpawn } from "../data/obj/ObjSpawn";
 import { RenderDataLoader } from "./RenderDataLoader";
 import { RenderDataWorker } from "./RenderDataWorker";
 
@@ -29,9 +27,9 @@ export class RenderDataWorkerPool {
     ) {}
 
     // Every worker opens the same shared pack bytes into its own cache.
-    initCache(packBuffer: SharedArrayBuffer, objSpawns: ObjSpawn[], npcSpawns: NpcSpawn[]): void {
+    initCache(packBuffer: SharedArrayBuffer): void {
         for (const worker of this.workers) {
-            worker.init.then((w) => w.initCache(packBuffer, objSpawns, npcSpawns));
+            worker.init.then((w) => w.initCache(packBuffer));
         }
     }
 

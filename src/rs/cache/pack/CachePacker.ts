@@ -1,8 +1,15 @@
+import { MapSpawns } from "../../map/MapSpawns";
 import { encodeCachePack } from "./CachePack";
 import { CachePackBuilder } from "./CachePackBuilder";
 import { CacheRoots } from "./CacheRoots";
 import { SourceCache } from "./SourceCache";
 import { CacheSelectionResolver } from "./resolveCacheSelection";
+
+// Everything a pack holds: the closure of the roots over the cache, and the spawns it places.
+export type PackContents = {
+    readonly roots: CacheRoots;
+    readonly spawns: MapSpawns;
+};
 
 export type PackedRoots =
     | { readonly kind: "PACKED"; readonly bytes: Uint8Array }
@@ -20,12 +27,12 @@ export class CachePacker {
         this.builder = new CachePackBuilder(source);
     }
 
-    pack(roots: CacheRoots): PackedRoots {
+    pack({ roots, spawns }: PackContents): PackedRoots {
         const reason = this.resolver.unknownRoot(roots);
         if (reason !== undefined) {
             return { kind: "UNKNOWN_ROOT", reason };
         }
-        const pack = this.builder.build(this.resolver.resolve(roots));
-        return { kind: "PACKED", bytes: encodeCachePack(pack) };
+        const cache = this.builder.build(this.resolver.resolve(roots));
+        return { kind: "PACKED", bytes: encodeCachePack({ ...cache, spawns }) };
     }
 }

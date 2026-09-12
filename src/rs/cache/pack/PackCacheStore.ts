@@ -1,13 +1,12 @@
-import { ApiType } from "../ApiType";
-import { CacheStore } from "../store/CacheStore";
-import { CachePack } from "./CachePack";
+import { ArchiveStore } from "../store/ArchiveStore";
+import { SparseCache } from "./CachePack";
 
 // Serves a CacheSystem from a pack. A read outside the pack throws naming the index and archive:
 // it means the resolver missed an edge, and falling back to anything would hide that.
-export class PackCacheStore implements CacheStore<ApiType.SYNC> {
+export class PackCacheStore implements ArchiveStore {
     private readonly archivesByIndex = new Map<number, Map<number, Int8Array>>();
 
-    constructor(pack: CachePack) {
+    constructor(pack: SparseCache) {
         for (const { indexId, archiveId, data } of pack.entries) {
             let archives = this.archivesByIndex.get(indexId);
             if (!archives) {

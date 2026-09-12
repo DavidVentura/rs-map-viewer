@@ -1,6 +1,5 @@
 import { LoadedCache } from "../../rs/cache/LoadedCache";
-import { NpcSpawn } from "../data/npc/NpcSpawn";
-import { ObjSpawn } from "../data/obj/ObjSpawn";
+import { MapSpawns } from "../../rs/map/MapSpawns";
 import { WorkerState, createWorkerState } from "./WorkerState";
 
 // What loadMinimapBlob's canvas turns into: the pixels it was drawn with, so a minimap built in
@@ -47,13 +46,8 @@ export function installHeadlessCanvas(): void {
     (globalThis as any).ImageData = HeadlessImageData;
 }
 
-// A render worker's state in Node, without the wasm decoders (Bzip2 and Gzip use their JS
-// versions).
-export function createHeadlessWorkerState(
-    cache: LoadedCache,
-    objSpawns: ObjSpawn[],
-    npcSpawns: NpcSpawn[],
-): WorkerState {
+// A render worker's state in Node, with the headless canvas standing in for OffscreenCanvas.
+export function createHeadlessWorkerState(cache: LoadedCache, spawns: MapSpawns): WorkerState {
     installHeadlessCanvas();
-    return createWorkerState(cache, objSpawns, npcSpawns);
+    return createWorkerState(cache, spawns);
 }

@@ -1,5 +1,5 @@
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { ModelData } from "../../src/rs/model/ModelData";
 import { SeqFrameLoader } from "../../src/rs/model/seq/SeqFrameLoader";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
@@ -104,7 +104,7 @@ function main(): void {
     const range = parseArgs();
     const cacheList = loadCacheList(loadCacheInfos());
     const loadedCache = loadCache(cacheList.latest);
-    const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+    const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
     const factory = getCacheLoaderFactory(cacheList.latest, cacheSystem);
     const seqFrameLoader = factory.getSeqFrameLoader();
 

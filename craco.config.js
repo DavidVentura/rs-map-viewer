@@ -31,10 +31,6 @@ module.exports = {
             }
 
             webpackConfig.module.rules.push({
-                resourceQuery: /url/,
-                type: "asset/resource",
-            });
-            webpackConfig.module.rules.push({
                 resourceQuery: /source/,
                 type: "asset/source",
             });
@@ -45,23 +41,11 @@ module.exports = {
                 fs: false,
             };
 
-            webpackConfig.resolve.extensions = [".web.js", ...webpackConfig.resolve.extensions];
-
             webpackConfig.optimization.minimizer.push(new JsonMinimizerPlugin());
 
             return webpackConfig;
         },
         plugins: [new ThreadsPlugin()],
-    },
-    jest: {
-        configure: (jestConfig) => {
-            // Tests run in Node, so they take the Node variant of a module that has a .web one
-            // (Gzip.ts rather than the wasm-backed Gzip.web.ts), as the tsx scripts do.
-            jestConfig.moduleFileExtensions = jestConfig.moduleFileExtensions.filter(
-                (extension) => !extension.startsWith("web."),
-            );
-            return jestConfig;
-        },
     },
     // A function, so the pack server's port is only required when the dev server starts, not when
     // craco builds or tests.

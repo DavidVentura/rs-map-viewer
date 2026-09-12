@@ -4,7 +4,6 @@ import { CompressionType } from "../compression/CompressionType";
 import { Gzip } from "../compression/Gzip";
 import { Xtea } from "../crypto/Xtea";
 import { ByteBuffer } from "../io/ByteBuffer";
-import { ByteWriter } from "../io/ByteWriter";
 
 export class Container {
     static decode(buffer: ByteBuffer, key?: number[]): Container {
@@ -14,11 +13,6 @@ export class Container {
         const compression: CompressionType = buffer.readUnsignedByte();
         const size = buffer.readInt();
         if (Xtea.isValidKey(key)) {
-            // Decrypt a copy: stores hand out views into a shared pack buffer, which a
-            // later read of the same archive must see still encrypted.
-            const offset = buffer.offset;
-            buffer = new ByteBuffer(buffer.data.slice());
-            buffer.offset = offset;
             Xtea.decrypt(buffer, buffer.offset, buffer.offset + 4 + size, key);
         }
         switch (compression) {
@@ -52,14 +46,6 @@ export class Container {
             default:
                 throw new Error("Container: Unsupported compression: " + compression);
         }
-    }
-
-    static encodeUncompressed(data: Int8Array): Int8Array {
-        const writer = new ByteWriter(data.length + 5);
-        writer.writeByte(CompressionType.None);
-        writer.writeInt(data.length);
-        writer.writeBytes(data);
-        return writer.toBytes();
     }
 
     constructor(

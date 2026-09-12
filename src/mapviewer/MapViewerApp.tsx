@@ -11,9 +11,7 @@ import { CacheList, fetchCacheList, loadCachePack, pruneCacheStorage } from "./C
 import { MapViewer } from "./MapViewer";
 import { MapViewerContainer } from "./MapViewerContainer";
 import { getAvailableRenderers } from "./MapViewerRenderers";
-import { cacheRoots } from "./assets/cacheRoots";
-import { fetchNpcSpawns, getNpcSpawnsUrl } from "./data/npc/NpcSpawnFetch";
-import { fetchObjSpawns } from "./data/obj/ObjSpawnFetch";
+import { packRequest } from "./assets/cacheRoots";
 import { parseAnimPreviewParams } from "./game/AnimPreview";
 import { getEncounter, parseEncounterId } from "./game/Encounter";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
@@ -51,21 +49,17 @@ function MapViewerApp() {
         const { signal } = abortController;
 
         const load = async () => {
-            const [cacheList, objSpawns] = await Promise.all([
-                fetchCacheList(signal),
-                fetchObjSpawns(),
-            ]);
+            const cacheList = await fetchCacheList(signal);
             const cacheInfo = selectCache(cacheList, searchParams.get("cache"));
 
             const encounterId = parseEncounterId(searchParams.get("enc"));
             const animPreview = parseAnimPreviewParams(searchParams);
             const godMode = parseGodMode(searchParams);
 
-            const npcSpawns = await fetchNpcSpawns(getNpcSpawnsUrl(cacheInfo));
             // The base encounter even in the animation viewer: the actor loader bakes the preview
             // for it (see ActorRenderDataLoader), and the preview encounter maps its squares.
-            const roots = cacheRoots(getEncounter(encounterId), animPreview, npcSpawns, objSpawns);
-            const packBuffer = await loadCachePack(cacheInfo.name, roots, signal);
+            const request = packRequest(getEncounter(encounterId), animPreview);
+            const packBuffer = await loadCachePack(cacheInfo.name, request, signal);
             pruneCacheStorage(cacheInfo.name).catch((e) =>
                 console.error("Failed pruning cache storage", e),
             );
@@ -79,15 +73,13 @@ function MapViewerApp() {
             // Add some way to get preferred renderer
             const rendererType = availableRenderers[0];
 
-            workerPool.initCache(packBuffer, objSpawns, npcSpawns);
+            workerPool.initCache(packBuffer);
             const mapViewer = new MapViewer(
                 workerPool,
                 cacheList,
-                objSpawns,
-                npcSpawns,
                 encounterId,
                 rendererType,
-                openCachePack(packBuffer),
+                openCachePack(packBuffer).cache,
                 animPreview,
                 godMode,
             );

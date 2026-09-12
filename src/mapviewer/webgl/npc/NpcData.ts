@@ -1,4 +1,4 @@
-import { NpcSpawn } from "../../data/npc/NpcSpawn";
+import { NpcSpawn } from "../../../rs/map/MapSpawns";
 import { NpcAnimation } from "./NpcAnimation";
 import { NpcSpawnGroup } from "./NpcSpawnGroup";
 

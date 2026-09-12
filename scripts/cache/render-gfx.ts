@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
 
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { NpcModelLoader } from "../../src/rs/config/npctype/NpcModelLoader";
 import { SeqType } from "../../src/rs/config/seqtype/SeqType";
 import { SeqTypeLoader } from "../../src/rs/config/seqtype/SeqTypeLoader";
@@ -252,7 +252,7 @@ type Loaders = {
 function openLoaders(): Loaders {
     const cacheList = loadCacheList(loadCacheInfos());
     const loadedCache = loadCache(cacheList.latest);
-    const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+    const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
     const factory = getCacheLoaderFactory(cacheList.latest, cacheSystem);
     const modelLoader = factory.getModelLoader();
     const textureLoader = factory.getTextureLoader();

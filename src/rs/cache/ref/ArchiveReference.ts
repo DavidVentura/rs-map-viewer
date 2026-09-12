@@ -17,14 +17,10 @@ export class ArchiveReference {
         readonly fileNameHashes: Int32Array,
     ) {}
 
-    // The same archive listing only the given files, keeping their name hashes, stored as a
-    // container of the given sizes. An empty listing gets lastFileId 0, which is what
+    // The same archive listing only the given files, keeping their name hashes, stored
+    // uncompressed in the given size. An empty listing gets lastFileId 0, which is what
     // ReferenceTable.decode reads back for it.
-    withFiles(
-        fileIds: readonly number[],
-        compressedSize: number,
-        decompressedSize: number,
-    ): ArchiveReference {
+    withFiles(fileIds: readonly number[], size: number): ArchiveReference {
         const indexMap = new Map<number, number>();
         const nameHashes = new Int32Array(fileIds.length);
         fileIds.forEach((fileId, i) => {
@@ -40,8 +36,8 @@ export class ArchiveReference {
             this.nameHash,
             this.whirlpool,
             this.crc,
-            compressedSize,
-            decompressedSize,
+            size,
+            size,
             this.revision,
             fileIds.length,
             fileIds.length > 0 ? fileIds[fileIds.length - 1] : 0,

@@ -29,7 +29,6 @@
         "threads": "^1.7.0",
         "tsx": "^4.23.13",
         "typescript": "^5.1.6",
-        "wasm-gzip": "^1.0.1",
         "web-vitals": "^2.1.0",
         "webfontloader": "^1.6.28",
         "xxhash-wasm": "^1.0.2"

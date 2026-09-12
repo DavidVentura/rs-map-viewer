@@ -217,8 +217,8 @@ export class ReferenceTable {
             }
         }
 
-        // buffer.data may be a view into a larger buffer (an uncompressed container), so the
-        // views are anchored to its byteOffset.
+        // buffer.data may be a view into a larger buffer (an uncompressed container, or a cache
+        // pack's entry), so the views are anchored to its byteOffset.
         const archiveCrcs = new DataView(
             buffer.data.buffer,
             buffer.data.byteOffset + buffer.offset,

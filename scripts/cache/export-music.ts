@@ -3,9 +3,9 @@ import path from "path";
 
 import { Archive } from "../../src/rs/cache/Archive";
 import { CacheIndex } from "../../src/rs/cache/CacheIndex";
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
 import { ConfigType } from "../../src/rs/cache/ConfigType";
 import { IndexType } from "../../src/rs/cache/IndexType";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
 import {
     COL_MIDI,
@@ -51,7 +51,7 @@ function main() {
     console.log(`Using cache ${cacheInfo.name} (revision ${cacheInfo.revision})`);
 
     const loadedCache = loadCache(cacheInfo);
-    const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+    const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
 
     const configIndex = cacheSystem.getIndex(IndexType.DAT2.configs);
     const dbRowArchive = configIndex.getArchive(ConfigType.OSRS.dbRow);

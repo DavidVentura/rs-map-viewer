@@ -1,5 +1,5 @@
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
 
 const caches = loadCacheInfos();
@@ -7,7 +7,7 @@ const cacheList = loadCacheList(caches);
 const cacheInfo = cacheList.latest;
 const loadedCache = loadCache(cacheInfo);
 
-const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
 const cacheLoaderFactory = getCacheLoaderFactory(cacheInfo, cacheSystem);
 
 const npcTypeLoader = cacheLoaderFactory.getNpcTypeLoader();
@@ -19,7 +19,9 @@ for (const id of [2189, 2190, 2191, 2192, 3121, 3122, 3123, 3124, 3125, 3126, 31
     try {
         const npc = npcTypeLoader.load(id);
         console.log(
-            `npc ${id}: name=${JSON.stringify(npc.name)} idle=${npc.idleSeqId} walk=${npc.walkSeqId} size=${npc.size} combatLevel=${npc.combatLevel}`,
+            `npc ${id}: name=${JSON.stringify(npc.name)} idle=${npc.idleSeqId} walk=${
+                npc.walkSeqId
+            } size=${npc.size} combatLevel=${npc.combatLevel}`,
         );
     } catch (e) {
         console.log(`npc ${id}: error ${e}`);

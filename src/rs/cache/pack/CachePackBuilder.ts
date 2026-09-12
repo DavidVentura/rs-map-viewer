@@ -1,11 +1,9 @@
 import { Archive } from "../Archive";
 import { ArchiveFile } from "../ArchiveFile";
 import { CacheIndex } from "../CacheIndex";
-import { Container } from "../Container";
-import { IndexType } from "../IndexType";
 import { ArchiveReference } from "../ref/ArchiveReference";
 import { ReferenceTable } from "../ref/ReferenceTable";
-import { CachePack, CachePackEntry } from "./CachePack";
+import { CachePackEntry, SparseCache } from "./CachePack";
 import { CacheSelection, SelectedArchive } from "./CacheSelection";
 import { SourceCache } from "./SourceCache";
 
@@ -23,7 +21,7 @@ export class CachePackBuilder {
 
     // A sparse cache: for every index of the source, a reference table listing only the selected
     // archives (and, for partly selected archives, only the selected files), plus those archives.
-    build(selection: CacheSelection): CachePack {
+    build(selection: CacheSelection): SparseCache {
         const { source } = this;
         const selectedByIndex = new Map<number, SelectedArchive[]>();
         for (const selected of selection) {
@@ -45,26 +43,14 @@ export class CachePackBuilder {
                 index.table.format,
                 packed.map(({ reference }) => reference),
             );
-            entries.push({
-                indexId: CacheIndex.META_INDEX_ID,
-                archiveId: indexId,
-                data: Container.encodeUncompressed(table),
-            });
+            entries.push({ indexId: CacheIndex.META_INDEX_ID, archiveId: indexId, data: table });
             for (const { reference, data } of packed) {
                 entries.push({ indexId, archiveId: reference.id, data });
             }
         }
 
-        const xteas: Record<string, readonly number[]> = {};
-        for (const selected of selectedByIndex.get(IndexType.DAT2.maps) ?? []) {
-            const key = source.xteas.get(selected.archiveId);
-            if (key) {
-                xteas[String(selected.archiveId)] = key;
-            }
-        }
-
         return {
-            header: { cacheInfo: source.info, indexIds: source.indexIds, xteas },
+            header: { cacheInfo: source.info, indexIds: source.indexIds },
             entries,
         };
     }
@@ -85,8 +71,8 @@ export class CachePackBuilder {
         }
     }
 
-    // Re-encoded uncompressed: the pack is compressed as a whole in transit, and recompressing here
-    // would only cost build time.
+    // Re-encoded as plain archive data like every other entry: the browser has no decompressor, and
+    // the pack is compressed as a whole in transit.
     private packFileSubset(
         index: CacheIndex,
         reference: ArchiveReference,
@@ -100,9 +86,8 @@ export class CachePackBuilder {
             }
             return file;
         });
-        const archiveData = Archive.encode(files);
-        const data = Container.encodeUncompressed(archiveData);
-        return { reference: reference.withFiles(fileIds, data.length, archiveData.length), data };
+        const data = Archive.encode(files);
+        return { reference: reference.withFiles(fileIds, data.length), data };
     }
 
     private decodedArchive(index: CacheIndex, archiveId: number): Archive {

@@ -39,6 +39,16 @@ export class MemoryStore implements CacheStore<ApiType.SYNC> {
         readonly metaFile?: ArrayBuffer,
     ) {}
 
+    indexIds(): number[] {
+        const ids: number[] = [];
+        this.indexFiles.forEach((indexFile, indexId) => {
+            if (indexFile) {
+                ids.push(indexId);
+            }
+        });
+        return ids;
+    }
+
     getIndexFile(indexId: number): ArrayBuffer | undefined {
         if (indexId === CacheIndex.META_INDEX_ID) {
             return this.metaFile;

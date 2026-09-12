@@ -14,13 +14,6 @@ import { SeqFrameLoader } from "../../model/seq/SeqFrameLoader";
 import { SkeletalSeqLoader } from "../../model/skeletal/SkeletalSeqLoader";
 import { IndexedSprite } from "../../sprite/IndexedSprite";
 import { TextureLoader } from "../../texture/TextureLoader";
-import { CacheIndex } from "../CacheIndex";
-import { CacheInfo } from "../CacheInfo";
-import { CacheSystem } from "../CacheSystem";
-import { detectCacheType } from "../CacheType";
-import { Dat2CacheLoaderFactory } from "./Dat2CacheLoaderFactory";
-import { DatCacheLoaderFactory } from "./DatCacheLoaderFactory";
-import { LegacyCacheLoaderFactory } from "./LegacyCacheLoaderFactory";
 
 export interface CacheLoaderFactory {
     getUnderlayTypeLoader(): FloorTypeLoader;
@@ -49,20 +42,4 @@ export interface CacheLoaderFactory {
 
     getMapScenes(): IndexedSprite[];
     getMapFunctions(): IndexedSprite[];
-}
-
-export function getCacheLoaderFactory(
-    cacheInfo: CacheInfo,
-    cacheSystem: CacheSystem,
-): CacheLoaderFactory {
-    const cacheType = detectCacheType(cacheInfo);
-    switch (cacheType) {
-        case "legacy":
-            return new LegacyCacheLoaderFactory(cacheInfo, cacheSystem);
-        case "dat":
-            return new DatCacheLoaderFactory(cacheInfo, cacheType, cacheSystem);
-        case "dat2":
-            return new Dat2CacheLoaderFactory(cacheInfo, cacheType, cacheSystem);
-    }
-    throw new Error("Not implemented");
 }

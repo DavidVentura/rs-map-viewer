@@ -21,8 +21,6 @@ import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { createViewerLoaders } from "./ViewerLoaders";
 import { MusicPlayer } from "./audio/MusicPlayer";
-import { NpcSpawn } from "./data/npc/NpcSpawn";
-import { ObjSpawn } from "./data/obj/ObjSpawn";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
 import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
 import { GameWorld } from "./game/GameWorld";
@@ -80,8 +78,6 @@ export class MapViewer {
     constructor(
         readonly workerPool: RenderDataWorkerPool,
         readonly cacheList: CacheList,
-        readonly objSpawns: ObjSpawn[],
-        readonly npcSpawns: NpcSpawn[],
         readonly encounterId: EncounterId,
         rendererType: MapViewerRendererType,
         cache: LoadedCache,

@@ -1,16 +1,20 @@
+import { MapSpawns, mapSpawnsJson, parseMapSpawns } from "../../map/MapSpawns";
 import { CacheInfo } from "../CacheInfo";
 
 // "RSCP" (RuneScape Cache Pack).
 const MAGIC = 0x52534350;
-const FORMAT_VERSION = 1;
+// Bumped whenever the layout or the meaning of an entry changes, so a pack of another format is
+// rejected rather than misread.
+const FORMAT_VERSION = 2;
 
 const ENTRY_TABLE_ROW_SIZE = 4 + 4 + 4 + 4; // indexId, archiveId, blobOffset, blobLength
 
 export type CachePackEntry = {
     readonly indexId: number;
     readonly archiveId: number;
-    // A container exactly as CacheStore.read returns it: either the source cache's bytes or a
-    // re-encoded subset (reference tables, config archives).
+    // Decoded archive data, as an ArchiveStore reads it: either a whole archive of the source cache
+    // decompressed and decrypted at build, or a re-encoded subset (reference tables, config
+    // archives).
     readonly data: Int8Array;
 };
 
@@ -19,21 +23,23 @@ export type CachePackHeader = {
     // Every index of the source cache, each with a (possibly empty) subset reference table, so
     // CacheSystem.indexExists answers as it does on the full cache.
     readonly indexIds: readonly number[];
-    // Keys of the packed map archives, by archive id (a string, as JSON object keys are).
-    readonly xteas: Readonly<Record<string, readonly number[]>>;
 };
 
-export type CachePack = {
+// The part of a pack cut from the cache.
+export type SparseCache = {
     readonly header: CachePackHeader;
     readonly entries: readonly CachePackEntry[];
+};
+
+// The spawns ride in the pack, rather than the client fetching the world's spawn lists, since the
+// map loader only places those inside the packed squares.
+export type CachePack = SparseCache & {
+    readonly spawns: MapSpawns;
 };
 
 // Fixed key order, so equal headers serialise to equal bytes.
 function canonicalHeaderJson(header: CachePackHeader): string {
     const { cacheInfo } = header;
-    const xteaArchiveIds = Object.keys(header.xteas)
-        .map((key) => parseInt(key))
-        .sort((a, b) => a - b);
     return JSON.stringify({
         cacheInfo: {
             name: cacheInfo.name,
@@ -44,9 +50,6 @@ function canonicalHeaderJson(header: CachePackHeader): string {
             size: cacheInfo.size,
         },
         indexIds: [...header.indexIds].sort((a, b) => a - b),
-        xteas: Object.fromEntries(
-            xteaArchiveIds.map((archiveId) => [String(archiveId), header.xteas[archiveId]]),
-        ),
     });
 }
 
@@ -68,6 +71,7 @@ function sortedEntries(entries: readonly CachePackEntry[]): CachePackEntry[] {
 export function encodeCachePack(pack: CachePack): Uint8Array {
     const entries = sortedEntries(pack.entries);
     const headerBytes = new TextEncoder().encode(canonicalHeaderJson(pack.header));
+    const spawnsBytes = new TextEncoder().encode(mapSpawnsJson(pack.spawns));
 
     const blobOffsets = new Array<number>(entries.length);
     let blobTotalLength = 0;
@@ -76,7 +80,8 @@ export function encodeCachePack(pack: CachePack): Uint8Array {
         blobTotalLength += entries[i].data.length;
     }
 
-    const tableStart = 4 + 4 + 4 + headerBytes.length;
+    const spawnsStart = 4 + 4 + 4 + headerBytes.length;
+    const tableStart = spawnsStart + 4 + spawnsBytes.length;
     const blobStart = tableStart + 4 + entries.length * ENTRY_TABLE_ROW_SIZE;
 
     const bytes = new Uint8Array(blobStart + blobTotalLength);
@@ -86,6 +91,8 @@ export function encodeCachePack(pack: CachePack): Uint8Array {
     view.setUint32(4, FORMAT_VERSION);
     view.setUint32(8, headerBytes.length);
     bytes.set(headerBytes, 12);
+    view.setUint32(spawnsStart, spawnsBytes.length);
+    bytes.set(spawnsBytes, spawnsStart + 4);
 
     view.setUint32(tableStart, entries.length);
     entries.forEach((entry, i) => {
@@ -123,7 +130,18 @@ export function decodeCachePack(buffer: ArrayBufferLike): CachePack {
         new TextDecoder().decode(bytes.slice(12, 12 + headerLength)),
     );
 
-    const tableStart = 12 + headerLength;
+    const spawnsStart = 12 + headerLength;
+    const spawnsLength = view.getUint32(spawnsStart);
+    const spawns = parseMapSpawns(
+        JSON.parse(
+            new TextDecoder().decode(bytes.slice(spawnsStart + 4, spawnsStart + 4 + spawnsLength)),
+        ),
+    );
+    if (spawns.kind === "INVALID") {
+        throw new Error(`Cache pack spawns are malformed: ${spawns.reason}`);
+    }
+
+    const tableStart = spawnsStart + 4 + spawnsLength;
     const entryCount = view.getUint32(tableStart);
     const blobStart = tableStart + 4 + entryCount * ENTRY_TABLE_ROW_SIZE;
     const entries = new Array<CachePackEntry>(entryCount);
@@ -140,5 +158,5 @@ export function decodeCachePack(buffer: ArrayBufferLike): CachePack {
         };
     }
 
-    return { header, entries };
+    return { header, spawns: spawns.value, entries };
 }

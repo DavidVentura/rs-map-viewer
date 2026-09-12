@@ -1,9 +1,7 @@
 import { CacheRoots, canonicalCacheRoots } from "../../rs/cache/pack/CacheRoots";
-import { Scene } from "../../rs/scene/Scene";
-import { NpcSpawn, getMapNpcSpawns } from "../data/npc/NpcSpawn";
-import { ObjSpawn, getMapObjSpawns } from "../data/obj/ObjSpawn";
+import { PackRequest, canonicalPackRequest } from "../../rs/cache/pack/PackRequest";
 import { AnimPreviewParams } from "../game/AnimPreview";
-import { Encounter } from "../game/Encounter";
+import { Encounter, buildPreviewEncounter } from "../game/Encounter";
 import {
     ActorAssets,
     PreviewAssets,
@@ -11,9 +9,6 @@ import {
     SpotAnimBake,
     actorAssets,
 } from "./ActorAssets";
-
-// Every plane, the most the map loader can be asked to show.
-const MAX_LEVEL = Scene.MAX_LEVELS - 1;
 
 type RootIds = {
     readonly npcTypeIds: readonly number[];
@@ -82,29 +77,31 @@ function actorRoots(assets: ActorAssets): RootIds {
     ]);
 }
 
-// The cache ids an encounter reads by game-declared id: its map squares, the obj spawns (and, for
-// encounters with ambient npcs, the npc spawns) inside them, and everything its actor buffer is
-// baked from. Whatever the cache itself references from these (models, frames, textures, locs) is
-// left for the pack resolver to follow.
+// The cache ids an encounter reads by game-declared id: its map squares and everything its actor
+// buffer is baked from. Whatever the cache itself references from these (models, frames, textures,
+// locs) is left for the pack resolver to follow, and the spawns inside the squares for the pack
+// server to add (see packRequest).
 export function cacheRoots(
     encounter: Encounter,
     preview: AnimPreviewParams | undefined,
-    npcSpawns: NpcSpawn[],
-    objSpawns: ObjSpawn[],
 ): CacheRoots {
-    const objSpawnIds = encounter.mapSquares.flatMap(({ mapX, mapY }) =>
-        getMapObjSpawns(objSpawns, MAX_LEVEL, mapX, mapY).map((spawn) => spawn.id),
-    );
-    const npcSpawnIds = encounter.ambientNpcs
-        ? encounter.mapSquares.flatMap(({ mapX, mapY }) =>
-              getMapNpcSpawns(npcSpawns, MAX_LEVEL, mapX, mapY).map((spawn) => spawn.id),
-          )
-        : [];
     return canonicalCacheRoots({
         mapSquares: encounter.mapSquares,
-        ...mergeRoots([
-            actorRoots(actorAssets(encounter, preview)),
-            { ...NO_ROOTS, npcTypeIds: npcSpawnIds, objTypeIds: objSpawnIds },
-        ]),
+        ...actorRoots(actorAssets(encounter, preview)),
+    });
+}
+
+// The pack an encounter loads: its roots, with the obj spawns of every square and, for encounters
+// with ambient npcs, the npc spawns. The animation viewer maps the base encounter's squares without
+// ambient npcs (see MapViewer.encounter), so its pack leaves them out.
+export function packRequest(
+    encounter: Encounter,
+    preview: AnimPreviewParams | undefined,
+): PackRequest {
+    const mapped = preview ? buildPreviewEncounter(encounter) : encounter;
+    return canonicalPackRequest({
+        roots: cacheRoots(encounter, preview),
+        npcSpawnSquares: mapped.ambientNpcs ? mapped.mapSquares : [],
+        objSpawnSquares: mapped.mapSquares,
     });
 }

@@ -4,8 +4,9 @@ import path from "path";
 import { pipeline } from "stream/promises";
 
 import { CacheInfo } from "../rs/cache/CacheInfo";
-import { parseCacheRoots } from "../rs/cache/pack/CacheRoots";
 import { parsePackId } from "../rs/cache/pack/PackId";
+import { parsePackRequest } from "../rs/cache/pack/PackRequest";
+import { MapSpawns } from "../rs/map/MapSpawns";
 import { PackResolver, RootsPacker } from "./PackResolver";
 import { PackStore } from "./PackStore";
 
@@ -14,6 +15,8 @@ export type PackServerConfig = {
     // Packs of each cache go in a directory of its name under this one.
     readonly packsDir: string;
     readonly openPacker: (info: CacheInfo) => RootsPacker;
+    // Every spawn of the world, which packs take the spawns inside their squares from.
+    readonly worldSpawns: MapSpawns;
 };
 
 type ServedCache = {
@@ -21,7 +24,7 @@ type ServedCache = {
     readonly resolver: PackResolver;
 };
 
-// Roots name every id an encounter uses, a few thousand at most.
+// Requests name every id an encounter uses, a few thousand at most.
 const MAX_RESOLVE_BODY_BYTES = 1024 * 1024;
 
 const PACK_FILE_SUFFIX = ".pack";
@@ -73,7 +76,7 @@ async function resolvePack(
 ): Promise<void> {
     const body = await readBody(request);
     if (body.kind === "TOO_LARGE") {
-        sendText(response, 413, `Cache roots over ${MAX_RESOLVE_BODY_BYTES} bytes`);
+        sendText(response, 413, `Pack request over ${MAX_RESOLVE_BODY_BYTES} bytes`);
         return;
     }
     const parsedJson = parseJson(body.text);
@@ -81,13 +84,13 @@ async function resolvePack(
         sendText(response, 400, "Body is not JSON");
         return;
     }
-    const parsed = parseCacheRoots(parsedJson.json);
+    const parsed = parsePackRequest(parsedJson.json);
     if (parsed.kind === "INVALID") {
         sendText(response, 400, parsed.reason);
         return;
     }
     const start = performance.now();
-    const outcome = await served.resolver.resolve(parsed.roots);
+    const outcome = await served.resolver.resolve(parsed.request);
     if (outcome.kind === "UNKNOWN_ROOT") {
         sendText(response, 400, outcome.reason);
         return;
@@ -128,13 +131,13 @@ async function sendPack(
 }
 
 // GET  /packs/caches.json               the caches packs can be cut from
-// POST /packs/<cacheName>/resolve       roots as JSON, answered with { packId }
+// POST /packs/<cacheName>/resolve       a PackRequest as JSON, answered with { packId }
 // GET  /packs/<cacheName>/<packId>.pack the pack, immutable since it is named by its hash
 export async function createPackServer(config: PackServerConfig): Promise<http.Server> {
     const servedCaches = new Map<string, ServedCache>();
     for (const info of config.caches) {
         const store = await PackStore.open(path.join(config.packsDir, info.name));
-        const resolver = new PackResolver(store, () => config.openPacker(info));
+        const resolver = new PackResolver(store, () => config.openPacker(info), config.worldSpawns);
         servedCaches.set(info.name, { store, resolver });
     }
     const cacheListJson = JSON.stringify(config.caches);

@@ -2,21 +2,23 @@ import { XteaMap } from "../../map/XteaMap";
 import { CacheInfo } from "../CacheInfo";
 import { CacheSystem } from "../CacheSystem";
 import { LoadedCache } from "../LoadedCache";
+import { ArchiveStore } from "../store/ArchiveStore";
+import { Dat2ArchiveStore } from "../store/Dat2ArchiveStore";
 import { MemoryStore } from "../store/MemoryStore";
 
 // A full dat2 cache that packs are resolved against and cut from: the decoded system for walking
-// the reference graph, and the store for copying containers out exactly as stored.
+// the reference graph, and the store for copying archives out decompressed and decrypted.
 export type SourceCache = LoadedCache & {
-    readonly store: MemoryStore;
+    readonly store: ArchiveStore;
     readonly indexIds: readonly number[];
 };
 
-export function openSourceCache(info: CacheInfo, store: MemoryStore, xteas: XteaMap): SourceCache {
-    const indexIds: number[] = [];
-    store.indexFiles.forEach((indexFile, indexId) => {
-        if (indexFile) {
-            indexIds.push(indexId);
-        }
-    });
-    return { info, store, indexIds, system: CacheSystem.fromStore(store, indexIds), xteas };
+export function openSourceCache(
+    info: CacheInfo,
+    containers: MemoryStore,
+    mapKeys: XteaMap,
+): SourceCache {
+    const store = new Dat2ArchiveStore(containers, mapKeys);
+    const indexIds = containers.indexIds();
+    return { info, store, indexIds, system: CacheSystem.fromStore(store, indexIds) };
 }

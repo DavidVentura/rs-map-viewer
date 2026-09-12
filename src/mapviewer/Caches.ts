@@ -1,6 +1,6 @@
 import { CacheInfo, getLatestCache } from "../rs/cache/CacheInfo";
-import { CacheRoots } from "../rs/cache/pack/CacheRoots";
 import { PackId, parsePackId } from "../rs/cache/pack/PackId";
+import { PackRequest } from "../rs/cache/pack/PackRequest";
 
 const PACKS_PATH = "/packs/";
 
@@ -44,17 +44,17 @@ function parsePackIdResponse(json: unknown): PackId {
     return packId;
 }
 
-// The pack of the named cache that holds everything the roots need, as bytes the render workers
+// The pack of the named cache that holds everything the request needs, as bytes the render workers
 // share with the main thread.
 export async function loadCachePack(
     cacheName: string,
-    roots: CacheRoots,
+    request: PackRequest,
     signal: AbortSignal,
 ): Promise<SharedArrayBuffer> {
     const resolved = await fetchOk(cachePacksPath(cacheName) + "resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(roots),
+        body: JSON.stringify(request),
         signal,
     });
     const packId = parsePackIdResponse(await resolved.json());

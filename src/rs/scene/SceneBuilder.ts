@@ -1,4 +1,3 @@
-import { NpcSpawn } from "../../mapviewer/data/npc/NpcSpawn";
 import { CacheInfo } from "../cache/CacheInfo";
 import { FloorTypeLoader, OverlayFloorTypeLoader } from "../config/floortype/FloorTypeLoader";
 import { ContourGroundInfo, LocModelLoader } from "../config/loctype/LocModelLoader";
@@ -8,6 +7,7 @@ import { LocTypeLoader } from "../config/loctype/LocTypeLoader";
 import { ByteBuffer } from "../io/ByteBuffer";
 import { getMapSquareId } from "../map/MapFileIndex";
 import { MapFileLoader } from "../map/MapFileLoader";
+import { NpcSpawn } from "../map/MapSpawns";
 import { MapSquareCoord } from "../map/MapSquareCoord";
 import { Model } from "../model/Model";
 import { HSL_RGB_MAP, adjustOverlayLight, adjustUnderlayLight, packHsl } from "../util/ColorUtil";
@@ -135,7 +135,6 @@ export class SceneBuilder {
         readonly overlayTypeLoader: OverlayFloorTypeLoader,
         readonly locTypeLoader: LocTypeLoader,
         readonly locModelLoader: LocModelLoader,
-        readonly xteasMap: Map<number, number[]>,
     ) {
         this.newTerrainFormat =
             this.cacheInfo.game === "oldschool" && this.cacheInfo.revision >= 209;
@@ -152,11 +151,11 @@ export class SceneBuilder {
     }
 
     getLocData(mapX: number, mapY: number): Int8Array | undefined {
-        return this.mapFileLoader.getLocData(mapX, mapY, this.xteasMap);
+        return this.mapFileLoader.getLocData(mapX, mapY);
     }
 
     getNpcSpawnData(mapX: number, mapY: number): Int8Array | undefined {
-        return this.mapFileLoader.getNpcSpawnData(mapX, mapY, this.xteasMap);
+        return this.mapFileLoader.getNpcSpawnData(mapX, mapY);
     }
 
     buildScene(

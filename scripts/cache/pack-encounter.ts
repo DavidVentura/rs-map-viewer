@@ -2,9 +2,7 @@
 //   npx tsx scripts/cache/pack-encounter.ts <encounterId> [output.pack]
 import fs from "fs";
 
-import { cacheRoots } from "../../src/mapviewer/assets/cacheRoots";
-import type { NpcSpawn } from "../../src/mapviewer/data/npc/NpcSpawn";
-import type { ObjSpawn } from "../../src/mapviewer/data/obj/ObjSpawn";
+import { packRequest } from "../../src/mapviewer/assets/cacheRoots";
 import { EncounterId, getEncounter } from "../../src/mapviewer/game/Encounter";
 import { CacheIndex } from "../../src/rs/cache/CacheIndex";
 import { IndexType } from "../../src/rs/cache/IndexType";
@@ -13,6 +11,8 @@ import { CachePackBuilder } from "../../src/rs/cache/pack/CachePackBuilder";
 import { CacheSelectionResolver } from "../../src/rs/cache/pack/resolveCacheSelection";
 import { Bzip2 } from "../../src/rs/compression/Bzip2";
 import { readSourceCache } from "../../src/server/CacheDirectory";
+import { readWorldSpawns } from "../../src/server/WorldSpawns";
+import { packContents } from "../../src/server/packContents";
 import { loadCacheInfos, loadCacheList } from "./load-util";
 
 function parseEncounterId(arg: string | undefined): EncounterId {
@@ -26,10 +26,6 @@ function parseEncounterId(arg: string | undefined): EncounterId {
         );
     }
     return encounterId;
-}
-
-function loadJsonFile<T>(path: string): T {
-    return JSON.parse(fs.readFileSync(path, "utf8"));
 }
 
 function formatBytes(bytes: number): string {
@@ -78,11 +74,9 @@ async function main(): Promise<void> {
 
     const source = readSourceCache("./caches", loadCacheList(loadCacheInfos()).latest);
 
-    const roots = cacheRoots(
-        getEncounter(encounterId),
-        undefined,
-        loadJsonFile<NpcSpawn[]>("./src/mapviewer/data/npc/npc-spawns-osrs.json"),
-        loadJsonFile<ObjSpawn[]>("./src/mapviewer/data/obj/obj-spawns.json"),
+    const { roots, spawns } = packContents(
+        readWorldSpawns(),
+        packRequest(getEncounter(encounterId), undefined),
     );
 
     const resolveStart = performance.now();
@@ -90,14 +84,15 @@ async function main(): Promise<void> {
     const resolveMs = performance.now() - resolveStart;
 
     const encodeStart = performance.now();
-    const pack = new CachePackBuilder(source).build(selection);
+    const pack: CachePack = { ...new CachePackBuilder(source).build(selection), spawns };
     const bytes = encodeCachePack(pack);
     const encodeMs = performance.now() - encodeStart;
 
     console.log(
         `${encounterId}: ${roots.mapSquares.length} squares, ${roots.npcTypeIds.length} npcs, ` +
             `${roots.objTypeIds.length} objs, ${roots.seqIds.length} seqs, ` +
-            `${roots.spotAnimIds.length} spot anims`,
+            `${roots.spotAnimIds.length} spot anims, ${spawns.npcSpawns.length} npc spawns, ` +
+            `${spawns.objSpawns.length} obj spawns`,
     );
     console.log(`resolve ${resolveMs.toFixed(0)} ms, build and encode ${encodeMs.toFixed(0)} ms`);
     printBreakdown(pack, bytes.length);

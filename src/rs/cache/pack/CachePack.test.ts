@@ -1,9 +1,10 @@
 import { ByteBuffer } from "../../io/ByteBuffer";
 import { ByteWriter } from "../../io/ByteWriter";
+import { canonicalMapSpawns } from "../../map/MapSpawns";
 import { Archive } from "../Archive";
 import { ArchiveFile } from "../ArchiveFile";
 import { CacheInfo } from "../CacheInfo";
-import { Container } from "../Container";
+import { CacheSystem } from "../CacheSystem";
 import { ArchiveReference } from "../ref/ArchiveReference";
 import { ReferenceTable } from "../ref/ReferenceTable";
 import { CachePack, decodeCachePack, encodeCachePack } from "./CachePack";
@@ -25,20 +26,28 @@ function files(archiveId: number, contents: number[][]): ArchiveFile[] {
 
 function decodeArchive(data: Int8Array, archiveFiles: ArchiveFile[]): Archive {
     const fileIds = Int32Array.from(archiveFiles.map((file) => file.id));
-    const container = Container.decode(new ByteBuffer(data));
     return Archive.decode(
         7,
         fileIds.length > 0 ? fileIds[fileIds.length - 1] : 0,
         fileIds.length,
         fileIds,
         new Int32Array(fileIds.length),
-        new ByteBuffer(container.data),
+        new ByteBuffer(data),
     );
 }
 
+const SPAWNS = canonicalMapSpawns(
+    [
+        { id: 3106, name: "Man", x: 3222, y: 3218, level: 0 },
+        { id: 3106, name: "Man", x: 3221, y: 3218, level: 2 },
+    ],
+    [{ id: 995, count: 3, x: 3220, y: 3219, plane: 1 }],
+);
+
 function makePack(entries: CachePack["entries"]): CachePack {
     return {
-        header: { cacheInfo: CACHE_INFO, indexIds: [2, 7], xteas: { "12850": [1, 2, 3, 4] } },
+        spawns: SPAWNS,
+        header: { cacheInfo: CACHE_INFO, indexIds: [2, 7] },
         entries,
     };
 }
@@ -54,26 +63,25 @@ describe("ByteWriter", () => {
     });
 });
 
-describe("Archive and Container encoding", () => {
+describe("Archive encoding", () => {
     it.each([
         ["no files", []],
         ["one file", [[5, 6, 7]]],
         ["several files, one empty", [[1, 2], [], [3, 4, 5, 6]]],
-    ])("round-trips an uncompressed archive with %s", (_, contents) => {
+    ])("round-trips an archive with %s", (_, contents) => {
         const archiveFiles = files(7, contents);
-        const data = Container.encodeUncompressed(Archive.encode(archiveFiles));
-        const archive = decodeArchive(data, archiveFiles);
+        const archive = decodeArchive(Archive.encode(archiveFiles), archiveFiles);
         for (const file of archiveFiles) {
             expect(Array.from(archive.getFile(file.id)!.data)).toEqual(Array.from(file.data));
         }
         expect(archive.files).toHaveLength(archiveFiles.length);
     });
 
-    it("decodes archive files from a container that is a view into a larger buffer", () => {
+    it("decodes archive files from data that is a view into a larger buffer", () => {
         const archiveFiles = files(7, [[9, 8], [7]]);
-        const container = Container.encodeUncompressed(Archive.encode(archiveFiles));
-        const padded = new Int8Array(container.length + 11);
-        padded.set(container, 11);
+        const data = Archive.encode(archiveFiles);
+        const padded = new Int8Array(data.length + 11);
+        padded.set(data, 11);
         const archive = decodeArchive(padded.subarray(11), archiveFiles);
         expect(Array.from(archive.getFile(3)!.data)).toEqual([7]);
     });
@@ -98,7 +106,7 @@ describe("ReferenceTable encoding", () => {
         );
     }
 
-    it("round-trips archives and a file subset through an uncompressed container view", () => {
+    it("round-trips archives and a file subset through a view into a larger buffer", () => {
         const format = {
             protocol: 7,
             revision: 42,
@@ -107,14 +115,12 @@ describe("ReferenceTable encoding", () => {
             hasSizes: true,
         };
         const full = reference(40000, [0, 2, 70000]);
-        const archives = [reference(3, [0]), full.withFiles([2, 70000], 50, 60)];
-        const container = Container.encodeUncompressed(ReferenceTable.encode(format, archives));
-        const padded = new Int8Array(container.length + 3);
-        padded.set(container, 3);
+        const archives = [reference(3, [0]), full.withFiles([2, 70000], 60)];
+        const table = ReferenceTable.encode(format, archives);
+        const padded = new Int8Array(table.length + 3);
+        padded.set(table, 3);
 
-        const decoded = ReferenceTable.decode(
-            new ByteBuffer(Container.decode(new ByteBuffer(padded.subarray(3))).data),
-        );
+        const decoded = ReferenceTable.decode(new ByteBuffer(padded.subarray(3)));
 
         expect(decoded.format).toEqual(format);
         expect(Array.from(decoded.archiveIds)).toEqual([3, 40000]);
@@ -126,7 +132,7 @@ describe("ReferenceTable encoding", () => {
             full.revision,
             full.nameHash,
         ]);
-        expect([subset.compressedSize, subset.decompressedSize]).toEqual([50, 60]);
+        expect([subset.compressedSize, subset.decompressedSize]).toEqual([60, 60]);
     });
 
     it("rejects archives out of order", () => {
@@ -168,9 +174,10 @@ describe("CachePack", () => {
         { indexId: 255, archiveId: 2, data: Int8Array.from([]) },
     ];
 
-    it("round-trips its header and entries", () => {
+    it("round-trips its header, spawns and entries", () => {
         const decoded = decodeCachePack(encodeCachePack(makePack(entries)).buffer);
         expect(decoded.header).toEqual(makePack(entries).header);
+        expect(decoded.spawns).toEqual(SPAWNS);
         expect(
             decoded.entries.map(({ indexId, archiveId, data }) => [
                 indexId,
@@ -201,5 +208,50 @@ describe("CachePack", () => {
         expect(Array.from(store.read(7, 9))).toEqual([4, 5]);
         expect(() => store.read(7, 10)).toThrow("Cache pack has no data for index 7, archive 10");
         expect(() => store.read(3, 0)).toThrow(/index 3/);
+    });
+
+    it("rejects a pack of another format version", () => {
+        const bytes = encodeCachePack(makePack(entries));
+        new DataView(bytes.buffer).setUint32(4, 1);
+        expect(() => decodeCachePack(bytes.buffer)).toThrow(
+            "Unsupported cache pack format version: 1",
+        );
+    });
+
+    it("decodes archives straight from their packed data", () => {
+        const archiveFiles = files(9, [[1, 2], [3]]);
+        const fileIds = archiveFiles.map((file) => file.id);
+        const data = Archive.encode(archiveFiles);
+        const reference = new ArchiveReference(
+            9,
+            0,
+            new Int8Array(),
+            0,
+            0,
+            0,
+            0,
+            fileIds.length,
+            fileIds[fileIds.length - 1],
+            new Map(fileIds.map((fileId, i) => [fileId, i])),
+            Int32Array.from(fileIds),
+            new Int32Array(fileIds.length),
+        ).withFiles(fileIds, data.length);
+        const format = {
+            protocol: 6,
+            revision: 0,
+            named: false,
+            usesWhirlpool: false,
+            hasSizes: false,
+        };
+        const pack = makePack([
+            { indexId: 255, archiveId: 7, data: ReferenceTable.encode(format, [reference]) },
+            { indexId: 7, archiveId: 9, data },
+        ]);
+        const system = CacheSystem.fromStore(
+            new PackCacheStore(decodeCachePack(encodeCachePack(pack).buffer)),
+            [7],
+        );
+        expect(Array.from(system.getIndex(7).getFile(9, 3)!.data)).toEqual([3]);
+        expect(Array.from(system.getIndex(7).getFile(9, 0)!.data)).toEqual([1, 2]);
     });
 });

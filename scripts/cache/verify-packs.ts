@@ -7,9 +7,7 @@ import os from "os";
 import path from "path";
 
 import { ViewerLoaders, createViewerLoaders } from "../../src/mapviewer/ViewerLoaders";
-import { cacheRoots } from "../../src/mapviewer/assets/cacheRoots";
-import { NpcSpawn } from "../../src/mapviewer/data/npc/NpcSpawn";
-import { ObjSpawn } from "../../src/mapviewer/data/obj/ObjSpawn";
+import { packRequest } from "../../src/mapviewer/assets/cacheRoots";
 import { AnimPreviewParams } from "../../src/mapviewer/game/AnimPreview";
 import { sequenceDurationSeconds } from "../../src/mapviewer/game/Animation";
 import {
@@ -25,20 +23,22 @@ import { WorkerState, clearWorkerStateCaches } from "../../src/mapviewer/worker/
 import { Archive } from "../../src/rs/cache/Archive";
 import { ArchiveFile } from "../../src/rs/cache/ArchiveFile";
 import { CacheIndex } from "../../src/rs/cache/CacheIndex";
-import { Container } from "../../src/rs/cache/Container";
 import { IndexType } from "../../src/rs/cache/IndexType";
 import { LoadedCache } from "../../src/rs/cache/LoadedCache";
-import { CachePacker } from "../../src/rs/cache/pack/CachePacker";
+import { CachePacker, PackContents } from "../../src/rs/cache/pack/CachePacker";
 import { CacheRoots } from "../../src/rs/cache/pack/CacheRoots";
 import { SourceCache } from "../../src/rs/cache/pack/SourceCache";
 import { openCachePack } from "../../src/rs/cache/pack/openCachePack";
 import { ReferenceTable } from "../../src/rs/cache/ref/ReferenceTable";
 import { Bzip2 } from "../../src/rs/compression/Bzip2";
 import { ByteBuffer } from "../../src/rs/io/ByteBuffer";
+import { MapSpawns } from "../../src/rs/map/MapSpawns";
 import { MapSquareCoord } from "../../src/rs/map/MapSquareCoord";
 import { Scene } from "../../src/rs/scene/Scene";
 import { readSourceCache } from "../../src/server/CacheDirectory";
 import { packIdOf } from "../../src/server/PackStore";
+import { readWorldSpawns } from "../../src/server/WorldSpawns";
+import { packContents } from "../../src/server/packContents";
 import { createPackServer } from "../../src/server/packServer";
 import { loadCacheInfos, loadCacheList } from "./load-util";
 
@@ -76,18 +76,14 @@ function fail(message: string): never {
     throw new CheckFailure(message);
 }
 
-function loadJson<T>(filePath: string): T {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
 function bytesEqual(a: Uint8Array | Int8Array, b: Uint8Array | Int8Array): boolean {
     return Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(
         Buffer.from(b.buffer, b.byteOffset, b.byteLength),
     );
 }
 
-function packedBytes(packer: CachePacker, roots: CacheRoots): Uint8Array {
-    const packed = packer.pack(roots);
+function packedBytes(packer: CachePacker, contents: PackContents): Uint8Array {
+    const packed = packer.pack(contents);
     if (packed.kind === "UNKNOWN_ROOT") {
         return fail(packed.reason);
     }
@@ -177,9 +173,9 @@ class HeadlessViewer {
     private readonly mapLoader = new SdMapDataLoader();
     private readonly actorLoader = new ActorRenderDataLoader();
 
-    constructor(cache: LoadedCache, objSpawns: ObjSpawn[], npcSpawns: NpcSpawn[]) {
+    constructor(cache: LoadedCache, spawns: MapSpawns) {
         this.viewer = createViewerLoaders(cache.info, cache.system);
-        this.state = createHeadlessWorkerState(cache, objSpawns, npcSpawns);
+        this.state = createHeadlessWorkerState(cache, spawns);
     }
 
     async loadMap({ mapX, mapY }: MapSquareCoord, loadNpcs: boolean) {
@@ -223,8 +219,8 @@ class HeadlessViewer {
 type Context = {
     readonly source: SourceCache;
     readonly packer: CachePacker;
-    readonly npcSpawns: NpcSpawn[];
-    readonly objSpawns: ObjSpawn[];
+    readonly worldSpawns: MapSpawns;
+    // Places the spawns of the whole world, of which the map loader keeps those of each square.
     readonly fullCache: HeadlessViewer;
     // Several encounters share squares; the full cache builds each the same way every time.
     readonly fullCacheMaps: Map<string, Promise<SdMapData | undefined>>;
@@ -232,9 +228,7 @@ type Context = {
 
 function checkReferenceTables({ source }: Context): void {
     for (const indexId of source.indexIds) {
-        const stored = Container.decode(
-            new ByteBuffer(source.store.read(CacheIndex.META_INDEX_ID, indexId)),
-        ).data;
+        const stored = source.store.read(CacheIndex.META_INDEX_ID, indexId);
         const table = ReferenceTable.decode(new ByteBuffer(stored));
         const encoded = ReferenceTable.encode(table.format, table.archiveReferences);
         if (!bytesEqual(encoded, stored)) {
@@ -257,14 +251,13 @@ function checkArchiveRoundTrips({ source }: Context): void {
         const reference = index.getArchiveReference(archiveId)!;
         const archive = index.getArchive(archiveId);
         const files = Array.from(reference.fileIds, (fileId) => archive.getFile(fileId)!);
-        const container = Container.encodeUncompressed(Archive.encode(files));
         const decoded = Archive.decode(
             archiveId,
             reference.lastFileId,
             reference.fileCount,
             reference.fileIds,
             reference.fileNameHashes,
-            new ByteBuffer(Container.decode(new ByteBuffer(container)).data),
+            new ByteBuffer(Archive.encode(files)),
         );
         const differs = files.find(
             (file: ArchiveFile) => !bytesEqual(decoded.getFile(file.id)!.data, file.data),
@@ -280,19 +273,17 @@ function checkArchiveRoundTrips({ source }: Context): void {
 // A packer that has cut other packs must cut the same bytes as a fresh one: everything it keeps
 // across packs has to be independent of the roots.
 function checkDeterminism(context: Context): void {
-    const { source, packer, npcSpawns, objSpawns } = context;
+    const { source, packer, worldSpawns } = context;
     for (const { name, encounterId, preview } of CASES) {
-        const roots = cacheRoots(getEncounter(encounterId), preview, npcSpawns, objSpawns);
-        const warm = packedBytes(packer, roots);
-        if (!bytesEqual(warm, packedBytes(new CachePacker(source), roots))) {
+        const contents = packContents(worldSpawns, packRequest(getEncounter(encounterId), preview));
+        const warm = packedBytes(packer, contents);
+        if (!bytesEqual(warm, packedBytes(new CachePacker(source), contents))) {
             fail(`${name}: a warm packer cuts different bytes than a fresh one`);
         }
     }
-    const fightCaves = cacheRoots(
-        getEncounter(EncounterId.FIGHT_CAVES),
-        undefined,
-        npcSpawns,
-        objSpawns,
+    const fightCaves = packContents(
+        worldSpawns,
+        packRequest(getEncounter(EncounterId.FIGHT_CAVES), undefined),
     );
     const reopened = new CachePacker(readSourceCache(CACHES_DIR, source.info));
     if (!bytesEqual(packedBytes(packer, fightCaves), packedBytes(reopened, fightCaves))) {
@@ -312,14 +303,15 @@ function loadFullCacheMap(context: Context, square: MapSquareCoord, loadNpcs: bo
 
 async function checkEquivalence(context: Context, testCase: EquivalenceCase): Promise<void> {
     const { encounterId, preview } = testCase;
-    const { packer, npcSpawns, objSpawns, fullCache, source } = context;
+    const { packer, worldSpawns, fullCache, source } = context;
     const baseEncounter = getEncounter(encounterId);
     // The renderer maps the preview encounter but bakes actors for the base encounter's id.
     const mapEncounter = preview ? buildPreviewEncounter(baseEncounter) : baseEncounter;
-    const roots = cacheRoots(baseEncounter, preview, npcSpawns, objSpawns);
-    const packCache = openCachePack(packedBytes(packer, roots).buffer);
-    expectSame(source.info, packCache.info, "cache info");
-    const fromPack = new HeadlessViewer(packCache, objSpawns, npcSpawns);
+    const contents = packContents(worldSpawns, packRequest(baseEncounter, preview));
+    const pack = openCachePack(packedBytes(packer, contents).buffer);
+    expectSame(source.info, pack.cache.info, "cache info");
+    expectSame(contents.spawns, pack.spawns, "spawns");
+    const fromPack = new HeadlessViewer(pack.cache, pack.spawns);
 
     for (const square of mapEncounter.mapSquares) {
         const expected = await loadFullCacheMap(context, square, mapEncounter.ambientNpcs);
@@ -335,8 +327,8 @@ async function checkEquivalence(context: Context, testCase: EquivalenceCase): Pr
         "actors",
     );
     expectSame(
-        fullCache.loadMainThreadRoots(roots),
-        fromPack.loadMainThreadRoots(roots),
+        fullCache.loadMainThreadRoots(contents.roots),
+        fromPack.loadMainThreadRoots(contents.roots),
         "main thread",
     );
 }
@@ -347,9 +339,9 @@ function expectStatus(response: Response, status: number, what: string): void {
     }
 }
 
-// Concurrent resolves of the same roots share one pack, and the served pack is the packer's.
+// Concurrent resolves of the same request share one pack, and the served pack is the packer's.
 async function checkServer(context: Context): Promise<void> {
-    const { source, npcSpawns, objSpawns } = context;
+    const { source, worldSpawns } = context;
     const packsDir = fs.mkdtempSync(path.join(os.tmpdir(), "packs-verify-"));
     const packer = new CachePacker(source);
     let builds = 0;
@@ -357,11 +349,12 @@ async function checkServer(context: Context): Promise<void> {
         caches: [source.info],
         packsDir,
         openPacker: () => ({
-            pack: (roots) => {
+            pack: (contents) => {
                 builds++;
-                return packer.pack(roots);
+                return packer.pack(contents);
             },
         }),
+        worldSpawns,
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/packs`;
@@ -370,16 +363,11 @@ async function checkServer(context: Context): Promise<void> {
         expectStatus(cacheList, 200, "the cache list");
         expectSame([source.info], await cacheList.json(), "cache list");
 
-        const roots = cacheRoots(
-            getEncounter(EncounterId.FIGHT_CAVES),
-            undefined,
-            npcSpawns,
-            objSpawns,
-        );
+        const request = packRequest(getEncounter(EncounterId.LUMBRIDGE), undefined);
         const resolveUrl = `${base}/${encodeURIComponent(source.info.name)}/resolve`;
         const responses = await Promise.all(
             Array.from({ length: 8 }, () =>
-                fetch(resolveUrl, { method: "POST", body: JSON.stringify(roots) }),
+                fetch(resolveUrl, { method: "POST", body: JSON.stringify(request) }),
             ),
         );
         responses.forEach((response) => expectStatus(response, 200, "a resolve"));
@@ -391,7 +379,7 @@ async function checkServer(context: Context): Promise<void> {
         }
         const [packId] = packIds;
 
-        const expected = packedBytes(packer, roots);
+        const expected = packedBytes(packer, packContents(worldSpawns, request));
         if (packId !== packIdOf(expected)) {
             fail(`the pack id ${packId} is not the hash of the packer's bytes`);
         }
@@ -408,17 +396,25 @@ async function checkServer(context: Context): Promise<void> {
         expectStatus(missing, 404, "a missing pack");
         const malformed = await fetch(resolveUrl, {
             method: "POST",
-            body: JSON.stringify({ ...roots, seqIds: [-1] }),
+            body: JSON.stringify({ ...request, roots: { ...request.roots, seqIds: [-1] } }),
         });
         expectStatus(malformed, 400, "malformed roots");
+        const straySpawnSquare = await fetch(resolveUrl, {
+            method: "POST",
+            body: JSON.stringify({ ...request, objSpawnSquares: [{ mapX: 1, mapY: 1 }] }),
+        });
+        expectStatus(straySpawnSquare, 400, "spawns of a square outside the roots");
         const unknown = await fetch(resolveUrl, {
             method: "POST",
-            body: JSON.stringify({ ...roots, npcTypeIds: [1 << 30] }),
+            body: JSON.stringify({
+                ...request,
+                roots: { ...request.roots, npcTypeIds: [1 << 30] },
+            }),
         });
         expectStatus(unknown, 400, "an unknown npc type");
         const unknownCache = await fetch(`${base}/no-such-cache/resolve`, {
             method: "POST",
-            body: JSON.stringify(roots),
+            body: JSON.stringify(request),
         });
         expectStatus(unknownCache, 404, "an unknown cache");
     } finally {
@@ -428,18 +424,16 @@ async function checkServer(context: Context): Promise<void> {
 }
 
 async function main(): Promise<void> {
-    // The app decodes bzip2 with wasm too, and the JS fallback would dominate the run.
+    // The pack server decodes bzip2 with wasm too, and the JS fallback would dominate the run.
     await Bzip2.initWasm();
     const log = console.log;
     const source = readSourceCache(CACHES_DIR, loadCacheList(loadCacheInfos()).latest);
-    const npcSpawns = loadJson<NpcSpawn[]>("./src/mapviewer/data/npc/npc-spawns-osrs.json");
-    const objSpawns = loadJson<ObjSpawn[]>("./src/mapviewer/data/obj/obj-spawns.json");
+    const worldSpawns = readWorldSpawns();
     const context: Context = {
         source,
         packer: new CachePacker(source),
-        npcSpawns,
-        objSpawns,
-        fullCache: new HeadlessViewer(source, objSpawns, npcSpawns),
+        worldSpawns,
+        fullCache: new HeadlessViewer(source, worldSpawns),
         fullCacheMaps: new Map(),
     };
 

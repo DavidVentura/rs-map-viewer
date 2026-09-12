@@ -1,5 +1,3 @@
-import { Bzip2 } from "../compression/Bzip2";
-import { Gzip } from "../compression/Gzip";
 import { ByteBuffer } from "../io/ByteBuffer";
 import { ByteWriter } from "../io/ByteWriter";
 import { StringUtil } from "../util/StringUtil";
@@ -17,74 +15,6 @@ export class Archive {
 
         const files = new Map<number, ArchiveFile>();
         files.set(lastFileId, new ArchiveFile(lastFileId, id, data));
-
-        return new Archive(
-            StringUtil.hashOld,
-            id,
-            lastFileId,
-            fileCount,
-            fileIds,
-            fileNameHashes,
-            files,
-        );
-    }
-
-    static decodeOld(id: number, data: Int8Array, multipleFiles: boolean) {
-        const buffer = new ByteBuffer(data);
-        const files = new Map<number, ArchiveFile>();
-
-        let fileCount: number;
-        let fileIds: Int32Array;
-        let fileNameHashes: Int32Array;
-        if (multipleFiles) {
-            const actualSize = buffer.readMedium();
-            const size = buffer.readMedium();
-
-            const isCompressed = actualSize !== size;
-
-            let dataBuffer: ByteBuffer;
-            let metaBuffer: ByteBuffer;
-            if (isCompressed) {
-                const data = buffer.readUnsignedBytes(size);
-                const decompressed = Bzip2.decompress(data, actualSize);
-                dataBuffer = new ByteBuffer(decompressed);
-                metaBuffer = new ByteBuffer(decompressed);
-            } else {
-                dataBuffer = new ByteBuffer(data);
-                metaBuffer = buffer;
-            }
-
-            fileCount = metaBuffer.readUnsignedShort();
-            dataBuffer.offset = metaBuffer.offset + fileCount * 10;
-
-            fileIds = new Int32Array(fileCount);
-            fileNameHashes = new Int32Array(fileCount);
-            for (let i = 0; i < fileCount; i++) {
-                const nameHash = metaBuffer.readInt();
-                const fileActualSize = metaBuffer.readMedium();
-                const fileSize = metaBuffer.readMedium();
-
-                let decompressedFile: Int8Array;
-                if (isCompressed) {
-                    decompressedFile = dataBuffer.readBytes(fileSize);
-                } else {
-                    const data = dataBuffer.readUnsignedBytes(fileSize);
-                    decompressedFile = Bzip2.decompress(data, fileActualSize);
-                }
-                files.set(i, new ArchiveFile(i, id, decompressedFile));
-                fileIds[i] = i;
-                fileNameHashes[i] = nameHash;
-            }
-        } else {
-            const decompressed = Gzip.decompress(buffer.readUnsignedBytes(buffer.remaining));
-
-            fileCount = 1;
-            fileIds = new Int32Array(fileCount);
-            fileNameHashes = new Int32Array(fileCount);
-            files.set(0, new ArchiveFile(0, id, decompressed));
-        }
-
-        const lastFileId = fileCount - 1;
 
         return new Archive(
             StringUtil.hashOld,

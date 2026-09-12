@@ -27,7 +27,7 @@ import { SpriteTextureLoader } from "../../texture/SpriteTextureLoader";
 import { CacheIndex } from "../CacheIndex";
 import { ConfigType } from "../ConfigType";
 import { IndexType } from "../IndexType";
-import { getCacheLoaderFactory } from "../loader/CacheLoaderFactory";
+import { Dat2CacheLoaderFactory } from "../loader/Dat2CacheLoaderFactory";
 import { CacheRoots } from "./CacheRoots";
 import { CacheSelection, CacheSelectionBuilder } from "./CacheSelection";
 import { SourceCache } from "./SourceCache";
@@ -116,7 +116,7 @@ class CacheGraph {
                     `later, got ${info.game} ${info.revision}`,
             );
         }
-        const factory = getCacheLoaderFactory(info, system);
+        const factory = new Dat2CacheLoaderFactory(info, system);
 
         this.underlayTypes = factory.getUnderlayTypeLoader();
         this.overlayTypes = factory.getOverlayTypeLoader();
@@ -165,7 +165,6 @@ class CacheGraph {
                     this.seqBases,
                 ),
             ),
-            source.xteas,
         );
 
         this.modelIndex = system.getIndex(IndexType.DAT2.models);
@@ -235,7 +234,7 @@ class CacheGraph {
                     bounds.baseY,
                 );
             }
-            const locs = this.mapFileLoader.getLocData(mapX, mapY, this.source.xteas);
+            const locs = this.mapFileLoader.getLocData(mapX, mapY);
             if (!locs) {
                 continue;
             }

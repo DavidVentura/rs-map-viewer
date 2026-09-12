@@ -1,5 +1,5 @@
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { NpcType } from "../../src/rs/config/npctype/NpcType";
 import { SeqType } from "../../src/rs/config/seqtype/SeqType";
 import { SeqFrameLoader } from "../../src/rs/model/seq/SeqFrameLoader";
@@ -97,7 +97,7 @@ function main(): void {
     const { npcId, range } = parseArgs();
     const cacheList = loadCacheList(loadCacheInfos());
     const loadedCache = loadCache(cacheList.latest);
-    const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+    const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
     const factory = getCacheLoaderFactory(cacheList.latest, cacheSystem);
     const npc = factory.getNpcTypeLoader().load(npcId);
     const seqTypeLoader = factory.getSeqTypeLoader();

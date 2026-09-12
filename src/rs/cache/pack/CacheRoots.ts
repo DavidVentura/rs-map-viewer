@@ -1,4 +1,5 @@
 import { MapSquareCoord } from "../../map/MapSquareCoord";
+import { Parsed, isRecord, parseInteger, parseList, parseRecord } from "../../util/Parsed";
 
 declare const canonicalBrand: unique symbol;
 
@@ -25,15 +26,8 @@ export type CacheRootIds = {
 // Map archive ids pack a square's coordinates into a byte each.
 const MAX_MAP_SQUARE_COORD = 255;
 
-type Parsed<T> =
-    | { readonly kind: "PARSED"; readonly value: T }
-    | { readonly kind: "INVALID"; readonly reason: string };
-
 function parseCacheId(kind: string, id: unknown, max: number): Parsed<number> {
-    if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > max) {
-        return { kind: "INVALID", reason: `Invalid ${kind} cache root ${JSON.stringify(id)}` };
-    }
-    return { kind: "PARSED", value: id };
+    return parseInteger(`${kind} cache root`, id, 0, max);
 }
 
 function assertCacheId(kind: string, id: number, max: number): void {
@@ -51,7 +45,7 @@ function canonicalIds(kind: string, ids: Iterable<number>): readonly number[] {
     return unique.sort((a, b) => a - b);
 }
 
-function canonicalMapSquares(squares: Iterable<MapSquareCoord>): readonly MapSquareCoord[] {
+export function canonicalMapSquares(squares: Iterable<MapSquareCoord>): readonly MapSquareCoord[] {
     const sorted = [...squares].sort((a, b) => a.mapX - b.mapX || a.mapY - b.mapY);
     const unique: MapSquareCoord[] = [];
     for (const { mapX, mapY } of sorted) {
@@ -88,50 +82,24 @@ const ROOT_FIELDS: readonly string[] = [
     "spotAnimIds",
 ];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseList<T>(
-    field: string,
-    value: unknown,
-    parseItem: (item: unknown) => Parsed<T>,
-): Parsed<T[]> {
-    if (!Array.isArray(value)) {
-        return { kind: "INVALID", reason: `${field} is not an array` };
-    }
-    const items: T[] = [];
-    for (const item of value) {
-        const parsed = parseItem(item);
-        if (parsed.kind === "INVALID") {
-            return parsed;
-        }
-        items.push(parsed.value);
-    }
-    return { kind: "PARSED", value: items };
-}
-
 function parseIdList(field: string, value: unknown): Parsed<number[]> {
     return parseList(field, value, (id) => parseCacheId(field, id, Number.MAX_SAFE_INTEGER));
 }
 
-function parseMapSquare(value: unknown): Parsed<MapSquareCoord> {
-    if (!isRecord(value)) {
-        return { kind: "INVALID", reason: `Invalid map square ${JSON.stringify(value)}` };
-    }
-    const extra = Object.keys(value).find((key) => key !== "mapX" && key !== "mapY");
-    if (extra !== undefined) {
-        return { kind: "INVALID", reason: `Unexpected map square field ${extra}` };
-    }
-    const mapX = parseCacheId("map square x", value.mapX, MAX_MAP_SQUARE_COORD);
-    if (mapX.kind === "INVALID") {
-        return mapX;
-    }
-    const mapY = parseCacheId("map square y", value.mapY, MAX_MAP_SQUARE_COORD);
-    if (mapY.kind === "INVALID") {
-        return mapY;
-    }
-    return { kind: "PARSED", value: { mapX: mapX.value, mapY: mapY.value } };
+const MAP_SQUARE_FIELDS: readonly string[] = ["mapX", "mapY"];
+
+export function parseMapSquare(value: unknown): Parsed<MapSquareCoord> {
+    return parseRecord("map square", MAP_SQUARE_FIELDS, value, (record) => {
+        const mapX = parseCacheId("map square x", record.mapX, MAX_MAP_SQUARE_COORD);
+        if (mapX.kind === "INVALID") {
+            return mapX;
+        }
+        const mapY = parseCacheId("map square y", record.mapY, MAX_MAP_SQUARE_COORD);
+        if (mapY.kind === "INVALID") {
+            return mapY;
+        }
+        return { kind: "PARSED", value: { mapX: mapX.value, mapY: mapY.value } };
+    });
 }
 
 // Roots as they arrive over the wire: JSON of the CacheRoots shape, in any order and with repeats,

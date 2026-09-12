@@ -1,5 +1,5 @@
-import { CacheSystem } from "../../src/rs/cache/CacheSystem";
-import { getCacheLoaderFactory } from "../../src/rs/cache/loader/CacheLoaderFactory";
+import { getCacheLoaderFactory } from "../../src/rs/cache/loader/getCacheLoaderFactory";
+import { openCacheFiles } from "../../src/rs/cache/openCacheFiles";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
 
 const caches = loadCacheInfos();
@@ -7,7 +7,7 @@ const cacheList = loadCacheList(caches);
 const cacheInfo = cacheList.latest;
 const loadedCache = loadCache(cacheInfo);
 
-const cacheSystem = CacheSystem.fromFiles(loadedCache.type, loadedCache.files);
+const cacheSystem = openCacheFiles(loadedCache.type, loadedCache.files, loadedCache.xteas);
 const cacheLoaderFactory = getCacheLoaderFactory(cacheInfo, cacheSystem);
 
 const npcTypeLoader = cacheLoaderFactory.getNpcTypeLoader();

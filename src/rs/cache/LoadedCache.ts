@@ -1,10 +1,9 @@
-import { XteaMap } from "../map/XteaMap";
 import { CacheInfo } from "./CacheInfo";
 import { CacheSystem } from "./CacheSystem";
 
-// A cache the loaders can read: what it is, its indices, and the keys of its map archives.
+// A cache the loaders can read: what it is and its indices, over decoded archives, so its map
+// archives need no keys.
 export type LoadedCache = {
     readonly info: CacheInfo;
     readonly system: CacheSystem;
-    readonly xteas: XteaMap;
 };
