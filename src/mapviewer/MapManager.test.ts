@@ -1,6 +1,6 @@
 import { getMapSquareId } from "../rs/map/MapFileIndex";
+import { MapSquareCoord } from "../rs/map/MapSquareCoord";
 import { ADJACENT_RADIUS, computeWantedMapIds, diffResidency, focusMapSquare } from "./MapManager";
-import { MapSquareCoord } from "./MapSquareCoord";
 
 const ENCOUNTER_SQUARES: readonly MapSquareCoord[] = [
     { mapX: 36, mapY: 78 },

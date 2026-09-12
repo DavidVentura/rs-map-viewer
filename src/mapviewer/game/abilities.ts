@@ -32,7 +32,7 @@ import {
 } from "./VisualEffect";
 
 // The player's basic-attack sequences are the same ids the renderer preloads per stance (see
-// ActorRenderDataLoader's STANCE_SEQ_CONFIG).
+// ActorAssets' STANCE_SEQ_CONFIG).
 export const BOW_SHOT_CAST_SEQ_ID = 426;
 export const MAGIC_BOLT_CAST_SEQ_ID = 711;
 export const SCIMITAR_SLASH_CAST_SEQ_ID = 390;

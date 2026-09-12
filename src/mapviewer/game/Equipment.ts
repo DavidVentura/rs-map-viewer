@@ -309,7 +309,7 @@ export function equippedVisualItemIds(
 
 // A style's secondary offhand path (defender for melee, offhand book for magic), or undefined for
 // ranged (its secondary path, arrows, has no offhand model). Exposed for the bake-time item/seq
-// enumeration in ActorRenderDataLoader; equippedVisualItemIds is the runtime-facing equivalent.
+// enumeration in ActorAssets; equippedVisualItemIds is the runtime-facing equivalent.
 export function secondaryPathForStyle(style: WeaponStyle): EquipmentPath | undefined {
     return secondaryOffhandPathForStyle(style);
 }

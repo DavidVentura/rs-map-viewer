@@ -1,9 +1,9 @@
 import { vec4 } from "gl-matrix";
 
 import { MapFileIndex, getMapSquareId } from "../rs/map/MapFileIndex";
+import { MapSquareCoord } from "../rs/map/MapSquareCoord";
 import { Scene } from "../rs/scene/Scene";
 import { Camera } from "./Camera";
-import { MapSquareCoord } from "./MapSquareCoord";
 
 function getMapDistance(x: number, z: number, mapX: number, mapY: number): number {
     const centerX = mapX * Scene.MAP_SQUARE_SIZE + 32;

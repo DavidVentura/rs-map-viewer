@@ -1,16 +1,9 @@
-import objSpawnsUrl from "./obj-spawns.json?url";
-
 export interface ObjSpawn {
     id: number;
     count: number;
     x: number;
     y: number;
     plane: number;
-}
-
-export async function fetchObjSpawns(): Promise<ObjSpawn[]> {
-    const response = await fetch(objSpawnsUrl);
-    return await response.json();
 }
 
 export function getMapObjSpawns(

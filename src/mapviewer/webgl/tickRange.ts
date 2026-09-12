@@ -1,4 +1,4 @@
-import { MapSquareCoord } from "../MapSquareCoord";
+import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 
 // Ambient NPCs and animated locs are only simulated and drawn for map squares within this
 // Chebyshev distance (in map squares) of the square the player stands on.

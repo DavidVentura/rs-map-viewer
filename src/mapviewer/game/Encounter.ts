@@ -1,4 +1,4 @@
-import { MapSquareCoord } from "../MapSquareCoord";
+import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 import { EnemyTypeId } from "./EnemyType";
 
 export type { MapSquareCoord };

@@ -19,10 +19,10 @@ import {
 import { createTextureArray } from "../../picogl/PicoTexture";
 import { RS_TO_RADIANS } from "../../rs/MathConstants";
 import { NpcType } from "../../rs/config/npctype/NpcType";
+import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 import { Scene } from "../../rs/scene/Scene";
 import { isWebGL2Supported } from "../../util/DeviceUtil";
 import { PlayerCentredResidency, ResidencyPolicyKind } from "../MapManager";
-import { MapSquareCoord } from "../MapSquareCoord";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
