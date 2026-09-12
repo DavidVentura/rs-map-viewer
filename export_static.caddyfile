@@ -1,0 +1,49 @@
+# Serves an export_static.sh export, which needs no pack server behind it.
+osrs.davidv.dev {
+	root * /srv/fightcaves
+
+	# The pack buffer is a SharedArrayBuffer shared with the render workers, which needs cross-origin isolation.
+	header Cross-Origin-Opener-Policy same-origin
+	header Cross-Origin-Embedder-Policy require-corp
+
+	# The system MIME table maps .pack to Java's pack200 type, which encode would not compress.
+	header /packs/*/*.pack Content-Type application/octet-stream
+	# A custom match replaces encode's default content types, so those are listed again.
+	# TODO: export_static.sh could precompress packs instead (zstd -19 and gzip -9 files beside each .pack,
+	# served with file_server { precompressed zstd gzip }): smaller than compressing here, and no CPU per request.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/wasm*
+			header Content-Type image/svg+xml*
+			header Content-Type application/octet-stream
+		}
+	}
+
+	# The export's resolve.json holds the answer to the one resolve its encounter makes.
+	@resolve {
+		method POST
+		path /packs/*/resolve
+	}
+	handle @resolve {
+		method GET
+		rewrite * {path}.json
+		file_server
+	}
+
+	# The export only has this encounter's pack, so any other encounter fails on missing types.
+	@otherEncounter {
+		path /
+		not query enc=fightcaves
+	}
+	redir @otherEncounter /?enc=fightcaves
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
