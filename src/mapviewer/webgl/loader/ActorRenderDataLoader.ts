@@ -49,7 +49,7 @@ import { SkinFaceSelection, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilde
 import { SkinSeqFrames, Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
-import { brightenModel, buildSpotAnimModel } from "./AnimationBaking";
+import { brightenModel, buildSpotAnimModel } from "./ActorModels";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
 
 // A switch animation plays while the OLD style's weapon is still equipped, so the "switch into
