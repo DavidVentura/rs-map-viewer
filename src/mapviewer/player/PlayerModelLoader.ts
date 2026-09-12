@@ -2,6 +2,10 @@ import { ObjType } from "../../rs/config/objtype/ObjType";
 import { ObjTypeLoader } from "../../rs/config/objtype/ObjTypeLoader";
 import { SeqType } from "../../rs/config/seqtype/SeqType";
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
+import {
+    CHARACTER_LIGHT_CONTRAST_BONUS,
+    CHARACTER_LIGHT_DIRECTION,
+} from "../../rs/model/CharacterLight";
 import { Model } from "../../rs/model/Model";
 import { ModelData } from "../../rs/model/ModelData";
 import { ModelLoader } from "../../rs/model/ModelLoader";
@@ -55,10 +59,10 @@ export class PlayerModelLoader {
         return ModelData.merge(models, models.length).light(
             this.textureLoader,
             appearance.ambient + 64,
-            appearance.contrast + 850,
-            -30,
-            -50,
-            -30,
+            appearance.contrast + CHARACTER_LIGHT_CONTRAST_BONUS,
+            CHARACTER_LIGHT_DIRECTION.x,
+            CHARACTER_LIGHT_DIRECTION.y,
+            CHARACTER_LIGHT_DIRECTION.z,
         );
     }
 

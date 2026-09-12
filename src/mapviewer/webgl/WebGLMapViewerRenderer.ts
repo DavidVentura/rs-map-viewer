@@ -84,6 +84,19 @@ import {
     requestClickCross,
 } from "../hud/ClickCross";
 import {
+    AbilitySlotBlockReason,
+    AbilitySlotHudInfo,
+    BossHudInfo,
+    ClickCrossHudInfo,
+    ContextMenuTooltipHudInfo,
+    HudFrame,
+    PhaseStatus,
+    PickupFlashEvent,
+    SplatEvent,
+    SplatKind,
+    UpgradeCardHudInfo,
+} from "../hud/HudFrame";
+import {
     CLOSED_MENU_STATE,
     MenuAction,
     MenuActionKind,
@@ -100,19 +113,11 @@ import {
     updateMenuHover,
 } from "../hud/contextMenu";
 import {
-    AbilitySlotBlockReason,
-    AbilitySlotHudInfo,
-    BossHudInfo,
-    ClickCrossHudInfo,
-    ContextMenuTooltipHudInfo,
-    HudFrame,
-    PhaseStatus,
-    PickupFlashEvent,
-    SplatEvent,
-    SplatKind,
-    UpgradeCardHudInfo,
-} from "../hud/HudFrame";
-import { HudRegionKind, computeHudLayout, createMenuTextMeasurer, hitTestHud } from "../hud/hudDraw";
+    HudRegionKind,
+    computeHudLayout,
+    createMenuTextMeasurer,
+    hitTestHud,
+} from "../hud/hudDraw";
 import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextureRing";
 import { NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
@@ -126,6 +131,7 @@ import {
 } from "./actor/ActorInstanceData";
 import {
     EnemyTypeAnimationSet,
+    GROUND_ITEM_SCALE,
     PreviewGfxBake,
     getEnemyAnimation,
     getGroundItemAnimation,
@@ -179,9 +185,12 @@ const PREVIEW_GFX_RELOAD_RANGE_SIZE = 21;
 
 // A ground item's click/hover target: a small box around the item itself, the same
 // projected-footprint approach as a world object's (see projectWorldObjectScreenRect), just sized
-// for a loot drop rather than a lever/chest.
-const GROUND_ITEM_HALF_WIDTH_UNITS = 32;
-const GROUND_ITEM_HEIGHT_UNITS = 40;
+// for a loot drop rather than a lever/chest. Grown by GROUND_ITEM_SCALE so the box tracks the
+// item's own baked size (see ActorRenderDataLoader.createGroundItemActorData).
+const GROUND_ITEM_UNSCALED_HALF_WIDTH_UNITS = 32;
+const GROUND_ITEM_UNSCALED_HEIGHT_UNITS = 40;
+const GROUND_ITEM_HALF_WIDTH_UNITS = GROUND_ITEM_UNSCALED_HALF_WIDTH_UNITS * GROUND_ITEM_SCALE;
+const GROUND_ITEM_HEIGHT_UNITS = GROUND_ITEM_UNSCALED_HEIGHT_UNITS * GROUND_ITEM_SCALE;
 const GROUND_ITEM_HOVER_PICK_RADIUS_PX = 16;
 
 // Projectiles and visual effects share the actor buffer's instance capacity with the player and
@@ -1737,7 +1746,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             return { basicAttack: { held: false }, skills: [] };
         }
         if (this.inputCapturedByMenu) {
-            return { basicAttack: { held: false }, skills: player.skills.map(() => ({ held: false })) };
+            return {
+                basicAttack: { held: false },
+                skills: player.skills.map(() => ({ held: false })),
+            };
         }
 
         const inputManager = this.mapViewer.inputManager;
@@ -1752,7 +1764,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             menuAttackTarget = this.mapViewer.world.findEnemy(pendingAction.enemyId);
         }
 
-        const hoveredEnemy = menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredEnemy());
+        const hoveredEnemy =
+            menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredEnemy());
         const isDragging =
             menuAttackTarget !== undefined || (!pointerOverHud && inputManager.isDragging());
 
@@ -1877,12 +1890,18 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (inputManager.mouseX === -1 || inputManager.mouseY === -1 || this.isPointerOverHud()) {
             return undefined;
         }
-        const pickedId = pickEnemyNear(
-            { x: inputManager.mouseX, y: inputManager.mouseY },
+        const pickedId = this.pickGroundItemAt({ x: inputManager.mouseX, y: inputManager.mouseY });
+        return pickedId !== undefined ? this.mapViewer.world.findGroundItem(pickedId) : undefined;
+    }
+
+    // The one ground-item hit test: hover highlight, tooltip, right-click menu and left-click pickup
+    // all use it, so whatever shows as clickable picks the item up when clicked.
+    private pickGroundItemAt(point: ScreenPoint): number | undefined {
+        return pickEnemyNear(
+            point,
             this.buildGroundItemScreenCandidates(),
             GROUND_ITEM_HOVER_PICK_RADIUS_PX,
         );
-        return pickedId !== undefined ? this.mapViewer.world.findGroundItem(pickedId) : undefined;
     }
 
     // Everything under a screen point that the right-click menu (or its hover tooltip) can act on,
@@ -1946,11 +1965,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             });
         }
 
-        const groundItemId = pickEnemyNear(
-            cursor,
-            this.buildGroundItemScreenCandidates(),
-            GROUND_ITEM_HOVER_PICK_RADIUS_PX,
-        );
+        const groundItemId = this.pickGroundItemAt(cursor);
         const groundItem =
             groundItemId !== undefined
                 ? this.mapViewer.world.findGroundItem(groundItemId)
@@ -1968,7 +1983,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             });
         }
 
-        return candidates.sort((a, b) => a.distance - b.distance).map((candidate) => candidate.target);
+        return candidates
+            .sort((a, b) => a.distance - b.distance)
+            .map((candidate) => candidate.target);
     }
 
     private currentViewportSize() {
@@ -2021,7 +2038,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             !this.isPointerOverHud()
         ) {
             const anchor = { x: inputManager.pickX, y: inputManager.pickY };
-            this.menuState = openMenuAt(anchor, this.buildMenuTargetsUnderCursor(anchor.x, anchor.y));
+            this.menuState = openMenuAt(
+                anchor,
+                this.buildMenuTargetsUnderCursor(anchor.x, anchor.y),
+            );
         }
     }
 
@@ -2229,11 +2249,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.pendingMenuAction = undefined;
             this.pickupTargetItemId = pendingAction.groundItemId;
         } else if (!this.isPointerOverHud() && inputManager.isPressEvent()) {
-            this.pickupTargetItemId = pickEnemyNear(
-                { x: inputManager.pressEventX, y: inputManager.pressEventY },
-                this.buildGroundItemScreenCandidates(),
-                0,
-            );
+            this.pickupTargetItemId = this.pickGroundItemAt({
+                x: inputManager.pressEventX,
+                y: inputManager.pressEventY,
+            });
         }
         if (this.pickupTargetItemId === undefined) {
             return undefined;

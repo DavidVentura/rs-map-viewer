@@ -225,13 +225,8 @@ export const SCYTHE_SWEEP: AbilityDefinition = {
         },
         affects: Affects.HOSTILE,
         payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
-        // OSRS plays the dragon halberd special's own weapon-trail for the scythe's basic attack
-        // too, in its red livery rather than the crystal halberd's white (see CLEAVE).
-        casterEffect: {
-            kind: VisualEffectKind.DRAGON_HALBERD_SPECIAL_DARKRED,
-            height: 100,
-            placement: SWEEP_AHEAD,
-        },
+        // No casterEffect yet: the scythe's real swing graphic hasn't been found. The halberd
+        // sweep liveries (478/1891/1895 sets) don't match its 22-frame swing and looked wrong.
     },
 };
 

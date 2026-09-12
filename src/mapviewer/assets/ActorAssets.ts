@@ -201,11 +201,6 @@ const TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID = 2127;
 // Crystal halberd special weapon-trail (SpotAnimType id): 1232, DRAGON_HALBERD_SPECIAL_SOUTH_WHITE
 // (see VisualEffect.CRYSTAL_HALBERD_SPECIAL_SEQ_ID for why only the SOUTH bake is kept).
 const CRYSTAL_HALBERD_SPECIAL_SPOTANIM_ID = 1232;
-// The scythe of vitur basic attack's weapon-trail (SpotAnimType id): 1891,
-// DRAGON_HALBERD_SPECIAL_SOUTH_DARKRED, the same sequence as the crystal halberd's above (see
-// VisualEffect.ts's comment on CRYSTAL_HALBERD_SPECIAL_SEQ_ID). RuneLite names no scythe graphic;
-// the owner picked this livery as the closest.
-const DRAGON_HALBERD_SPECIAL_DARKRED_SPOTANIM_ID = 1891;
 
 // The generic bow release (SpotAnimType id): 19, BRONZE_ARROW_LAUNCH (see
 // VisualEffect.ARROW_LAUNCH_SEQ_ID).
@@ -310,10 +305,6 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
     [VisualEffectKind.TUMEKENS_SHADOW_IMPACT]: animatedSpotAnim(
         TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID,
         TUMEKENS_SHADOW_IMPACT_SEQ_ID,
-    ),
-    [VisualEffectKind.DRAGON_HALBERD_SPECIAL_DARKRED]: animatedSpotAnim(
-        DRAGON_HALBERD_SPECIAL_DARKRED_SPOTANIM_ID,
-        CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
     ),
     [VisualEffectKind.ARROW_LAUNCH]: animatedSpotAnim(
         ARROW_LAUNCH_SPOTANIM_ID,

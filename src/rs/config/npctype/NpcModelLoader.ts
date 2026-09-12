@@ -1,3 +1,7 @@
+import {
+    CHARACTER_LIGHT_CONTRAST_BONUS,
+    CHARACTER_LIGHT_DIRECTION,
+} from "../../model/CharacterLight";
 import { Model } from "../../model/Model";
 import { ModelData } from "../../model/ModelData";
 import { ModelLoader } from "../../model/ModelLoader";
@@ -96,10 +100,10 @@ export class NpcModelLoader {
             model = merged.light(
                 this.textureLoader,
                 npcType.ambient + 64,
-                npcType.contrast * 5 + 850,
-                -30,
-                -50,
-                -30,
+                npcType.contrast * 5 + CHARACTER_LIGHT_CONTRAST_BONUS,
+                CHARACTER_LIGHT_DIRECTION.x,
+                CHARACTER_LIGHT_DIRECTION.y,
+                CHARACTER_LIGHT_DIRECTION.z,
             );
 
             this.modelCache.set(npcType.id, model);

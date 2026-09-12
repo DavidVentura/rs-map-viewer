@@ -20,8 +20,8 @@
 // it - see the v_highlight ambient glow below. Desynced per item so a pile of drops doesn't pulse
 // in lockstep.
 #define GROUND_ITEM_GLOW_SPEED 2.0
-#define GROUND_ITEM_GLOW_FLOOR 0.5
-#define GROUND_ITEM_GLOW_AMPLITUDE 0.5
+#define GROUND_ITEM_GLOW_FLOOR 0.0
+#define GROUND_ITEM_GLOW_AMPLITUDE 0.0
 
 precision highp float;
 

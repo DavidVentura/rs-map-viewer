@@ -15,7 +15,6 @@ export enum VisualEffectKind {
     WARPED_SCEPTRE_IMPACT = 8,
     SWAMP_TRIDENT_IMPACT = 9,
     TUMEKENS_SHADOW_IMPACT = 10,
-    DRAGON_HALBERD_SPECIAL_DARKRED = 11,
     ARROW_LAUNCH = 12,
     CRYSTAL_ARROW_LAUNCH = 13,
     SWAMP_TRIDENT_CAST = 14,
@@ -53,12 +52,6 @@ export const SWAMP_TRIDENT_IMPACT_SEQ_ID = 5461;
 // Tumeken's shadow impact (SpotAnimType 2127, TUMEKENS_SHADOW_IMPACT).
 export const TUMEKENS_SHADOW_IMPACT_SEQ_ID = 664;
 
-// The scythe of vitur basic attack's own weapon-trail graphic: the same halberd-sweep sequence as
-// CRYSTAL_HALBERD_SPECIAL above (SpotAnimType 478, DRAGON_HALBERD_SPECIAL_SOUTH_RED - the owner
-// confirmed OSRS plays the halberd special's red livery for the scythe), kept to the SOUTH bake and
-// rotated to the caster's own facing for the same reason (see VisualEffect.rotation and the
-// CRYSTAL_HALBERD_SPECIAL_SEQ_ID comment above). Reuses CRYSTAL_HALBERD_SPECIAL_SEQ_ID above rather
-// than a seq id of its own, since both spot anims play the same underlying sequence.
 // The generic bow release (SpotAnimType 19, BRONZE_ARROW_LAUNCH): the puff at the bow every arrow
 // tier fires with in OSRS, reused here since the game always flies the bronze arrow model
 // regardless of the equipped tier (see ActorAssets.ARROW_OBJ_ID).
@@ -122,7 +115,7 @@ export class VisualEffect {
     // Captured once here rather than read live off the anchor: OSRS commits an actor to one facing
     // for a weapon-trail's whole playback, but this project's own combatant.rotation keeps changing
     // as its owner moves or turns to a new aim, and a caster-anchored effect can still be playing a
-    // second or more after it was cast (see CRYSTAL_HALBERD_SPECIAL/DRAGON_HALBERD_SPECIAL_DARKRED,
+    // second or more after it was cast (see CRYSTAL_HALBERD_SPECIAL,
     // ~1s at CLEAVE/SCYTHE_SWEEP's own castSpeed). Reading combatant.rotation live therefore made
     // the effect visibly swing away from the direction it was actually cast in as soon as its
     // caster moved. Position still tracks the anchor live (see x/y below) - only facing is frozen.

@@ -3,6 +3,10 @@ import { LocModelType } from "../../../rs/config/loctype/LocModelType";
 import { LocTypeLoader } from "../../../rs/config/loctype/LocTypeLoader";
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { SpotAnimTypeLoader } from "../../../rs/config/spotanimtype/SpotAnimTypeLoader";
+import {
+    CHARACTER_LIGHT_CONTRAST_BONUS,
+    CHARACTER_LIGHT_DIRECTION,
+} from "../../../rs/model/CharacterLight";
 import { Model } from "../../../rs/model/Model";
 import { ModelLoader } from "../../../rs/model/ModelLoader";
 import { PoseSpace } from "../../../rs/model/animation/FramePalette";
@@ -28,6 +32,7 @@ import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoade
 import { WorkerState } from "../../worker/WorkerState";
 import {
     EnemyTypeAnimationSet,
+    GROUND_ITEM_SCALE,
     GroundItemActorData,
     PlayerActorData,
     PreviewGfxAnimationSet,
@@ -137,6 +142,17 @@ function createPlayerActorData(
 // frame, the same way ProjectileBaker bakes the arrow model. Ammo bakes at its stack display count
 // (see Equipment.groundItemDisplayCount) so it resolves to the path's pile model (ObjType.getModel
 // picks the model for the count) instead of a lone single-item model.
+//
+// Lit with the character light rather than ObjModelLoader's own scenery light: a dropped item's
+// upward-facing faces are what the top-down camera actually sees, and the scenery light (only ~8
+// degrees above horizontal, meant for walls/floors) leaves them nearly black on the arena's dark
+// floor. This stays within OSRS's own lighting rules - it's the same direction/contrast players
+// and NPCs already use - and only changes this one-time bake, not ObjModelLoader's other callers.
+//
+// Scaled up by GROUND_ITEM_SCALE around the model's own origin for ARPG-style oversized loot; a
+// ground model's origin sits at its base (OSRS convention, verified against the cache: e.g. arrows
+// span y -4..0), so scaling about it keeps the item sitting on the floor rather than sinking into
+// or floating above it.
 function createGroundItemActorData(
     state: WorkerState,
     skinning: Skinning,
@@ -144,10 +160,19 @@ function createGroundItemActorData(
 ): GroundItemActorData {
     const animationsByItemId = new Map<number, SkinAnimation>();
     for (const { itemId, displayCount } of groundItemDrops) {
-        const model = state.objModelLoader.getModel(itemId, displayCount);
-        if (!model) {
+        const unlit = state.objModelLoader.getUnlitModel(itemId, displayCount);
+        if (!unlit) {
             throw new Error(`Ground item model is missing from the cache for item ${itemId}`);
         }
+        const model = unlit.modelData.light(
+            state.textureLoader,
+            unlit.objType.ambient + 64,
+            unlit.objType.contrast + CHARACTER_LIGHT_CONTRAST_BONUS,
+            CHARACTER_LIGHT_DIRECTION.x,
+            CHARACTER_LIGHT_DIRECTION.y,
+            CHARACTER_LIGHT_DIRECTION.z,
+        );
+        model.scale(GROUND_ITEM_SCALE * 128, GROUND_ITEM_SCALE * 128, GROUND_ITEM_SCALE * 128);
         animationsByItemId.set(itemId, skinning.addStatic(model));
     }
     return { animationsByItemId };
