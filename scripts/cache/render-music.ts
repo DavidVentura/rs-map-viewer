@@ -13,7 +13,7 @@ import { COL_MIDI, convertJagexTrackToStandardMidi, findMusicRowByName } from ".
 
 const SOUNDFONT_PATH = "/home/david/rs-music/Old_School_RuneScape.sf2";
 const OUT_DIR = path.join(__dirname, "../../public/audio");
-const OPUS_BITRATE = "64k";
+const OPUS_BITRATE = "32k";
 const SAMPLE_RATE = "48000";
 // Only trims trailing silence: reversing, removing leading silence, then reversing back leaves
 // the track's actual start untouched.
