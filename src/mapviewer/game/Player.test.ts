@@ -10,11 +10,12 @@ import {
 import { Player, StanceSeqIdsByStance } from "./Player";
 import {
     BOW_SHOT,
+    CLEAVE,
     HEALING_POTION,
     HEALING_POTION_CAST_SEQ_ID,
     MAGIC_BOLT,
     SCIMITAR_SLASH,
-    resolvePlayerAbilityBars,
+    resolvePlayerLoadouts,
 } from "./abilities";
 import { stubSequenceLoaders } from "./testLoaders";
 import { DEFAULT_ABILITY_MODIFIERS, FLEET_FOOTED, VITALITY } from "./upgrades";
@@ -36,32 +37,36 @@ function point(x: number, y: number): AbilityTarget {
 }
 
 function makePlayer(): Player {
-    return new Player(
-        0,
-        0,
-        0,
-        STYLE_SEQ_IDS,
-        resolvePlayerAbilityBars(seqTypeLoader, seqFrameLoader),
-    );
+    return new Player(0, 0, 0, STYLE_SEQ_IDS, resolvePlayerLoadouts(seqTypeLoader, seqFrameLoader));
 }
 
-describe("Player ability bar", () => {
-    it("resolves slot 0 from the current style, with the potion last", () => {
+describe("Player loadout", () => {
+    it("separates the ranged basic attack from its keyboard skills", () => {
         const player = makePlayer();
-        expect(player.abilityBar[0].id).toBe(BOW_SHOT.id);
-        expect(player.abilityBar[player.abilityBar.length - 1].id).toBe("healing_potion");
+        expect(player.basicAttack.id).toBe(BOW_SHOT.id);
+        expect(player.skills.map((skill) => skill.id)).toEqual([
+            "volley",
+            "power_shot",
+            HEALING_POTION.id,
+        ]);
     });
 
-    it("switches slot 0 to the melee attack once in the melee style", () => {
+    it("switches to the melee basic attack and stable skill layout", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MELEE;
-        expect(player.abilityBar[0].id).toBe(SCIMITAR_SLASH.id);
+        expect(player.basicAttack.id).toBe(SCIMITAR_SLASH.id);
+        expect(player.skills.map((skill) => skill.id)).toEqual([
+            CLEAVE.id,
+            "maul_smash",
+            HEALING_POTION.id,
+        ]);
     });
 
-    it("switches slot 0 to the magic attack once in the magic style", () => {
+    it("switches to the magic basic attack and its two keyboard skills", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MAGIC;
-        expect(player.abilityBar[0].id).toBe(MAGIC_BOLT.id);
+        expect(player.basicAttack.id).toBe(MAGIC_BOLT.id);
+        expect(player.skills.map((skill) => skill.id)).toEqual(["ice_barrage", HEALING_POTION.id]);
     });
 });
 
@@ -189,7 +194,7 @@ describe("Player.requestStyleSwitch", () => {
         player.requestStyleSwitch(WeaponStyle.MELEE);
         expect(player.style).toBe(WeaponStyle.MELEE);
         expect(player.isBusy(0)).toBe(false);
-        expect(player.canUseSlotIgnoringTarget(0, 0)).toBe(true);
+        expect(player.canUseBasicAttackIgnoringTarget(0)).toBe(true);
     });
 
     it("lets a second switch immediately override the first", () => {
@@ -257,13 +262,13 @@ describe("Player.applyUpgrade", () => {
     });
 });
 
-describe("Player.getSlotReadiness", () => {
+describe("Player.getBasicAttackReadiness", () => {
     it("reports mana-blocked for the magic style's attack when out of mana", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MAGIC;
         player.mana = 0;
-        expect(player.getSlotReadiness(0, 0).manaBlocked).toBe(true);
+        expect(player.getBasicAttackReadiness(0).manaBlocked).toBe(true);
         player.mana = player.maxMana;
-        expect(player.getSlotReadiness(0, 0).manaBlocked).toBe(false);
+        expect(player.getBasicAttackReadiness(0).manaBlocked).toBe(false);
     });
 });

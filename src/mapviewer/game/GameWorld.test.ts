@@ -17,7 +17,13 @@ import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
 import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
-import { AbilitySlotInput, GameWorld, ScheduledVisualEffect, SimInput } from "./GameWorld";
+import {
+    AbilitySlotInput,
+    CombatInput,
+    GameWorld,
+    ScheduledVisualEffect,
+    SimInput,
+} from "./GameWorld";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -96,8 +102,8 @@ function makeEnemyType(
     };
 }
 
-function idleAbilities(): AbilitySlotInput[] {
-    return [{ held: false }, { held: false }, { held: false }, { held: false }];
+function idleCombat(): CombatInput {
+    return { basicAttack: { held: false }, skills: [] };
 }
 
 function point(x: number, y: number): AbilityTarget {
@@ -128,10 +134,22 @@ function healAmount(definition: AbilityDefinition): number {
     return payload.amount;
 }
 
-function holdSlot(slot: number, target: AbilityTarget): SimInput {
-    const abilities = idleAbilities();
-    abilities[slot] = { held: true, target };
-    return { movement: { x: 0, y: 0, running: false }, abilities };
+function holdBasicAttack(target: AbilityTarget): SimInput {
+    return {
+        movement: { x: 0, y: 0, running: false },
+        combat: { basicAttack: { held: true, target }, skills: [] },
+    };
+}
+
+function holdSkill(skillSlot: number, target: AbilityTarget): SimInput {
+    const skills: AbilitySlotInput[] = Array.from({ length: skillSlot + 1 }, () => ({
+        held: false,
+    }));
+    skills[skillSlot] = { held: true, target };
+    return {
+        movement: { x: 0, y: 0, running: false },
+        combat: { basicAttack: { held: false }, skills },
+    };
 }
 
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {
@@ -145,7 +163,7 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 }
 
 function idleInput(): SimInput {
-    return { movement: { x: 0, y: 0, running: false }, abilities: idleAbilities() };
+    return { movement: { x: 0, y: 0, running: false }, combat: idleCombat() };
 }
 
 // Auto-picks the first upgrade offer whenever one is pending (a no-op otherwise), so a wave-clear
@@ -160,10 +178,10 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const target = point(500, 0);
 
-        advanceSeconds(world, holdSlot(0, target), impactOf(BOW_SHOT) - 0.05);
+        advanceSeconds(world, holdBasicAttack(target), impactOf(BOW_SHOT) - 0.05);
         expect(world.projectiles.length).toBe(0);
 
-        advanceSeconds(world, holdSlot(0, target), 0.1);
+        advanceSeconds(world, holdBasicAttack(target), 0.1);
         expect(world.projectiles.length).toBe(1);
     });
 
@@ -175,7 +193,7 @@ describe("GameWorld ability wiring", () => {
         const target = point(100000, 0);
 
         const cooldownTotal = impactOf(BOW_SHOT) + BOW_SHOT.locks[0].seconds;
-        advanceSeconds(world, holdSlot(0, target), cooldownTotal * 2 + 0.1);
+        advanceSeconds(world, holdBasicAttack(target), cooldownTotal * 2 + 0.1);
         expect(world.projectiles.length).toBe(2);
     });
 
@@ -191,12 +209,10 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
         player.health = 50;
-        const potionSlot = player.abilityBar.length - 1;
-
-        advanceSeconds(world, holdSlot(potionSlot, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
+        advanceSeconds(world, holdSkill(2, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
         expect(player.health).toBe(50 + healAmount(HEALING_POTION));
 
-        advanceSeconds(world, holdSlot(0, point(500, 0)), 0.05);
+        advanceSeconds(world, holdBasicAttack(point(500, 0)), 0.05);
         expect(world.projectiles.length).toBe(0);
     });
 
@@ -205,9 +221,7 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         const player = world.player!;
         expect(player.health).toBe(player.maxHealth);
-        const potionSlot = player.abilityBar.length - 1;
-
-        advanceSeconds(world, holdSlot(potionSlot, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
+        advanceSeconds(world, holdSkill(2, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
         expect(player.health).toBe(player.maxHealth);
         expect(player.abilityRuntime.canUse(HEALING_POTION, player.mana, world.timeSeconds)).toBe(
             false,
@@ -222,7 +236,7 @@ describe("GameWorld ability wiring", () => {
 
         const switchInput: SimInput = {
             movement: { x: 0, y: 0, running: false },
-            abilities: idleAbilities(),
+            combat: idleCombat(),
             styleSwitch: WeaponStyle.MELEE,
         };
         advanceSeconds(world, switchInput, 1 / 120);
@@ -230,7 +244,7 @@ describe("GameWorld ability wiring", () => {
 
         const movingWhileIdle: SimInput = {
             movement: { x: 1, y: 0, running: false },
-            abilities: idleAbilities(),
+            combat: idleCombat(),
         };
         advanceSeconds(world, movingWhileIdle, 1 / 60);
         expect(player.x).toBeGreaterThan(0);
@@ -246,12 +260,28 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(0, at(enemy)), 0.02);
+        advanceSeconds(world, holdBasicAttack(at(enemy)), 0.02);
 
         expect(enemy.health).toBe(enemy.maxHealth);
         expect(player.abilityRuntime.isBusy(world.timeSeconds)).toBe(false);
         expect(player.y).toBeGreaterThan(0);
         expect(player.y).toBeLessThan(200);
+    });
+
+    it("does not chase an out-of-range target when a melee skill is held", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
+        const player = world.player!;
+        player.style = WeaponStyle.MELEE;
+
+        advanceSeconds(world, holdSkill(0, at(world.enemies[0])), 0.02);
+
+        expect(player.abilityRuntime.isBusy(world.timeSeconds)).toBe(true);
+        expect(player.abilityRuntime.activeCastAnimation(world.timeSeconds)?.definition.id).toBe(
+            CLEAVE.id,
+        );
+        expect(player.y).toBe(0);
     });
 
     it("swings once close enough and damages the enemy", () => {
@@ -262,7 +292,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(0, at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
+        advanceSeconds(world, holdBasicAttack(at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
     });
@@ -275,7 +305,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, point(enemy.x, enemy.y)), impactOf(CLEAVE) + 0.05);
+        advanceSeconds(world, holdSkill(0, point(enemy.x, enemy.y)), impactOf(CLEAVE) + 0.05);
 
         expect(minDamage(CLEAVE)).toBe(minDamage(SCIMITAR_SLASH) * 2);
         expect(enemy.health).toBe(enemy.maxHealth - minDamage(CLEAVE));
@@ -289,7 +319,7 @@ describe("Melee style", () => {
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, point(0, 200)), impactOf(CLEAVE) + 0.05);
+        advanceSeconds(world, holdSkill(0, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth);
     });
@@ -331,7 +361,7 @@ describe("Scheduled visual effects", () => {
             });
         }
 
-        advanceSeconds(world, holdSlot(1, at(world.enemies[0])), impactOf(ICE_BARRAGE) + 0.05);
+        advanceSeconds(world, holdSkill(0, at(world.enemies[0])), impactOf(ICE_BARRAGE) + 0.05);
 
         expect(world.visualEffects.length).toBe(0);
     });
@@ -362,7 +392,7 @@ describe("Maul Smash ground dust", () => {
 
         advanceSeconds(
             world,
-            holdSlot(2, point(0.5 * TILE_SIZE, 5 * TILE_SIZE)),
+            holdSkill(1, point(0.5 * TILE_SIZE, 5 * TILE_SIZE)),
             impactOf(MAUL_SMASH) + 0.05,
         );
 
@@ -407,7 +437,7 @@ describe("Maul Smash ground dust", () => {
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
         world.player!.style = WeaponStyle.MELEE;
 
-        advanceSeconds(world, holdSlot(1, point(0, 200)), impactOf(CLEAVE) + 0.05);
+        advanceSeconds(world, holdSkill(0, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(world.pendingVisualEffects.length).toBe(0);
         expect(world.visualEffects.length).toBe(0);
@@ -424,7 +454,7 @@ describe("Ranged style", () => {
                 ? VOLLEY.effect.delivery.count
                 : 0;
 
-        advanceSeconds(world, holdSlot(1, target), impactOf(VOLLEY) + 0.05);
+        advanceSeconds(world, holdSkill(0, target), impactOf(VOLLEY) + 0.05);
 
         expect(world.projectiles.length).toBe(count);
     });
@@ -436,7 +466,7 @@ describe("Ranged style", () => {
         world.spawnEnemy(400, 0, 0, makeEnemyType(1, 2, 3));
         const [near, far] = world.enemies;
 
-        advanceSeconds(world, holdSlot(2, point(1000, 0)), impactOf(POWER_SHOT) + 0.5);
+        advanceSeconds(world, holdSkill(1, point(1000, 0)), impactOf(POWER_SHOT) + 0.5);
 
         expect(near.health).toBeLessThan(near.maxHealth);
         expect(far.health).toBeLessThan(far.maxHealth);
@@ -452,7 +482,7 @@ describe("Magic style", () => {
         player.style = WeaponStyle.MAGIC;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, at(enemy)), impactOf(ICE_BARRAGE) + 0.05);
+        advanceSeconds(world, holdSkill(0, at(enemy)), impactOf(ICE_BARRAGE) + 0.05);
 
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
@@ -467,7 +497,7 @@ describe("Magic style", () => {
         player.style = WeaponStyle.MAGIC;
         const enemy = world.enemies[0];
 
-        advanceSeconds(world, holdSlot(1, point(enemy.x, enemy.y)), impactOf(ICE_BARRAGE) + 0.05);
+        advanceSeconds(world, holdSkill(0, point(enemy.x, enemy.y)), impactOf(ICE_BARRAGE) + 0.05);
 
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
     });
@@ -520,7 +550,7 @@ describe("Enemy attack cycle", () => {
 
         const retreatInput: SimInput = {
             movement: { x: 0, y: -1, running: true },
-            abilities: idleAbilities(),
+            combat: idleCombat(),
         };
         guard = 0;
         while (enemy.state === EnemyState.WINDUP && guard < 1000) {
@@ -643,7 +673,7 @@ describe("Player death and respawn", () => {
 
         const moveInput: SimInput = {
             movement: { x: 1, y: 0, running: true },
-            abilities: idleAbilities(),
+            combat: idleCombat(),
         };
         advanceSeconds(world, moveInput, Player.DEATH_SECONDS - 0.05);
         expect(player.x).toBe(10);
@@ -709,7 +739,7 @@ describe("Projectile telegraph", () => {
 
         const runInput: SimInput = {
             movement: { x: 1, y: 0, running: true },
-            abilities: idleAbilities(),
+            combat: idleCombat(),
         };
         const tick = GameWorld.FIXED_STEP_SECONDS;
         let contactX: number | undefined;

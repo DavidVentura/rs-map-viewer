@@ -122,7 +122,7 @@ function applyEffectModifiers(effect: AbilityEffect, modifiers: AbilityModifiers
 
 // Pure derivation of an ability's effective definition from the player's accumulated upgrades.
 // abilities.ts stays untouched: this is the only place stacking upgrades changes numbers, so it
-// must be called wherever an ability's numbers matter (Player.abilityBar, effect resolution).
+// must be called wherever an ability's numbers matter (Player loadout, effect resolution).
 export function applyModifiers(
     ability: ResolvedAbility,
     modifiers: AbilityModifiers,

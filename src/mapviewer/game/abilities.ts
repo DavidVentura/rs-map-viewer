@@ -112,17 +112,6 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     },
 };
 
-export function getStyleAttack(style: WeaponStyle): AbilityDefinition {
-    switch (style) {
-        case WeaponStyle.RANGED:
-            return BOW_SHOT;
-        case WeaponStyle.MAGIC:
-            return MAGIC_BOLT;
-        case WeaponStyle.MELEE:
-            return SCIMITAR_SLASH;
-    }
-}
-
 const SPECIAL_RECHARGE_SECONDS = 6;
 
 // Both melee specials hit for twice the basic slash.
@@ -514,32 +503,45 @@ export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
     },
 };
 
-export function buildPlayerAbilityBar(style: WeaponStyle): readonly AbilityDefinition[] {
+export type PlayerLoadout<TAbility> = {
+    readonly basicAttack: TAbility;
+    readonly skills: readonly TAbility[];
+};
+
+export type PlayerLoadoutsByStyle<TAbility> = Record<WeaponStyle, PlayerLoadout<TAbility>>;
+
+export function buildPlayerLoadout(style: WeaponStyle): PlayerLoadout<AbilityDefinition> {
     switch (style) {
         case WeaponStyle.MELEE:
-            return [SCIMITAR_SLASH, CLEAVE, MAUL_SMASH, HEALING_POTION];
+            return {
+                basicAttack: SCIMITAR_SLASH,
+                skills: [CLEAVE, MAUL_SMASH, HEALING_POTION],
+            };
         case WeaponStyle.MAGIC:
-            return [MAGIC_BOLT, ICE_BARRAGE, HEALING_POTION];
+            return { basicAttack: MAGIC_BOLT, skills: [ICE_BARRAGE, HEALING_POTION] };
         case WeaponStyle.RANGED:
-            return [BOW_SHOT, VOLLEY, POWER_SHOT, HEALING_POTION];
+            return { basicAttack: BOW_SHOT, skills: [VOLLEY, POWER_SHOT, HEALING_POTION] };
     }
 }
 
-export type AbilityBarsByStyle = Record<WeaponStyle, readonly ResolvedAbility[]>;
-
-// The composition point for the player's abilities: every bar's cast timing is read from the
+// The composition point for the player's loadouts: every cast timing is read from the
 // cache here, once per Player, so nothing downstream needs the sequence loaders.
-export function resolvePlayerAbilityBars(
+export function resolvePlayerLoadouts(
     seqTypeLoader: SeqTypeLoader,
     seqFrameLoader: SeqFrameLoader,
-): AbilityBarsByStyle {
-    const resolveBar = (style: WeaponStyle) =>
-        buildPlayerAbilityBar(style).map((definition) =>
-            resolveAbility(definition, seqTypeLoader, seqFrameLoader),
-        );
+): PlayerLoadoutsByStyle<ResolvedAbility> {
+    const resolveLoadout = (style: WeaponStyle): PlayerLoadout<ResolvedAbility> => {
+        const loadout = buildPlayerLoadout(style);
+        return {
+            basicAttack: resolveAbility(loadout.basicAttack, seqTypeLoader, seqFrameLoader),
+            skills: loadout.skills.map((definition) =>
+                resolveAbility(definition, seqTypeLoader, seqFrameLoader),
+            ),
+        };
+    };
     return {
-        [WeaponStyle.MELEE]: resolveBar(WeaponStyle.MELEE),
-        [WeaponStyle.MAGIC]: resolveBar(WeaponStyle.MAGIC),
-        [WeaponStyle.RANGED]: resolveBar(WeaponStyle.RANGED),
+        [WeaponStyle.MELEE]: resolveLoadout(WeaponStyle.MELEE),
+        [WeaponStyle.MAGIC]: resolveLoadout(WeaponStyle.MAGIC),
+        [WeaponStyle.RANGED]: resolveLoadout(WeaponStyle.RANGED),
     };
 }

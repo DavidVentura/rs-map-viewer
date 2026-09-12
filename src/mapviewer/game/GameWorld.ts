@@ -7,6 +7,7 @@ import {
     ConeDelivery,
     DeliveryKind,
     ProjectileDelivery,
+    ResolvedAbility,
     WeaponStyle,
     abilityTargetPoint,
     aimedCombatant,
@@ -54,7 +55,7 @@ import {
     stepWaveDirector,
     totalGroupCount,
 } from "./WaveDirector";
-import { getStyleAttack, resolvePlayerAbilityBars } from "./abilities";
+import { resolvePlayerLoadouts } from "./abilities";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import {
     FlightOrigin,
@@ -70,7 +71,10 @@ export type AbilitySlotInput = {
     readonly target?: AbilityTarget;
 };
 
-export type AbilityInput = readonly AbilitySlotInput[];
+export type CombatInput = {
+    readonly basicAttack: AbilitySlotInput;
+    readonly skills: readonly AbilitySlotInput[];
+};
 
 export type PickupTarget = {
     readonly groundItemId: number;
@@ -78,7 +82,7 @@ export type PickupTarget = {
 
 export type SimInput = {
     movement: PlayerInput;
-    abilities: AbilityInput;
+    combat: CombatInput;
     styleSwitch?: WeaponStyle;
     // Index into the pending upgrade offer; only consulted while one is pending.
     chooseUpgrade?: number;
@@ -103,7 +107,6 @@ export class GameWorld {
     static readonly MAX_PROJECTILES = 32;
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 64;
-    static readonly BASIC_ATTACK_SLOT = 0;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
     static readonly CORPSE_SECONDS = 6;
     static readonly ENEMY_GRID_CELL_SIZE = 256;
@@ -159,7 +162,7 @@ export class GameWorld {
             spawn.y,
             level,
             styleSeqIds,
-            resolvePlayerAbilityBars(this.seqTypeLoader, this.seqFrameLoader),
+            resolvePlayerLoadouts(this.seqTypeLoader, this.seqFrameLoader),
         );
         this.player.godMode = this.godMode;
     }
@@ -340,7 +343,7 @@ export class GameWorld {
         if (input.styleSwitch !== undefined) {
             player.requestStyleSwitch(input.styleSwitch);
         }
-        this.processAbilityInput(player, input.abilities, this.timeSeconds);
+        this.processCombatInput(player, input.combat, this.timeSeconds);
         const movement = this.resolveMovementInput(player, input);
         player.update(
             movement,
@@ -689,15 +692,15 @@ export class GameWorld {
         if (player.style !== WeaponStyle.MELEE) {
             return undefined;
         }
-        const slotInput = input.abilities[GameWorld.BASIC_ATTACK_SLOT];
-        if (!slotInput?.held || !slotInput.target) {
+        const basicAttackInput = input.combat.basicAttack;
+        if (!basicAttackInput.held || !basicAttackInput.target) {
             return undefined;
         }
-        const enemy = aimedCombatant(slotInput.target, player.level);
+        const enemy = aimedCombatant(basicAttackInput.target, player.level);
         if (!enemy) {
             return undefined;
         }
-        const attack = getStyleAttack(WeaponStyle.MELEE);
+        const attack = player.basicAttack;
         if (attack.effect.delivery.kind !== DeliveryKind.TARGET) {
             return undefined;
         }
@@ -715,25 +718,48 @@ export class GameWorld {
         return { x: movement.x, y: movement.y, running: input.movement.running };
     }
 
-    private processAbilityInput(player: Player, abilities: AbilityInput, time: number): void {
-        const slotCount = Math.min(abilities.length, player.abilityBar.length);
-        for (let slot = 0; slot < slotCount; slot++) {
-            const slotInput = abilities[slot];
-            if (!slotInput.held || !slotInput.target) {
-                continue;
-            }
-            if (!this.canUseSlot(player, slot, slotInput.target, time)) {
-                continue;
-            }
-            player.beginCast(player.abilityBar[slot], slotInput.target, time);
+    private processCombatInput(player: Player, combat: CombatInput, time: number): void {
+        this.tryBeginCast(
+            player,
+            player.basicAttack,
+            combat.basicAttack,
+            player.canUseBasicAttackIgnoringTarget(time),
+            time,
+        );
+        const skillCount = Math.min(combat.skills.length, player.skills.length);
+        for (let skillSlot = 0; skillSlot < skillCount; skillSlot++) {
+            this.tryBeginCast(
+                player,
+                player.skills[skillSlot],
+                combat.skills[skillSlot],
+                player.canUseSkillIgnoringTarget(skillSlot, time),
+                time,
+            );
         }
     }
 
-    private canUseSlot(player: Player, slot: number, target: AbilityTarget, time: number): boolean {
-        if (!player.canUseSlotIgnoringTarget(slot, time)) {
-            return false;
+    private tryBeginCast(
+        player: Player,
+        ability: ResolvedAbility,
+        abilityInput: AbilitySlotInput,
+        canUse: boolean,
+        time: number,
+    ): void {
+        if (!abilityInput.held || !abilityInput.target) {
+            return;
         }
-        const delivery = player.abilityBar[slot].effect.delivery;
+        if (!canUse || !this.canUseAbility(player, ability, abilityInput.target)) {
+            return;
+        }
+        player.beginCast(ability, abilityInput.target, time);
+    }
+
+    private canUseAbility(
+        player: Player,
+        ability: ResolvedAbility,
+        target: AbilityTarget,
+    ): boolean {
+        const delivery = ability.effect.delivery;
         if (delivery.kind !== DeliveryKind.TARGET) {
             return true;
         }

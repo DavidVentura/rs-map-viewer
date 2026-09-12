@@ -14,7 +14,7 @@ import {
     equipmentMaxHealthBonus,
 } from "./Equipment";
 import { Terrain } from "./Terrain";
-import { AbilityBarsByStyle } from "./abilities";
+import { PlayerLoadout, PlayerLoadoutsByStyle } from "./abilities";
 import { AbilitySlotReadiness, CastCosts, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -99,7 +99,7 @@ export class Player implements Combatant, ManaPool {
         public y: number,
         readonly level: number,
         readonly styleSeqIds: StanceSeqIdsByStance,
-        private readonly abilityBars: AbilityBarsByStyle,
+        private readonly loadouts: PlayerLoadoutsByStyle<ResolvedAbility>,
     ) {
         this.spawnX = x;
         this.spawnY = y;
@@ -122,12 +122,24 @@ export class Player implements Combatant, ManaPool {
         return this.activeSeqIds.runSeqId;
     }
 
-    get abilityBar(): readonly ResolvedAbility[] {
+    private get activeLoadout(): PlayerLoadout<ResolvedAbility> {
         const combined = composeModifiers(
             this.modifiers,
             equipmentAbilityModifiers(this.equipment, this.style),
         );
-        return this.abilityBars[this.style].map((ability) => applyModifiers(ability, combined));
+        const loadout = this.loadouts[this.style];
+        return {
+            basicAttack: applyModifiers(loadout.basicAttack, combined),
+            skills: loadout.skills.map((ability) => applyModifiers(ability, combined)),
+        };
+    }
+
+    get basicAttack(): ResolvedAbility {
+        return this.activeLoadout.basicAttack;
+    }
+
+    get skills(): readonly ResolvedAbility[] {
+        return this.activeLoadout.skills;
     }
 
     getModifiers(): AbilityModifiers {
@@ -165,24 +177,52 @@ export class Player implements Combatant, ManaPool {
         return this.godMode ? CastCosts.FREE : CastCosts.CHARGED;
     }
 
-    getSlotReadiness(slot: number, timeSeconds: number): AbilitySlotReadiness {
-        const definition = this.abilityBar[slot];
+    getBasicAttackReadiness(timeSeconds: number): AbilitySlotReadiness {
+        const attack = this.basicAttack;
         return computeSlotReadiness(
-            definition,
-            this.abilityRuntime.chargeStateFor(definition),
+            attack,
+            this.abilityRuntime.chargeStateFor(attack),
             this.mana,
             timeSeconds,
             this.castCosts(),
         );
     }
 
-    canUseSlotIgnoringTarget(slot: number, timeSeconds: number): boolean {
-        return this.abilityRuntime.canUse(
-            this.abilityBar[slot],
+    getSkillReadiness(skillSlot: number, timeSeconds: number): AbilitySlotReadiness {
+        const skill = this.skillAt(skillSlot);
+        return computeSlotReadiness(
+            skill,
+            this.abilityRuntime.chargeStateFor(skill),
             this.mana,
             timeSeconds,
             this.castCosts(),
         );
+    }
+
+    canUseBasicAttackIgnoringTarget(timeSeconds: number): boolean {
+        return this.abilityRuntime.canUse(
+            this.basicAttack,
+            this.mana,
+            timeSeconds,
+            this.castCosts(),
+        );
+    }
+
+    canUseSkillIgnoringTarget(skillSlot: number, timeSeconds: number): boolean {
+        return this.abilityRuntime.canUse(
+            this.skillAt(skillSlot),
+            this.mana,
+            timeSeconds,
+            this.castCosts(),
+        );
+    }
+
+    private skillAt(skillSlot: number): ResolvedAbility {
+        const skill = this.skills[skillSlot];
+        if (!skill) {
+            throw new Error(`No skill at slot ${skillSlot} for ${this.style}`);
+        }
+        return skill;
     }
 
     isBusy(timeSeconds: number): boolean {

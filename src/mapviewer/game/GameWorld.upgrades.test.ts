@@ -67,7 +67,10 @@ function twoWaveEncounter(): Encounter {
 }
 
 function idleInput(): SimInput {
-    return { movement: { x: 0, y: 0, running: false }, abilities: [] };
+    return {
+        movement: { x: 0, y: 0, running: false },
+        combat: { basicAttack: { held: false }, skills: [] },
+    };
 }
 
 function killAllEnemies(world: GameWorld): void {
@@ -126,7 +129,7 @@ describe("Wave-cleared upgrade offer", () => {
 
         world.advance(1 / 120, {
             movement: { x: 0, y: 0, running: false },
-            abilities: [],
+            combat: { basicAttack: { held: false }, skills: [] },
             chooseUpgrade: 1,
         });
 

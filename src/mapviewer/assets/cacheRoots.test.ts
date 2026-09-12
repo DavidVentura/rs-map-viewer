@@ -1,7 +1,7 @@
 import { WeaponStyle } from "../game/Ability";
 import { Encounter, EncounterId, getEncounter } from "../game/Encounter";
 import { EnemyTypeId, getEnemyType } from "../game/EnemyType";
-import { buildPlayerAbilityBar } from "../game/abilities";
+import { buildPlayerLoadout } from "../game/abilities";
 import { cacheRoots, packRequest } from "./cacheRoots";
 
 function rootsFor(encounter: Encounter) {
@@ -97,11 +97,12 @@ describe("cacheRoots", () => {
     });
 
     it.each(Object.values(EncounterId))(
-        "%s roots contain every sequence the player casts",
+        "%s roots contain every sequence the player can cast",
         (id) => {
             const roots = rootsFor(getEncounter(id));
             for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
-                for (const ability of buildPlayerAbilityBar(style)) {
+                const loadout = buildPlayerLoadout(style);
+                for (const ability of [loadout.basicAttack, ...loadout.skills]) {
                     expect(roots.seqIds).toContain(ability.castSeqId);
                 }
             }

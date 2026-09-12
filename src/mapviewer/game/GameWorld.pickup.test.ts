@@ -36,13 +36,16 @@ const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
 function pickupInput(groundItemId: number): SimInput {
     return {
         movement: { x: 0, y: 0, running: true },
-        abilities: [],
+        combat: { basicAttack: { held: false }, skills: [] },
         pickupTarget: { groundItemId },
     };
 }
 
 function idleInput(): SimInput {
-    return { movement: { x: 0, y: 0, running: false }, abilities: [] };
+    return {
+        movement: { x: 0, y: 0, running: false },
+        combat: { basicAttack: { held: false }, skills: [] },
+    };
 }
 
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {

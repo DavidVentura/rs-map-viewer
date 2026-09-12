@@ -34,7 +34,7 @@ import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour } from "../game/EnemyType";
 import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
-import { AbilityInput, AbilitySlotInput, GameWorld, PickupTarget } from "../game/GameWorld";
+import { AbilitySlotInput, CombatInput, GameWorld, PickupTarget } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
@@ -133,20 +133,9 @@ function encodeNpcInfo(interactType: InteractType, rotation: number, level: numb
     return (interactType << 13) | (rotation << 2) | level;
 }
 
-function keyForAbilitySlot(index: number, barLength: number): string | undefined {
-    if (index === barLength - 1) {
-        return "Digit4";
-    }
-    switch (index) {
-        case 0:
-            return "Digit1";
-        case 1:
-            return "Digit2";
-        case 2:
-            return "Digit3";
-        default:
-            return undefined;
-    }
+function keyForSkillSlot(skillSlot: number): string | undefined {
+    const digit = skillSlot + 1;
+    return digit <= 9 ? `Digit${digit}` : undefined;
 }
 
 interface ColorRgb {
@@ -1372,7 +1361,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.handleInput(deltaTime);
         this.mapViewer.world.advance(deltaTime / 1000, {
             movement: this.buildMovementInput(),
-            abilities: this.buildAbilityInput(),
+            combat: this.buildCombatInput(),
             styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
             chooseUpgrade: this.buildUpgradeChoiceInput(),
             pickupTarget: this.buildPickupInput(),
@@ -1636,10 +1625,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return undefined;
     }
 
-    private buildAbilityInput(): AbilityInput {
+    private buildCombatInput(): CombatInput {
         const player = this.mapViewer.world.player;
         if (!player || this.hudFrame?.upgradeOffer) {
-            return [];
+            return { basicAttack: { held: false }, skills: [] };
         }
 
         const inputManager = this.mapViewer.inputManager;
@@ -1647,12 +1636,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const hoveredEnemy = pointerOverHud ? undefined : this.getHoveredEnemy();
         const isDragging = !pointerOverHud && inputManager.isDragging();
 
-        const keySlot = (
-            key: string | undefined,
-            extraHeld: boolean,
-            delivery: Delivery,
-        ): AbilitySlotInput => {
-            if (!extraHeld && (!key || !inputManager.isKeyDown(key))) {
+        const inputFor = (held: boolean, delivery: Delivery): AbilitySlotInput => {
+            if (!held) {
                 return { held: false };
             }
             if (hoveredEnemy && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
@@ -1674,13 +1659,19 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 : { held: false };
         };
 
-        const barLength = player.abilityBar.length;
-        return player.abilityBar.map((definition, index) => {
-            const key = keyForAbilitySlot(index, barLength);
-            const isBasicAttackSlot = index === 0;
-            const mouseHeld = isBasicAttackSlot && isDragging && hoveredEnemy !== undefined;
-            return keySlot(key, mouseHeld, definition.effect.delivery);
-        });
+        return {
+            basicAttack: inputFor(
+                isDragging && hoveredEnemy !== undefined,
+                player.basicAttack.effect.delivery,
+            ),
+            skills: player.skills.map((skill, skillSlot) => {
+                const key = keyForSkillSlot(skillSlot);
+                return inputFor(
+                    key !== undefined && inputManager.isKeyDown(key),
+                    skill.effect.delivery,
+                );
+            }),
+        };
     }
 
     private screenToGround(
@@ -1826,9 +1817,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private buildAbilitySlots(player: Player): AbilitySlotHudInfo[] {
         const timeSeconds = this.mapViewer.world.timeSeconds;
-        const bar = player.abilityBar;
-        return bar.map((definition, index) => {
-            const readiness = player.getSlotReadiness(index, timeSeconds);
+        return player.skills.map((definition, skillSlot) => {
+            const readiness = player.getSkillReadiness(skillSlot, timeSeconds);
             let blocked = AbilitySlotBlockReason.NONE;
             if (readiness.manaBlocked) {
                 blocked = AbilitySlotBlockReason.MANA;
@@ -1836,13 +1826,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 blocked = AbilitySlotBlockReason.COOLDOWN;
             }
 
-            const isBasicAttack = index === 0;
-            const isPotion = index === bar.length - 1;
-            const keyLabel = isBasicAttack ? "1 / LMB" : isPotion ? "4" : `${index + 1}`;
-
             return {
                 name: definition.name,
-                keyLabel,
+                keyLabel: `${skillSlot + 1}`,
                 cooldownFraction: readiness.cooldownFraction,
                 charges:
                     readiness.maxCharges > 1
