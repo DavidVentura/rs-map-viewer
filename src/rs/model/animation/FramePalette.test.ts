@@ -2,7 +2,13 @@ import { Model } from "../Model";
 import { SeqBase } from "../seq/SeqBase";
 import { SeqFrame } from "../seq/SeqFrame";
 import { SeqTransformType } from "../seq/SeqTransformType";
-import { AffineTransform, PoseSpace, VertexLabelStats, buildFramePalette } from "./FramePalette";
+import {
+    AffineTransform,
+    FramePalette,
+    FramePoser,
+    PoseSpace,
+    VertexLabelStats,
+} from "./FramePalette";
 
 function modelWithLabels(): Model {
     const model = new Model();
@@ -46,6 +52,12 @@ function frame(
     );
 }
 
+function matrixAt(palette: FramePalette, index: number): AffineTransform {
+    return AffineTransform.fromRows(
+        Array.from(palette.matrices.subarray(index * 12, index * 12 + 12)),
+    );
+}
+
 function clamp(value: number, lower: number, upper: number): number {
     return Math.max(lower, Math.min(upper, value));
 }
@@ -77,15 +89,16 @@ describe("frame palettes", () => {
         );
 
         animated.animate(animation, undefined, false);
-        const palette = buildFramePalette(
+        const palette = new FramePoser(
             VertexLabelStats.fromModel(rest),
-            animation,
             PoseSpace.identity(),
-        );
+            [0, 1, 2],
+            [0, 1],
+        ).pose(animation);
 
         for (let label = 0; label < rest.vertexLabels.length; label++) {
             for (const vertex of rest.vertexLabels[label]) {
-                const actual = palette.matrices[label].transformPoint(
+                const actual = matrixAt(palette, label).transformPoint(
                     rest.verticesX[vertex],
                     rest.verticesY[vertex],
                     rest.verticesZ[vertex],
@@ -127,15 +140,59 @@ describe("frame palettes", () => {
 
         const toPose = AffineTransform.fromRows([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
         const fromPose = AffineTransform.fromRows([0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0]);
-        const palette = buildFramePalette(
+        const palette = new FramePoser(
             VertexLabelStats.fromModel(rest),
-            animation,
             PoseSpace.between(toPose, fromPose),
-        );
+            [0, 1, 2],
+            [],
+        ).pose(animation);
 
         for (let label = 0; label < rest.vertexLabels.length; label++) {
             for (const vertex of rest.vertexLabels[label]) {
-                const actual = palette.matrices[label].transformPoint(
+                const actual = matrixAt(palette, label).transformPoint(
+                    rest.verticesX[vertex],
+                    rest.verticesY[vertex],
+                    rest.verticesZ[vertex],
+                );
+                expect(Math.abs(actual[0] - animated.verticesX[vertex])).toBeLessThanOrEqual(2);
+                expect(Math.abs(actual[1] - animated.verticesY[vertex])).toBeLessThanOrEqual(2);
+                expect(Math.abs(actual[2] - animated.verticesZ[vertex])).toBeLessThanOrEqual(2);
+            }
+        }
+    });
+
+    it("averages labels the frame never moves at their rest positions and leaves them at rest", () => {
+        const rest = modelWithLabels();
+        const animated = Model.copyAnimated(rest, true, true);
+        const animation = frame(
+            [SeqTransformType.TRANSLATE, SeqTransformType.ORIGIN, SeqTransformType.ROTATE],
+            [[0], [0, 1], [0]],
+            [
+                [9, -4, 6],
+                [0, 0, 0],
+                [30, 0, 50],
+            ],
+        );
+        animated.rotate270();
+        animated.animate(animation, undefined, false);
+        animated.rotate90();
+
+        const space = PoseSpace.between(
+            AffineTransform.fromRows([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0]),
+            AffineTransform.fromRows([0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0]),
+        );
+        const labels = [-1, 0, 1, 2, 7];
+        const palette = new FramePoser(VertexLabelStats.fromModel(rest), space, labels, []).pose(
+            animation,
+        );
+
+        const restRows = Array.from(space.restTransform().toRows());
+        for (const index of [0, 2, 3, 4]) {
+            expect(Array.from(matrixAt(palette, index).toRows())).toEqual(restRows);
+        }
+        for (let label = 0; label < rest.vertexLabels.length; label++) {
+            for (const vertex of rest.vertexLabels[label]) {
+                const actual = matrixAt(palette, labels.indexOf(label)).transformPoint(
                     rest.verticesX[vertex],
                     rest.verticesY[vertex],
                     rest.verticesZ[vertex],
@@ -157,8 +214,9 @@ describe("frame palettes", () => {
                 [5, 0, 0],
             ],
         );
-        const alpha = buildFramePalette(new VertexLabelStats([]), animation, PoseSpace.identity())
-            .alphaTransforms[0];
+        const alpha = new FramePoser(new VertexLabelStats([]), PoseSpace.identity(), [], [0]).pose(
+            animation,
+        ).alphaTransforms[0];
 
         for (let initial = 0; initial <= 255; initial++) {
             const sequential = clamp(
@@ -181,16 +239,17 @@ describe("frame palettes", () => {
             undefined,
             [0xfffe, 0xffff],
         );
-        const palette = buildFramePalette(
+        const palette = new FramePoser(
             new VertexLabelStats([{ positionSum: [0, 0, 0], vertexCount: 1 }]),
-            animation,
             PoseSpace.between(
                 AffineTransform.identity(),
                 AffineTransform.fromRows([2, 0, 0, 10, 0, 2, 0, 20, 0, 0, 2, 30]),
             ),
-        );
+            [0],
+            [],
+        ).pose(animation);
 
-        expect(palette.matrices[0].transformPoint(1, 1, 1)).toEqual([16, 28, 40]);
+        expect(matrixAt(palette, 0).transformPoint(1, 1, 1)).toEqual([16, 28, 40]);
     });
 
     it("checks reset-origin masks independently from operation masks", () => {
@@ -218,11 +277,8 @@ describe("frame palettes", () => {
                 [0, -1],
                 false,
             );
-            return buildFramePalette(
-                stats,
-                animation,
-                PoseSpace.identity(),
-            ).matrices[1].transformPoint(20, 0, 0)[0];
+            const palette = new FramePoser(stats, PoseSpace.identity(), [0, 1], []).pose(animation);
+            return matrixAt(palette, 1).transformPoint(20, 0, 0)[0];
         };
 
         expect(paletteForMasks(0xffff, 0xfffe)).toBe(30);

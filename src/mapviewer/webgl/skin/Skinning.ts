@@ -1,6 +1,6 @@
 import { SeqTypeLoader } from "../../../rs/config/seqtype/SeqTypeLoader";
 import { Model } from "../../../rs/model/Model";
-import { PoseSpace, VertexLabelStats } from "../../../rs/model/animation/FramePalette";
+import { FramePoser, PoseSpace, VertexLabelStats } from "../../../rs/model/animation/FramePalette";
 import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqFrameLoader } from "../../../rs/model/seq/SeqFrameLoader";
 import { SkinAnimation, SkinAnimationSet, SkinFrame } from "./SkinAnimation";
@@ -63,14 +63,19 @@ export class Skinning {
         const meshes = meshSources.map((source) =>
             this.meshes.addModel(source.model, rig, source.selection),
         );
-        const stats = VertexLabelStats.fromModel(poseModel);
-        const restFrame = this.palettes.addFrame(stats, rig, undefined, space);
+        const poser = new FramePoser(
+            VertexLabelStats.fromModel(poseModel),
+            space,
+            rig.matrixSourceLabels,
+            rig.alphaSourceLabels,
+        );
+        const restFrame = this.palettes.addFrame(poser.rest());
         const animationsBySeqId = new Map<number, readonly SkinFrame[]>();
         for (const [seqId, frames] of framesBySeqId) {
             animationsBySeqId.set(
                 seqId,
                 frames.map((frame) =>
-                    frame ? this.palettes.addFrame(stats, rig, frame, space) : restFrame,
+                    frame ? this.palettes.addFrame(poser.pose(frame)) : restFrame,
                 ),
             );
         }
