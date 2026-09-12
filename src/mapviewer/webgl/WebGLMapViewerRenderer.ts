@@ -38,6 +38,7 @@ import { AbilitySlotInput, CombatInput, GameWorld, PickupTarget } from "../game/
 import { GroundItem } from "../game/GroundItem";
 import { InteractionId } from "../game/Interaction";
 import { Player, PlayerInput } from "../game/Player";
+import { createCharacterLevel, experienceForLevel } from "../game/Progression";
 import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
@@ -1927,6 +1928,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 pickupFlashEvents.push({ text: `Equipped: ${name}` });
                 continue;
             }
+            if (event.kind === CombatEventKind.LEVEL_UP) {
+                pickupFlashEvents.push({ text: `Level up: ${event.level}` });
+                void this.mapViewer.audioFeedback.playLevelUp();
+                continue;
+            }
             const groundHeight = this.terrain.getHeight(
                 event.target.level,
                 event.target.x,
@@ -2024,6 +2030,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 maxHealth: player.maxHealth,
                 mana: player.mana,
                 maxMana: player.maxMana,
+                level: player.characterLevel,
+                experience: player.progression.experience,
+                levelStartExperience: experienceForLevel(player.characterLevel),
+                nextLevelExperience: experienceForLevel(
+                    createCharacterLevel(player.characterLevel + 1),
+                ),
             },
             target: targetEnemy &&
                 targetNpcType && {

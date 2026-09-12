@@ -13,6 +13,15 @@ import {
     equipmentDamageTakenMultiplier,
     equipmentMaxHealthBonus,
 } from "./Equipment";
+import {
+    CharacterLevel,
+    Experience,
+    LevelTransition,
+    ProgressionState,
+    grantExperience,
+    initialProgression,
+    levelAbilityModifiers,
+} from "./Progression";
 import { Terrain } from "./Terrain";
 import { PlayerLoadout, PlayerLoadoutsByStyle } from "./abilities";
 import { AbilitySlotReadiness, CastCosts, computeSlotReadiness } from "./abilityRules";
@@ -60,12 +69,14 @@ export class Player implements Combatant, ManaPool {
     godMode = false;
 
     private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
+    progression: ProgressionState = initialProgression();
     equipment: EquipmentState = DEFAULT_EQUIPMENT;
 
     get maxHealth(): number {
         return (
             Player.MAX_HEALTH +
             this.modifiers.maxHealthBonus +
+            levelAbilityModifiers(this.progression.level).maxHealthBonus +
             equipmentMaxHealthBonus(this.equipment)
         );
     }
@@ -77,7 +88,11 @@ export class Player implements Combatant, ManaPool {
     }
 
     get maxMana(): number {
-        return Player.MAX_MANA + this.modifiers.maxManaBonus;
+        return (
+            Player.MAX_MANA +
+            this.modifiers.maxManaBonus +
+            levelAbilityModifiers(this.progression.level).maxManaBonus
+        );
     }
 
     readonly spawnX: number;
@@ -124,7 +139,7 @@ export class Player implements Combatant, ManaPool {
 
     private get activeLoadout(): PlayerLoadout<ResolvedAbility> {
         const combined = composeModifiers(
-            this.modifiers,
+            composeModifiers(this.modifiers, levelAbilityModifiers(this.progression.level)),
             equipmentAbilityModifiers(this.equipment, this.style),
         );
         const loadout = this.loadouts[this.style];
@@ -154,6 +169,20 @@ export class Player implements Combatant, ManaPool {
         this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
     }
 
+    grantExperience(amount: Experience): LevelTransition {
+        const previousMaxHealth = this.maxHealth;
+        const previousMaxMana = this.maxMana;
+        const transition = grantExperience(this.progression, amount);
+        this.progression = transition.state;
+        this.health = Math.min(this.maxHealth, this.health + this.maxHealth - previousMaxHealth);
+        this.mana = Math.min(this.maxMana, this.mana + this.maxMana - previousMaxMana);
+        return transition;
+    }
+
+    get characterLevel(): CharacterLevel {
+        return this.progression.level;
+    }
+
     // Bumps the given path to the next tier above the player's current tier (never below it, never
     // past the path's max), used by the pickup flow: a drop is always the next tier on some path.
     equipItemUpgrade(path: EquipmentPath, tierIndex: number): void {
@@ -166,6 +195,7 @@ export class Player implements Combatant, ManaPool {
 
     resetProgression(): void {
         this.modifiers = DEFAULT_ABILITY_MODIFIERS;
+        this.progression = initialProgression();
         this.equipment = DEFAULT_EQUIPMENT;
     }
 

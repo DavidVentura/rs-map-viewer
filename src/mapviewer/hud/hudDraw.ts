@@ -521,6 +521,30 @@ export function drawStyleRow(
     }
 }
 
+export function drawLevelProgress(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    player: PlayerHudInfo,
+): void {
+    const denominator = player.nextLevelExperience - player.levelStartExperience;
+    const progress =
+        denominator > 0 ? (player.experience - player.levelStartExperience) / denominator : 0;
+    const barWidth = 220;
+    const x = width / 2 - barWidth / 2;
+    const y = 82;
+    ctx.fillStyle = "rgba(6, 6, 10, 0.82)";
+    ctx.fillRect(x, y, barWidth, 18);
+    ctx.fillStyle = "#7c5cff";
+    ctx.fillRect(x, y, barWidth * clamp(progress, 0, 1), 18);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.strokeRect(x, y, barWidth, 18);
+    ctx.fillStyle = "#e8e0d0";
+    ctx.font = "700 12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`Level ${player.level}`, width / 2, y + 9);
+}
+
 export function drawTargetPlate(
     ctx: CanvasRenderingContext2D,
     width: number,

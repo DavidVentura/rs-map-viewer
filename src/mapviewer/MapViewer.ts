@@ -20,6 +20,7 @@ import { MapManager } from "./MapManager";
 import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { createViewerLoaders } from "./ViewerLoaders";
+import { AudioFeedback } from "./audio/AudioFeedback";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
 import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
@@ -74,6 +75,7 @@ export class MapViewer {
     cameraSpeed: number = 1;
 
     readonly musicPlayer: MusicPlayer = new MusicPlayer();
+    readonly audioFeedback: AudioFeedback;
 
     constructor(
         readonly workerPool: RenderDataWorkerPool,
@@ -84,6 +86,7 @@ export class MapViewer {
         readonly animPreview?: AnimPreviewParams,
         readonly godMode: boolean = false,
     ) {
+        this.audioFeedback = new AudioFeedback(new AudioContext());
         // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
         // camera over the encounter's squares, the only ones its pack holds.
         const { playerSpawn } = getEncounter(encounterId);

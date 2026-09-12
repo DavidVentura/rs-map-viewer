@@ -1,6 +1,7 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityDefinition, ResolvedAbility, resolveAbility } from "./Ability";
+import { Experience, createExperience } from "./Progression";
 import {
     GOBLIN_MELEE,
     GOBLIN_MELEE_SEQ_ID,
@@ -99,6 +100,7 @@ type EnemyTypeCommon<A extends AbilityDefinition> = {
     // Where this enemy's projectiles leave its body (see Combatant.projectileLaunchHeight).
     readonly projectileLaunchHeight: number;
     readonly maxHealth: number;
+    readonly experienceReward: Experience;
     readonly walkSpeed: number;
     readonly abilities: readonly A[];
     readonly phases?: readonly BossPhase[];
@@ -199,6 +201,7 @@ const GOBLIN: EnemyType = {
     hitRadius: 64,
     projectileLaunchHeight: 40,
     maxHealth: 20,
+    experienceReward: createExperience(12),
     walkSpeed: 320 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [GOBLIN_MELEE],
@@ -215,6 +218,7 @@ const TZ_KIH: EnemyType = {
     hitRadius: 64,
     projectileLaunchHeight: 40,
     maxHealth: 8,
+    experienceReward: createExperience(8),
     walkSpeed: 480 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [TZ_KIH_MELEE],
@@ -235,6 +239,7 @@ const TZ_KEK: EnemyType = {
     hitRadius: 96,
     projectileLaunchHeight: 80,
     maxHealth: 60,
+    experienceReward: createExperience(30),
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [TZ_KEK_MELEE],
@@ -257,6 +262,7 @@ const TOK_XIL: EnemyType = {
     hitRadius: 128,
     projectileLaunchHeight: 200,
     maxHealth: 150,
+    experienceReward: createExperience(55),
     walkSpeed: 576 * 1.6 * 0.6,
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 8 * 128 },
@@ -277,6 +283,7 @@ const YT_MEJKOT: EnemyType = {
     hitRadius: 160,
     projectileLaunchHeight: 120,
     maxHealth: 360,
+    experienceReward: createExperience(90),
     walkSpeed: 576 * 1.6 * 0.45,
     behaviour: EnemyBehaviour.TANK,
     abilities: [YT_MEJKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
@@ -298,6 +305,7 @@ const KET_ZEK: EnemyType = {
     hitRadius: 192,
     projectileLaunchHeight: 320,
     maxHealth: 280,
+    experienceReward: createExperience(80),
     walkSpeed: 576 * 1.6 * 0.4,
     behaviour: EnemyBehaviour.CASTER,
     engagement: { minRange: 6 * 128 },
@@ -320,6 +328,7 @@ const YT_HURKOT: EnemyType = {
     hitRadius: 64,
     projectileLaunchHeight: 60,
     maxHealth: 80,
+    experienceReward: createExperience(0),
     walkSpeed: 576 * 1.6 * 0.45,
     behaviour: EnemyBehaviour.TANK,
     abilities: [YT_HURKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
@@ -351,6 +360,7 @@ const TZTOK_JAD: EnemyType = {
     hitRadius: 192,
     projectileLaunchHeight: 520,
     maxHealth: 1200,
+    experienceReward: createExperience(300),
     walkSpeed: 576 * 1.6 * 0.3,
     behaviour: EnemyBehaviour.BOSS,
     engagement: { leashRangeTiles: 6 },

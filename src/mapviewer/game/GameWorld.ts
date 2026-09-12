@@ -49,6 +49,7 @@ import {
 } from "./Interaction";
 import { PhaseLifecycle, currentPhase, initialPhaseLifecycle, transitionPhase } from "./Phase";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
+import { Experience, createExperience } from "./Progression";
 import {
     Projectile,
     ProjectileImpact,
@@ -554,6 +555,11 @@ export class GameWorld {
             return;
         }
         this.pendingPhaseRewards = remaining;
+        if (reward.kind === "EXPERIENCE") {
+            this.grantPlayerExperience(createExperience(reward.amount));
+            this.activateNextPhaseReward();
+            return;
+        }
         if (reward.kind !== "UPGRADE_CHOICE") {
             throw new Error(`Reward ${reward.kind} is not implemented yet`);
         }
@@ -626,6 +632,7 @@ export class GameWorld {
                 enemy.despawnAt = this.timeSeconds + GameWorld.CORPSE_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
+            this.grantPlayerExperience(enemy.type.experienceReward);
             this.maybeDropEquipment(enemy);
             return;
         }
@@ -635,6 +642,17 @@ export class GameWorld {
         }
         this.resolveReadyCast(enemy);
         this.checkBossPhase(enemy);
+    }
+
+    private grantPlayerExperience(amount: Experience): void {
+        const player = this.player;
+        if (!player) {
+            throw new Error("Cannot grant experience without a player");
+        }
+        const transition = player.grantExperience(amount);
+        for (const level of transition.gainedLevels) {
+            this.events.push({ kind: CombatEventKind.LEVEL_UP, level });
+        }
     }
 
     // Boss phases (see EnemyType.BossPhase) trigger once, the first time health crosses their

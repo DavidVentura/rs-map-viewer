@@ -33,6 +33,7 @@ import {
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
 import { Player, StanceSeqIdsByStance } from "./Player";
+import { createExperience } from "./Progression";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
@@ -103,6 +104,7 @@ function makeEnemyType(
         hitRadius: 64,
         projectileLaunchHeight: 40,
         maxHealth: 20,
+        experienceReward: createExperience(0),
         walkSpeed: 288 * 1.6,
         behaviour: EnemyBehaviour.RUSHER,
         abilities,
@@ -655,6 +657,26 @@ describe("Enemy death and respawn", () => {
                 (event) => event.kind === CombatEventKind.ENEMY_RESPAWNED && event.target === enemy,
             ),
         ).toBe(true);
+    });
+
+    it("awards authored enemy experience and emits a level-up event", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const enemyId = world.spawnEnemy(100, 0, 0, {
+            ...makeEnemyType(1, 2, 3),
+            experienceReward: createExperience(100),
+        });
+        const enemy = world.findEnemy(enemyId)!;
+        enemy.health = 0;
+
+        world.advance(1 / 120, idleInput());
+
+        expect(world.player!.characterLevel).toBe(2);
+        expect(world.drainEvents()).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ kind: CombatEventKind.LEVEL_UP, level: 2 }),
+            ]),
+        );
     });
 });
 

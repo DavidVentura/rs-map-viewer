@@ -8,6 +8,7 @@ import {
     resolveAbility,
 } from "./Ability";
 import { Player, StanceSeqIdsByStance } from "./Player";
+import { createExperience } from "./Progression";
 import {
     BOW_SHOT,
     CLEAVE,
@@ -270,5 +271,19 @@ describe("Player.getBasicAttackReadiness", () => {
         expect(player.getBasicAttackReadiness(0).manaBlocked).toBe(true);
         player.mana = player.maxMana;
         expect(player.getBasicAttackReadiness(0).manaBlocked).toBe(false);
+    });
+});
+
+describe("Player character progression", () => {
+    it("applies universal level growth separately from upgrades", () => {
+        const player = makePlayer();
+        const transition = player.grantExperience(createExperience(100));
+        expect(transition.gainedLevels).toEqual([2]);
+        expect(player.characterLevel).toBe(2);
+        expect(player.maxHealth).toBe(Player.MAX_HEALTH + 5);
+        expect(player.maxMana).toBe(Player.MAX_MANA + 2);
+        expect(player.basicAttack.effect.payloads[0]).toMatchObject({
+            roll: { min: 8.4, max: 8.4 },
+        });
     });
 });

@@ -12,6 +12,7 @@ import {
     drawHealthGlobe,
     drawInteractionActionText,
     drawInteractionMarker,
+    drawLevelProgress,
     drawManaGlobe,
     drawPhaseCounter,
     drawPickupFlash,
@@ -65,6 +66,7 @@ export class Hud {
         if (frame.player) {
             drawHealthGlobe(ctx, layout, frame.player);
             drawManaGlobe(ctx, layout, frame.player);
+            drawLevelProgress(ctx, width, frame.player);
         }
         if (frame.target) {
             drawTargetPlate(ctx, width, frame.target);

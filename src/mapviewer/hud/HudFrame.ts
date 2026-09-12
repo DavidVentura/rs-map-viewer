@@ -14,6 +14,10 @@ export type PlayerHudInfo = {
     maxHealth: number;
     mana: number;
     maxMana: number;
+    level: number;
+    experience: number;
+    levelStartExperience: number;
+    nextLevelExperience: number;
 };
 
 export type TargetHudInfo = {

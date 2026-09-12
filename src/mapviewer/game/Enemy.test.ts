@@ -20,6 +20,7 @@ import {
     ResolvedEnemyType,
     resolveEnemyType,
 } from "./EnemyType";
+import { createExperience } from "./Progression";
 import { ARROW_SPEC } from "./Projectile";
 import { Terrain } from "./Terrain";
 import {
@@ -275,6 +276,7 @@ const TEST_ENEMY_TYPE = resolveType({
     hitRadius: 64,
     projectileLaunchHeight: 40,
     maxHealth: 20,
+    experienceReward: createExperience(0),
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [GOBLIN_MELEE],
@@ -292,6 +294,7 @@ const TEST_KITER_TYPE = resolveType({
     hitRadius: 128,
     projectileLaunchHeight: 200,
     maxHealth: 150,
+    experienceReward: createExperience(0),
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.KITER,
     engagement: { minRange: 512 },
@@ -309,6 +312,7 @@ const TEST_TANK_TYPE = resolveType({
     hitRadius: 160,
     projectileLaunchHeight: 120,
     maxHealth: 360,
+    experienceReward: createExperience(0),
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.TANK,
     abilities: [YT_MEJKOT_HEAL_PULSE, YT_MEJKOT_MELEE],
@@ -671,6 +675,7 @@ const TEST_BOSS_TYPE = resolveType({
     hitRadius: 192,
     projectileLaunchHeight: 520,
     maxHealth: 1200,
+    experienceReward: createExperience(0),
     walkSpeed: 288 * 1.6,
     behaviour: EnemyBehaviour.BOSS,
     engagement: { leashRangeTiles: 6 },

@@ -1,4 +1,5 @@
 import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import { createExperience } from "./Progression";
 
 export type SeqRange = {
     readonly from: number;
@@ -86,6 +87,7 @@ export function buildPreviewEnemyType(npc: PreviewNpcConfig): EnemyType {
         hitRadius: 32 + 32 * npc.size,
         projectileLaunchHeight: 40 * npc.size,
         maxHealth: 1,
+        experienceReward: createExperience(0),
         walkSpeed: 0,
         behaviour: EnemyBehaviour.RUSHER,
         abilities: [],

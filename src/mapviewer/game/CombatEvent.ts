@@ -1,5 +1,6 @@
 import { Combatant } from "./Combatant";
 import { EquipmentPath } from "./Equipment";
+import { CharacterLevel } from "./Progression";
 
 export enum CombatEventKind {
     DAMAGE = 0,
@@ -12,6 +13,7 @@ export enum CombatEventKind {
     ITEM_DROPPED = 8,
     ITEM_PICKED_UP = 9,
     BOSS_PHASE = 10,
+    LEVEL_UP = 11,
 }
 
 export type DamageEvent = {
@@ -72,6 +74,11 @@ export type BossPhaseEvent = {
     phaseLabel: string;
 };
 
+export type LevelUpEvent = {
+    kind: CombatEventKind.LEVEL_UP;
+    level: CharacterLevel;
+};
+
 export type CombatEvent =
     | DamageEvent
     | HealEvent
@@ -82,7 +89,8 @@ export type CombatEvent =
     | EncounterClearedEvent
     | ItemDroppedEvent
     | ItemPickedUpEvent
-    | BossPhaseEvent;
+    | BossPhaseEvent
+    | LevelUpEvent;
 
 export interface Freezable extends Combatant {
     frozenUntil?: number;
