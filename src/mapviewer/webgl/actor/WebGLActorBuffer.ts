@@ -14,13 +14,6 @@ import { SKINNED_VERTEX_STRIDE, SkinTables, createSkinnedVertexArray } from "../
 import { ActorRenderData } from "./ActorRenderData";
 
 export class WebGLActorBuffer {
-    // Fed to bufferSubData one slice per frame (see uploadNextChunk) so a multi-megabyte actor
-    // buffer never blocks the main thread for more than a few milliseconds at a time.
-    static readonly UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
-
-    // Allocates the GPU buffers and vertex array/draw call up front (cheap: no data copy yet) but
-    // leaves the actual vertex/index bytes zero-filled. Callers must drive uploadNextChunk() every
-    // frame until isFullyUploaded is true before treating this buffer as renderable.
     static create(
         app: PicoApp,
         actorProgram: Program,
@@ -34,16 +27,9 @@ export class WebGLActorBuffer {
         const { skinned } = data;
         const interleavedBuffer = app.createInterleavedBuffer(
             SKINNED_VERTEX_STRIDE,
-            skinned.vertices.byteLength,
+            skinned.vertices,
         );
-        // picogl's own type declarations only accept an ArrayBufferView here, but the
-        // implementation also accepts an element count to allocate an empty (zero-filled) buffer
-        // without copying any data - the fast path uploadNextChunk then fills incrementally.
-        const indexBuffer = (app.createIndexBuffer as any)(
-            PicoGL.UNSIGNED_INT,
-            3,
-            skinned.indices.length,
-        );
+        const indexBuffer = app.createIndexBuffer(PicoGL.UNSIGNED_INT, skinned.indices);
 
         const vertexArray = createSkinnedVertexArray(app, interleavedBuffer, indexBuffer);
         const skinTables = SkinTables.create(app, skinned.influences, skinned.matrixTable);
@@ -70,21 +56,8 @@ export class WebGLActorBuffer {
             skinTables,
             { drawCall, drawRanges },
             capacity,
-            new Uint8Array(
-                skinned.vertices.buffer,
-                skinned.vertices.byteOffset,
-                skinned.vertices.byteLength,
-            ),
-            new Uint8Array(
-                skinned.indices.buffer,
-                skinned.indices.byteOffset,
-                skinned.indices.byteLength,
-            ),
         );
     }
-
-    private uploadedVertexBytes: number = 0;
-    private uploadedIndexBytes: number = 0;
 
     private constructor(
         readonly cacheName: string,
@@ -98,45 +71,7 @@ export class WebGLActorBuffer {
 
         readonly drawCall: DrawCallRange,
         public capacity: number,
-
-        private readonly pendingVertexBytes: Uint8Array,
-        private readonly pendingIndexBytes: Uint8Array,
     ) {}
-
-    get isFullyUploaded(): boolean {
-        return (
-            this.uploadedVertexBytes >= this.pendingVertexBytes.byteLength &&
-            this.uploadedIndexBytes >= this.pendingIndexBytes.byteLength
-        );
-    }
-
-    // Uploads up to maxBytes of whichever buffer still has data pending, vertices before indices.
-    // Call once per frame until isFullyUploaded so no single call blocks the main thread for long.
-    uploadNextChunk(maxBytes: number): void {
-        if (this.uploadedVertexBytes < this.pendingVertexBytes.byteLength) {
-            const end = Math.min(
-                this.uploadedVertexBytes + maxBytes,
-                this.pendingVertexBytes.byteLength,
-            );
-            this.interleavedBuffer.data(
-                this.pendingVertexBytes.subarray(this.uploadedVertexBytes, end),
-                this.uploadedVertexBytes,
-            );
-            this.uploadedVertexBytes = end;
-            return;
-        }
-        if (this.uploadedIndexBytes < this.pendingIndexBytes.byteLength) {
-            const end = Math.min(
-                this.uploadedIndexBytes + maxBytes,
-                this.pendingIndexBytes.byteLength,
-            );
-            this.indexBuffer.data(
-                this.pendingIndexBytes.subarray(this.uploadedIndexBytes, end),
-                this.uploadedIndexBytes,
-            );
-            this.uploadedIndexBytes = end;
-        }
-    }
 
     // Grows the instance draw-range arrays in place so more actors than the encounter's initial
     // spawn count can be rendered (waves ramp well past that). The underlying mesh/vertex data is

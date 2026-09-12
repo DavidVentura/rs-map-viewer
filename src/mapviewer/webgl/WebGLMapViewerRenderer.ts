@@ -294,9 +294,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     // Actors: player, enemies, projectiles and visual effects, decoupled from any map square.
     actorBuffer?: WebGLActorBuffer;
-    // Textures the current actor bake needs that haven't been uploaded yet; set once the actor
-    // buffer's own vertex/index data has finished its chunked upload (see uploadPendingActorData).
-    private pendingActorTextures?: Map<number, Int32Array>;
     actorInstanceCount: number = 0;
     actorInstanceData: Uint32Array = new Uint32Array(16 * 4 * ACTOR_INSTANCE_TEXELS);
     actorDataTextures?: DataTextureRing;
@@ -1158,9 +1155,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    // Only allocates the actor buffer and starts its chunked upload (see uploadPendingActorData,
-    // driven from render()); the world/encounter reset happens immediately so a stale encounter
-    // can't spawn while the new one is still uploading.
     loadActors(data: ActorBufferData, time: number): void {
         console.log(`[startup] actor bake received at ${performance.now().toFixed(0)}ms`);
         this.actorBuffer?.delete();
@@ -1178,7 +1172,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             capacity,
             time,
         );
-        this.pendingActorTextures = data.loadedTextures;
+        this.updateTextureArray(data.loadedTextures);
 
         const world = this.mapViewer.world;
         world.player = undefined;
@@ -1190,23 +1184,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.bossPhaseLabel = undefined;
         this.hasPinnedCameraSinceSpawn = false;
         this.previewGfxId = undefined;
-    }
-
-    // Uploads one chunk of the pending actor buffer's vertex/index data (bufferSubData, a few MB
-    // at a time), then the bake's textures once the buffer itself is fully uploaded. Called once
-    // per frame from render() so a multi-megabyte actor bake never blocks the main thread in one go.
-    private uploadPendingActorData(): void {
-        if (!this.actorBuffer) {
-            return;
-        }
-        if (!this.actorBuffer.isFullyUploaded) {
-            this.actorBuffer.uploadNextChunk(WebGLActorBuffer.UPLOAD_CHUNK_BYTES);
-            return;
-        }
-        if (this.pendingActorTextures) {
-            this.updateTextureArray(this.pendingActorTextures);
-            this.pendingActorTextures = undefined;
-        }
     }
 
     isValidActorBufferData(data: ActorBufferData): boolean {
@@ -1239,12 +1216,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     trySpawnEncounter(): void {
-        if (
-            this.encounterSpawned ||
-            !this.actorBuffer ||
-            !this.actorBuffer.isFullyUploaded ||
-            this.pendingActorTextures
-        ) {
+        if (this.encounterSpawned || !this.actorBuffer) {
             return;
         }
 
@@ -1581,7 +1553,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.loadActors(actorBufferData, timeSec);
             }
         }
-        this.uploadPendingActorData();
 
         if (showDebugTimer) {
             this.timer.end();
