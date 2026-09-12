@@ -23,7 +23,7 @@ fi
 
 cd "$REPO"
 
-npm run build
+GENERATE_SOURCEMAP=false npm run build
 
 node_modules/.bin/tsx src/server/main.ts &
 SERVER=$!
