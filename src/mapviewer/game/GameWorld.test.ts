@@ -832,6 +832,21 @@ describe("Enemy death and respawn", () => {
         ).toBe(true);
     });
 
+    it("living enemies walk straight through a corpse instead of steering around it", () => {
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
+        const corpseId = world.spawnEnemy(1000, 40, 0, makeEnemyType(1, 2, 3));
+        world.findEnemy(corpseId)!.health = 0;
+        world.advance(1 / 120, idleInput());
+        const walkerId = world.spawnEnemy(1200, 0, 0, makeEnemyType(1, 2, 3));
+        const walker = world.findEnemy(walkerId)!;
+
+        advanceSeconds(world, idleInput(), 1);
+
+        expect(walker.x).toBeLessThan(1000);
+        expect(walker.y).toBeCloseTo(0);
+    });
+
     it("awards authored enemy experience and emits a level-up event", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);

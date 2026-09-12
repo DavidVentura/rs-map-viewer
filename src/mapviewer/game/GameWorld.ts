@@ -140,7 +140,9 @@ export class GameWorld {
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 64;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
-    static readonly CORPSE_SECONDS = 6;
+    // How long a corpse stays after its death animation finishes, so long death animations (Jad)
+    // play out in full while short ones get swept up quickly.
+    static readonly CORPSE_LINGER_SECONDS = 1;
     static readonly ENEMY_GRID_CELL_SIZE = 256;
     static readonly ENEMY_NEIGHBOUR_QUERY_RADIUS = 256;
     // How close the player must walk to a ground item to pick it up; also the chase's stop
@@ -418,7 +420,10 @@ export class GameWorld {
             this.updatePlayer(this.player, input, dtSeconds);
         }
 
-        const enemyGrid = SpatialGrid.build(GameWorld.ENEMY_GRID_CELL_SIZE, this.enemies);
+        const enemyGrid = SpatialGrid.build(
+            GameWorld.ENEMY_GRID_CELL_SIZE,
+            this.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD),
+        );
         for (const enemy of this.enemies) {
             const neighbours = enemyGrid
                 .neighboursWithin(enemy.x, enemy.y, GameWorld.ENEMY_NEIGHBOUR_QUERY_RADIUS)
@@ -712,7 +717,10 @@ export class GameWorld {
                 enemy.respawnAt = this.timeSeconds + GameWorld.ENEMY_RESPAWN_SECONDS;
             } else {
                 this.recordWaveEnemyDeath(enemy);
-                enemy.despawnAt = this.timeSeconds + GameWorld.CORPSE_SECONDS;
+                enemy.despawnAt =
+                    this.timeSeconds +
+                    sequenceDurationSeconds(enemy.type.seqs.death) +
+                    GameWorld.CORPSE_LINGER_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
             this.grantPlayerExperience(enemy.type.experienceReward);
