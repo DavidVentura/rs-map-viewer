@@ -297,8 +297,9 @@ type PosedFrames = {
     readonly notes: readonly string[];
 };
 
-// Mirrors AnimationBaking.addSpotAnimAnimationFrames: frame-based sequences pose a copy per
-// frame; skeletal sequences are not baked by the game either, so only the rest pose is shown.
+// Poses a CPU copy per frame with Model.animate, the reference the game's GPU skinning
+// (Skinning.addAnimation) matches; the game renders skeletal sequences at rest pose, so only the
+// rest pose is shown for those.
 function poseWithSequence(
     base: Model,
     seqType: SeqType,
