@@ -2,6 +2,7 @@ const { when, whenDev, addBeforeLoader, loaderByName } = require("@craco/craco")
 
 const ThreadsPlugin = require("threads-plugin");
 const JsonMinimizerPlugin = require("json-minimizer-webpack-plugin");
+const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin");
 
 // The pack server (src/server/main.ts) runs beside the dev server under npm start, which sets
 // its port; the browser reaches it as /packs on the page's own origin.
@@ -42,6 +43,22 @@ module.exports = {
             };
 
             webpackConfig.optimization.minimizer.push(new JsonMinimizerPlugin());
+
+            // CRA's type checker takes its file list from tsconfig's include and registers every
+            // file as a webpack watch dependency, so editing a test would rebuild the app. Tests
+            // stay type-checked by tsc against the root tsconfig.
+            const typeChecker = webpackConfig.plugins.find(
+                (plugin) => plugin instanceof ForkTsCheckerWebpackPlugin,
+            );
+            if (!typeChecker) {
+                throw new Error("CRA's ForkTsCheckerWebpackPlugin is missing from the webpack config");
+            }
+            typeChecker.options.typescript.configOverwrite.exclude = [
+                "**/*.test.ts",
+                "**/*.test.tsx",
+                "src/setupTests.ts",
+                "src/mapviewer/game/testLoaders.ts",
+            ];
 
             return webpackConfig;
         },
