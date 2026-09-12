@@ -30,7 +30,7 @@ describe("rollDropPath", () => {
     });
 
     it("hits the roll when the random draw is below the drop chance", () => {
-        const random = fixedRandom(0.01, 0);
+        const random = fixedRandom(0.009, 0);
         expect(rollDropPath(DropTier.CHAFF, DEFAULT_EQUIPMENT, new Set(), random)).toBeDefined();
     });
 

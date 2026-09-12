@@ -275,12 +275,12 @@ const FIGHT_CAVES_ENEMY_TILE_OFFSETS = [
 ];
 
 const FIGHT_CAVES_EARLY_START: WaveStartCondition = {
-    maxPreviousAliveFraction: 0.5,
-    maxElapsedSeconds: 12,
+    maxPreviousAliveFraction: 0.4,
+    maxElapsedSeconds: 9,
 };
 const FIGHT_CAVES_LATE_START: WaveStartCondition = {
-    maxPreviousAliveFraction: 0.35,
-    maxElapsedSeconds: 10,
+    maxPreviousAliveFraction: 0.25,
+    maxElapsedSeconds: 7,
 };
 
 // TzTok-Jad, the finale: only starts once every earlier wave is fully dead (see Wave.boss), so its
@@ -291,7 +291,7 @@ const JAD_BOSS_WAVE: Wave = {
     boss: true,
 };
 
-const PROVISIONAL_UPGRADE_CHOICES = [
+const AUTHORED_UPGRADE_CHOICES = [
     UpgradeId.DAMAGE_UP,
     UpgradeId.SWIFT_STRIKES,
     UpgradeId.QUICK_HANDS,
@@ -320,7 +320,7 @@ function createEncounterPhases(
                 ? [
                       createUpgradeChoiceReward(
                           createRewardId(`${encounterPrefix}_${draft.id}_upgrade`),
-                          PROVISIONAL_UPGRADE_CHOICES,
+                          AUTHORED_UPGRADE_CHOICES,
                       ),
                   ]
                 : [],

@@ -17,8 +17,8 @@ export const GROUND_ITEM_LIFETIME_SECONDS = 60;
 // Diablo-style drop odds by enemy dropTier (see EnemyType.DropTier).
 const DROP_CHANCE: Readonly<Record<DropTier, number>> = {
     [DropTier.NONE]: 0,
-    [DropTier.CHAFF]: 0.05,
-    [DropTier.ELITE]: 0.6,
+    [DropTier.CHAFF]: 0.01,
+    [DropTier.ELITE]: 0.12,
     [DropTier.BOSS]: 1,
 };
 
