@@ -13,6 +13,7 @@ import type { ObjSpawn } from "../../src/mapviewer/data/obj/ObjSpawn";
 import { EncounterId, MapSquareCoord, getEncounter } from "../../src/mapviewer/game/Encounter";
 import { ActorRenderDataLoader } from "../../src/mapviewer/webgl/loader/ActorRenderDataLoader";
 import { SdMapDataLoader } from "../../src/mapviewer/webgl/loader/SdMapDataLoader";
+import { createHeadlessWorkerState } from "../../src/mapviewer/worker/HeadlessWorkerState";
 import { CacheSystem } from "../../src/rs/cache/CacheSystem";
 import { IndexType } from "../../src/rs/cache/IndexType";
 import {
@@ -23,7 +24,6 @@ import {
 import { MemoryStore } from "../../src/rs/cache/store/MemoryStore";
 import { RecordingCacheStore } from "../../src/rs/cache/store/RecordingCacheStore";
 import { Scene } from "../../src/rs/scene/Scene";
-import { buildWorkerState } from "./RecordingWorkerState";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
 
 const BUNDLES_DIR = "./caches/bundles";
@@ -66,7 +66,6 @@ const SOURCE_HASH_ROOTS = [
     "src/mapviewer/worker",
     "src/rs",
     "scripts/cache/bundle-encounter.ts",
-    "scripts/cache/RecordingWorkerState.ts",
 ];
 
 function listSourceFiles(root: string): string[] {
@@ -184,7 +183,7 @@ async function buildBundle(encounterId: EncounterId, sourceHash: string): Promis
     const objSpawns = loadJsonFile<ObjSpawn[]>("./src/mapviewer/data/obj/obj-spawns.json");
     const npcSpawns = loadJsonFile<NpcSpawn[]>("./src/mapviewer/data/npc/npc-spawns-osrs.json");
 
-    const state = buildWorkerState(loadedCache, cacheSystem, objSpawns, npcSpawns);
+    const state = createHeadlessWorkerState(loadedCache, cacheSystem, objSpawns, npcSpawns);
 
     const mapLoader = new SdMapDataLoader();
     mapLoader.init();

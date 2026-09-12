@@ -2,7 +2,7 @@ import { vec3 } from "gl-matrix";
 import { URLSearchParamsInit } from "react-router-dom";
 
 import { CacheSystem } from "../rs/cache/CacheSystem";
-import { CacheLoaderFactory, getCacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
+import { CacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
 import { BasTypeLoader } from "../rs/config/bastype/BasTypeLoader";
 import { LocTypeLoader } from "../rs/config/loctype/LocTypeLoader";
 import { NpcTypeLoader } from "../rs/config/npctype/NpcTypeLoader";
@@ -20,6 +20,7 @@ import { InputManager } from "./InputManager";
 import { MapManager } from "./MapManager";
 import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
+import { createViewerLoaders } from "./ViewerLoaders";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { NpcSpawn } from "./data/npc/NpcSpawn";
 import { ObjSpawn } from "./data/obj/ObjSpawn";
@@ -223,26 +224,20 @@ export class MapViewer {
     initCache(cache: LoadedCache): void {
         this.loadedCache = cache;
         this.cacheSystem = CacheSystem.fromFiles(cache.type, cache.files);
-        this.loaderFactory = getCacheLoaderFactory(cache.info, this.cacheSystem);
         this.workerPool.initCache(cache, this.objSpawns, this.npcSpawns);
         this.clearMapImageUrls();
 
-        this.textureLoader = this.loaderFactory.getTextureLoader();
-        this.seqTypeLoader = this.loaderFactory.getSeqTypeLoader();
-        this.seqFrameLoader = this.loaderFactory.getSeqFrameLoader();
-        this.locTypeLoader = this.loaderFactory.getLocTypeLoader();
-        this.objTypeLoader = this.loaderFactory.getObjTypeLoader();
-        this.npcTypeLoader = this.loaderFactory.getNpcTypeLoader();
-        this.basTypeLoader = this.loaderFactory.getBasTypeLoader();
-
-        this.varManager = new VarManager(this.loaderFactory.getVarBitTypeLoader());
-        const questTypeLoader = this.loaderFactory.getQuestTypeLoader();
-        if (questTypeLoader) {
-            this.varManager.setQuestsCompleted(questTypeLoader);
-        }
-
-        const mapFileLoader = this.loaderFactory.getMapFileLoader();
-        this.mapFileIndex = mapFileLoader.mapFileIndex;
+        const loaders = createViewerLoaders(cache.info, this.cacheSystem);
+        this.loaderFactory = loaders.loaderFactory;
+        this.textureLoader = loaders.textureLoader;
+        this.seqTypeLoader = loaders.seqTypeLoader;
+        this.seqFrameLoader = loaders.seqFrameLoader;
+        this.locTypeLoader = loaders.locTypeLoader;
+        this.objTypeLoader = loaders.objTypeLoader;
+        this.npcTypeLoader = loaders.npcTypeLoader;
+        this.basTypeLoader = loaders.basTypeLoader;
+        this.varManager = loaders.varManager;
+        this.mapFileIndex = loaders.mapFileIndex;
 
         this.isNewTextureAnim = cache.info.game === "runescape" && cache.info.revision >= 681;
 

@@ -1,6 +1,7 @@
 import { Bzip2 } from "../compression/Bzip2";
 import { Gzip } from "../compression/Gzip";
 import { ByteBuffer } from "../io/ByteBuffer";
+import { ByteWriter } from "../io/ByteWriter";
 import { StringUtil } from "../util/StringUtil";
 import { ArchiveFile } from "./ArchiveFile";
 
@@ -94,6 +95,25 @@ export class Archive {
             fileNameHashes,
             files,
         );
+    }
+
+    // The inverse of decode, as one chunk. Files must be ordered by ascending id, matching the
+    // reference table's file id list; a single file is stored bare, like decode expects.
+    static encode(files: readonly ArchiveFile[]): Int8Array {
+        if (files.length === 1) {
+            return files[0].data;
+        }
+        const writer = new ByteWriter(files.reduce((sum, file) => sum + file.data.length, 0));
+        for (const file of files) {
+            writer.writeBytes(file.data);
+        }
+        let previousSize = 0;
+        for (const file of files) {
+            writer.writeInt(file.data.length - previousSize);
+            previousSize = file.data.length;
+        }
+        writer.writeByte(1);
+        return writer.toBytes();
     }
 
     static decode(

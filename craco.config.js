@@ -45,6 +45,16 @@ module.exports = {
         },
         plugins: [new ThreadsPlugin()],
     },
+    jest: {
+        configure: (jestConfig) => {
+            // Tests run in Node, so they take the Node variant of a module that has a .web one
+            // (Gzip.ts rather than the wasm-backed Gzip.web.ts), as the tsx scripts do.
+            jestConfig.moduleFileExtensions = jestConfig.moduleFileExtensions.filter(
+                (extension) => !extension.startsWith("web."),
+            );
+            return jestConfig;
+        },
+    },
     devServer: {
         headers: {
             "Cross-Origin-Opener-Policy": "same-origin",

@@ -7,13 +7,14 @@ import { ObjModelLoader } from "../../../rs/config/objtype/ObjModelLoader";
 import { VarManager } from "../../../rs/config/vartype/VarManager";
 import { Model } from "../../../rs/model/Model";
 import { Scene } from "../../../rs/scene/Scene";
+import { MAP_SQUARE_BORDER_SIZE, mapSquareSceneBounds } from "../../../rs/scene/SceneBuilder";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { NpcSpawn, getMapNpcSpawns } from "../../data/npc/NpcSpawn";
 import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
 import { loadMinimapBlob } from "../../worker/MinimapData";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
-import { WorkerState } from "../../worker/RenderDataWorker";
+import { WorkerState } from "../../worker/WorkerState";
 import { newDrawRange } from "../DrawRange";
 import { ModelHashBuffer, getModelHash } from "../buffer/ModelHashBuffer";
 import {
@@ -516,14 +517,11 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
         const textureIdIndexMap = buildTextureIdIndexMap(textureLoader);
 
-        const borderSize = 6;
-
-        const baseX = mapX * Scene.MAP_SQUARE_SIZE - borderSize;
-        const baseY = mapY * Scene.MAP_SQUARE_SIZE - borderSize;
-        const mapSize = Scene.MAP_SQUARE_SIZE + borderSize * 2;
+        const borderSize = MAP_SQUARE_BORDER_SIZE;
+        const { baseX, baseY, sizeX, sizeY } = mapSquareSceneBounds(mapX, mapY);
 
         console.time(`build scene ${mapX},${mapY}`);
-        const scene = state.sceneBuilder.buildScene(baseX, baseY, mapSize, mapSize, smoothTerrain);
+        const scene = state.sceneBuilder.buildScene(baseX, baseY, sizeX, sizeY, smoothTerrain);
         console.timeEnd(`build scene ${mapX},${mapY}`);
 
         const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 100000);

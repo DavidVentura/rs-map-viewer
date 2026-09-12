@@ -41,20 +41,20 @@ export abstract class BaseTypeLoader<T extends Type> implements TypeLoader<T> {
         readonly cacheInfo: CacheInfo,
     ) {}
 
-    abstract getDataBuffer(id: number): ByteBuffer | undefined;
+    // Throws when the cache has no data for the id: a default-constructed type would render as an
+    // invisible loc or npc and hide whatever asked for it, such as a pack missing a file.
+    abstract getDataBuffer(id: number): ByteBuffer;
 
     load(id: number): T {
         const cached = this.cache.get(id);
         if (cached) {
             return cached;
         }
+        const buffer = this.getDataBuffer(id);
         const type = new this.typeConstructor(id, this.cacheInfo);
         try {
-            const buffer = this.getDataBuffer(id);
-            if (buffer) {
-                type.decode(buffer);
-                type.post();
-            }
+            type.decode(buffer);
+            type.post();
         } catch (e) {
             console.error("Failed loading type " + id, e);
         }
@@ -78,8 +78,14 @@ export class ArchiveTypeLoader<T extends Type> extends BaseTypeLoader<T> {
         super(typeConstructor, cacheInfo);
     }
 
-    override getDataBuffer(id: number): ByteBuffer | undefined {
-        return this.archive.getFile(id)?.getDataAsBuffer();
+    override getDataBuffer(id: number): ByteBuffer {
+        const file = this.archive.getFile(id);
+        if (!file) {
+            throw new Error(
+                `${this.typeConstructor.name} ${id} is missing from config archive ${this.archive.id}`,
+            );
+        }
+        return file.getDataAsBuffer();
     }
 
     override getCount(): number {
@@ -105,7 +111,7 @@ export class IndexTypeLoader<T extends Type> extends BaseTypeLoader<T> {
             index.getFileCount(index.getLastArchiveId());
     }
 
-    override getDataBuffer(id: number): ByteBuffer | undefined {
+    override getDataBuffer(id: number): ByteBuffer {
         const archiveId = id >> this.fileIdBits;
         const fileId = id & BIT_MASKS[this.fileIdBits - 1];
 
@@ -114,7 +120,13 @@ export class IndexTypeLoader<T extends Type> extends BaseTypeLoader<T> {
             archive = this.index.getArchive(archiveId);
             this.archives.set(archiveId, archive);
         }
-        return archive.getFile(fileId)?.getDataAsBuffer();
+        const file = archive.getFile(fileId);
+        if (!file) {
+            throw new Error(
+                `${this.typeConstructor.name} ${id} is missing from index ${this.index.id}`,
+            );
+        }
+        return file.getDataAsBuffer();
     }
 
     override getCount(): number {
@@ -209,9 +221,9 @@ export class IndexedDatTypeLoader<T extends Type> extends BaseTypeLoader<T> {
         super(typeConstructor, cacheInfo);
     }
 
-    override getDataBuffer(id: number): ByteBuffer | undefined {
+    override getDataBuffer(id: number): ByteBuffer {
         if (id < 0 || id >= this.count) {
-            return undefined;
+            throw new Error(`${this.typeConstructor.name} ${id} is outside 0..${this.count - 1}`);
         }
         this.dataBuffer.offset = this.dataOffsets[id];
         return this.dataBuffer;

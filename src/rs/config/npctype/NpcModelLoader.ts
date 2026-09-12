@@ -41,9 +41,8 @@ export class NpcModelLoader {
         let model = rest.model;
 
         const hasScale = resolvedType.widthScale !== 128 || resolvedType.heightScale !== 128;
-        const seqType = this.seqTypeLoader.load(seqId);
-        if (seqType && seqId !== -1 && frame !== -1) {
-            model = this.transformNpcModel(model, seqType, frame);
+        if (seqId !== -1 && frame !== -1) {
+            model = this.transformNpcModel(model, this.seqTypeLoader.load(seqId), frame);
         } else if (hasScale) {
             model = Model.copyAnimated(model, true, true);
         }

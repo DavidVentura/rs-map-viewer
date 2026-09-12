@@ -6,72 +6,28 @@ import { Transfer, expose } from "threads/worker";
 import { CacheSystem } from "../../rs/cache/CacheSystem";
 import { ConfigType } from "../../rs/cache/ConfigType";
 import { IndexType } from "../../rs/cache/IndexType";
-import {
-    CacheLoaderFactory,
-    getCacheLoaderFactory,
-} from "../../rs/cache/loader/CacheLoaderFactory";
 import { Bzip2 } from "../../rs/compression/Bzip2";
 import { Gzip } from "../../rs/compression/Gzip";
-import { BasTypeLoader } from "../../rs/config/bastype/BasTypeLoader";
-import { LocModelLoader } from "../../rs/config/loctype/LocModelLoader";
-import { LocTypeLoader } from "../../rs/config/loctype/LocTypeLoader";
-import { NpcModelLoader } from "../../rs/config/npctype/NpcModelLoader";
-import { NpcTypeLoader } from "../../rs/config/npctype/NpcTypeLoader";
-import { ObjModelLoader } from "../../rs/config/objtype/ObjModelLoader";
-import { ObjTypeLoader } from "../../rs/config/objtype/ObjTypeLoader";
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { VarManager } from "../../rs/config/vartype/VarManager";
 import { getMapSquareId } from "../../rs/map/MapFileIndex";
-import { MapImageRenderer } from "../../rs/map/MapImageRenderer";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { SkeletalSeqLoader } from "../../rs/model/skeletal/SkeletalSeqLoader";
-import { Scene } from "../../rs/scene/Scene";
-import { LocLoadType, SceneBuilder } from "../../rs/scene/SceneBuilder";
+import {
+    LocLoadType,
+    MAP_SQUARE_BORDER_SIZE,
+    mapSquareSceneBounds,
+} from "../../rs/scene/SceneBuilder";
 import { IndexedSprite } from "../../rs/sprite/IndexedSprite";
 import { SpriteLoader } from "../../rs/sprite/SpriteLoader";
-import { TextureLoader } from "../../rs/texture/TextureLoader";
 import { Hasher } from "../../util/Hasher";
 import { LoadedCache } from "../Caches";
 import { NpcSpawn } from "../data/npc/NpcSpawn";
 import { ObjSpawn } from "../data/obj/ObjSpawn";
 import { MinimapData, loadMinimapBlob } from "./MinimapData";
 import { RenderDataLoader, renderDataLoaderSerializer } from "./RenderDataLoader";
+import { WorkerState, clearWorkerStateCaches, createWorkerState } from "./WorkerState";
 
 registerSerializer(renderDataLoaderSerializer);
 
 const compressionPromise = Promise.all([Bzip2.initWasm(), Gzip.initWasm()]);
 const hasherPromise = Hasher.init();
-
-export type WorkerState = {
-    cache: LoadedCache;
-    cacheSystem: CacheSystem;
-    cacheLoaderFactory: CacheLoaderFactory;
-
-    locTypeLoader: LocTypeLoader;
-    objTypeLoader: ObjTypeLoader;
-    npcTypeLoader: NpcTypeLoader;
-
-    seqTypeLoader: SeqTypeLoader;
-    basTypeLoader: BasTypeLoader;
-
-    textureLoader: TextureLoader;
-    seqFrameLoader: SeqFrameLoader;
-    skeletalSeqLoader: SkeletalSeqLoader | undefined;
-
-    locModelLoader: LocModelLoader;
-    objModelLoader: ObjModelLoader;
-    npcModelLoader: NpcModelLoader;
-
-    sceneBuilder: SceneBuilder;
-
-    varManager: VarManager;
-
-    mapImageRenderer: MapImageRenderer;
-    mapImageCache: Cache;
-
-    objSpawns: ObjSpawn[];
-    npcSpawns: NpcSpawn[];
-};
 
 let workerStatePromise: Promise<WorkerState> | undefined;
 
@@ -84,112 +40,8 @@ async function initWorker(
     await hasherPromise;
 
     const cacheSystem = CacheSystem.fromFiles(cache.type, cache.files);
-
-    const loaderFactory = getCacheLoaderFactory(cache.info, cacheSystem);
-    const underlayTypeLoader = loaderFactory.getUnderlayTypeLoader();
-    const overlayTypeLoader = loaderFactory.getOverlayTypeLoader();
-
-    const varBitTypeLoader = loaderFactory.getVarBitTypeLoader();
-
-    const locTypeLoader = loaderFactory.getLocTypeLoader();
-    const objTypeLoader = loaderFactory.getObjTypeLoader();
-    const npcTypeLoader = loaderFactory.getNpcTypeLoader();
-
-    const basTypeLoader = loaderFactory.getBasTypeLoader();
-
-    const modelLoader = loaderFactory.getModelLoader();
-    const textureLoader = loaderFactory.getTextureLoader();
-
-    const seqTypeLoader = loaderFactory.getSeqTypeLoader();
-    const seqFrameLoader = loaderFactory.getSeqFrameLoader();
-    const skeletalSeqLoader = loaderFactory.getSkeletalSeqLoader();
-
-    const mapFileLoader = loaderFactory.getMapFileLoader();
-
-    const varManager = new VarManager(varBitTypeLoader);
-    const questTypeLoader = loaderFactory.getQuestTypeLoader();
-    if (questTypeLoader) {
-        varManager.setQuestsCompleted(questTypeLoader);
-    }
-
-    const locModelLoader = new LocModelLoader(
-        locTypeLoader,
-        modelLoader,
-        textureLoader,
-        seqTypeLoader,
-        seqFrameLoader,
-        skeletalSeqLoader,
-    );
-
-    const objModelLoader = new ObjModelLoader(objTypeLoader, modelLoader, textureLoader);
-
-    const npcModelLoader = new NpcModelLoader(
-        npcTypeLoader,
-        modelLoader,
-        textureLoader,
-        seqTypeLoader,
-        seqFrameLoader,
-        skeletalSeqLoader,
-        varManager,
-    );
-
-    const sceneBuilder = new SceneBuilder(
-        cache.info,
-        mapFileLoader,
-        underlayTypeLoader,
-        overlayTypeLoader,
-        locTypeLoader,
-        locModelLoader,
-        cache.xteas,
-    );
-
-    const mapImageRenderer = new MapImageRenderer(
-        textureLoader,
-        locTypeLoader,
-        loaderFactory.getMapScenes(),
-        loaderFactory.getMapFunctions(),
-    );
-
     const mapImageCache = await caches.open("map-images");
-
-    return {
-        cache,
-        cacheSystem,
-        cacheLoaderFactory: loaderFactory,
-
-        locTypeLoader,
-        objTypeLoader,
-        npcTypeLoader,
-
-        seqTypeLoader,
-        basTypeLoader,
-
-        textureLoader,
-        seqFrameLoader,
-        skeletalSeqLoader,
-
-        locModelLoader,
-        objModelLoader,
-        npcModelLoader,
-
-        sceneBuilder,
-
-        varManager,
-
-        mapImageRenderer,
-        mapImageCache,
-
-        objSpawns,
-        npcSpawns,
-    };
-}
-
-function clearCache(workerState: WorkerState): void {
-    workerState.locModelLoader.clearCache();
-    workerState.objModelLoader.clearCache();
-    workerState.npcModelLoader.clearCache();
-    workerState.seqFrameLoader.clearCache();
-    workerState.skeletalSeqLoader?.clearCache();
+    return createWorkerState(cache, cacheSystem, objSpawns, npcSpawns, mapImageCache);
 }
 
 const worker = {
@@ -214,7 +66,7 @@ const worker = {
 
         const { data, transferables } = await dataLoader.load(workerState, input);
 
-        clearCache(workerState);
+        clearWorkerStateCaches(workerState);
 
         if (!data) {
             return undefined;
@@ -247,17 +99,12 @@ const worker = {
             throw new Error("Worker not initialized");
         }
 
-        const borderSize = 6;
-
-        const baseX = mapX * Scene.MAP_SQUARE_SIZE - borderSize;
-        const baseY = mapY * Scene.MAP_SQUARE_SIZE - borderSize;
-        const mapSize = Scene.MAP_SQUARE_SIZE + borderSize * 2;
-
+        const { baseX, baseY, sizeX, sizeY } = mapSquareSceneBounds(mapX, mapY);
         const scene = workerState.sceneBuilder.buildScene(
             baseX,
             baseY,
-            mapSize,
-            mapSize,
+            sizeX,
+            sizeY,
             false,
             LocLoadType.NO_MODELS,
         );
@@ -266,7 +113,7 @@ const worker = {
             workerState.mapImageRenderer,
             scene,
             level,
-            borderSize,
+            MAP_SQUARE_BORDER_SIZE,
             drawMapFunctions,
         );
 

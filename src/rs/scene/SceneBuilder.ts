@@ -8,6 +8,7 @@ import { LocTypeLoader } from "../config/loctype/LocTypeLoader";
 import { ByteBuffer } from "../io/ByteBuffer";
 import { getMapSquareId } from "../map/MapFileIndex";
 import { MapFileLoader } from "../map/MapFileLoader";
+import { MapSquareCoord } from "../map/MapSquareCoord";
 import { Model } from "../model/Model";
 import { HSL_RGB_MAP, adjustOverlayLight, adjustUnderlayLight, packHsl } from "../util/ColorUtil";
 import { generateHeight } from "../util/HeightCalc";
@@ -21,6 +22,89 @@ import { LocEntity } from "./entity/LocEntity";
 export enum LocLoadType {
     MODELS,
     NO_MODELS,
+}
+
+// A map square's scene also covers this many tiles of each neighbouring square, which underlay
+// blending and the locs along the edge read.
+export const MAP_SQUARE_BORDER_SIZE = 6;
+
+export type SceneBounds = {
+    readonly baseX: number;
+    readonly baseY: number;
+    readonly sizeX: number;
+    readonly sizeY: number;
+};
+
+export function mapSquareSceneBounds(mapX: number, mapY: number): SceneBounds {
+    const size = Scene.MAP_SQUARE_SIZE + MAP_SQUARE_BORDER_SIZE * 2;
+    return {
+        baseX: mapX * Scene.MAP_SQUARE_SIZE - MAP_SQUARE_BORDER_SIZE,
+        baseY: mapY * Scene.MAP_SQUARE_SIZE - MAP_SQUARE_BORDER_SIZE,
+        sizeX: size,
+        sizeY: size,
+    };
+}
+
+// Every map square whose terrain and locs buildScene reads for the bounds.
+export function sceneMapSquares({ baseX, baseY, sizeX, sizeY }: SceneBounds): MapSquareCoord[] {
+    const mapStartX = Math.floor(baseX / Scene.MAP_SQUARE_SIZE);
+    const mapStartY = Math.floor(baseY / Scene.MAP_SQUARE_SIZE);
+    const mapEndX = Math.ceil((baseX + sizeX) / Scene.MAP_SQUARE_SIZE);
+    const mapEndY = Math.ceil((baseY + sizeY) / Scene.MAP_SQUARE_SIZE);
+    const squares: MapSquareCoord[] = [];
+    for (let mapX = mapStartX; mapX < mapEndX; mapX++) {
+        for (let mapY = mapStartY; mapY < mapEndY; mapY++) {
+            squares.push({ mapX, mapY });
+        }
+    }
+    return squares;
+}
+
+export type LocPlacement = {
+    readonly id: number;
+    readonly localX: number;
+    readonly localY: number;
+    readonly level: number;
+    readonly type: LocModelType;
+    readonly rotation: number;
+};
+
+export function decodeLocPlacements(data: Int8Array): LocPlacement[] {
+    const buffer = new ByteBuffer(data);
+    const placements: LocPlacement[] = [];
+
+    let id = -1;
+    let idDelta: number;
+    while ((idDelta = buffer.readSmart3()) !== 0) {
+        id += idDelta;
+
+        let pos = 0;
+        let posDelta: number;
+        while ((posDelta = buffer.readUnsignedSmart()) !== 0) {
+            pos += posDelta - 1;
+
+            const attributes = buffer.readUnsignedByte();
+            placements.push({
+                id,
+                localX: (pos >> 6) & 0x3f,
+                localY: pos & 0x3f,
+                level: pos >> 12,
+                type: attributes >> 2,
+                rotation: attributes & 0x3,
+            });
+        }
+    }
+    return placements;
+}
+
+// Locs on the outermost ring of tiles are dropped, since their footprint would leave the scene.
+export function isLocPlacedInScene(
+    sceneSizeX: number,
+    sceneSizeY: number,
+    sceneX: number,
+    sceneY: number,
+): boolean {
+    return sceneX > 0 && sceneY > 0 && sceneX < sceneSizeX - 1 && sceneY < sceneSizeY - 1;
 }
 
 function readTerrainValue(buffer: ByteBuffer, newFormat: boolean, signed: boolean = false): number {
@@ -85,56 +169,46 @@ export class SceneBuilder {
     ): Scene {
         const scene = new Scene(Scene.MAX_LEVELS, sizeX, sizeY);
 
-        const mapStartX = Math.floor(baseX / Scene.MAP_SQUARE_SIZE);
-        const mapStartY = Math.floor(baseY / Scene.MAP_SQUARE_SIZE);
-
-        const mapEndX = Math.ceil((baseX + sizeX) / Scene.MAP_SQUARE_SIZE);
-        const mapEndY = Math.ceil((baseY + sizeY) / Scene.MAP_SQUARE_SIZE);
+        const squares = sceneMapSquares({ baseX, baseY, sizeX, sizeY });
 
         const emptyTerrainIds = new Set<number>();
 
-        for (let mx = mapStartX; mx < mapEndX; mx++) {
-            for (let my = mapStartY; my < mapEndY; my++) {
-                const terrainData = this.getTerrainData(mx, my);
-                if (terrainData) {
-                    const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
-                    const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
-                    this.decodeTerrain(scene, terrainData, offsetX, offsetY, baseX, baseY);
-                } else {
-                    emptyTerrainIds.add(getMapSquareId(mx, my));
-                }
+        for (const { mapX: mx, mapY: my } of squares) {
+            const terrainData = this.getTerrainData(mx, my);
+            if (terrainData) {
+                const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
+                const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
+                this.decodeTerrain(scene, terrainData, offsetX, offsetY, baseX, baseY);
+            } else {
+                emptyTerrainIds.add(getMapSquareId(mx, my));
             }
         }
 
-        for (let mx = mapStartX; mx < mapEndX; mx++) {
-            for (let my = mapStartY; my < mapEndY; my++) {
-                if (!emptyTerrainIds.has(getMapSquareId(mx, my))) {
-                    continue;
-                }
-                const endX = (mx + 1) * Scene.MAP_SQUARE_SIZE;
-                const endY = (my + 1) * Scene.MAP_SQUARE_SIZE;
-                const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
-                const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
-                const tileX = Math.max(offsetX, 0);
-                const tileY = Math.max(offsetY, 0);
-                const emptySizeX = endX - baseX - tileX;
-                const emptySizeY = endY - baseY - tileY;
-                for (let level = 0; level < scene.levels; level++) {
-                    this.loadEmptyTerrain(scene, level, tileX, tileY, emptySizeX, emptySizeY);
-                }
+        for (const { mapX: mx, mapY: my } of squares) {
+            if (!emptyTerrainIds.has(getMapSquareId(mx, my))) {
+                continue;
+            }
+            const endX = (mx + 1) * Scene.MAP_SQUARE_SIZE;
+            const endY = (my + 1) * Scene.MAP_SQUARE_SIZE;
+            const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
+            const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
+            const tileX = Math.max(offsetX, 0);
+            const tileY = Math.max(offsetY, 0);
+            const emptySizeX = endX - baseX - tileX;
+            const emptySizeY = endY - baseY - tileY;
+            for (let level = 0; level < scene.levels; level++) {
+                this.loadEmptyTerrain(scene, level, tileX, tileY, emptySizeX, emptySizeY);
             }
         }
 
-        for (let mx = mapStartX; mx < mapEndX; mx++) {
-            for (let my = mapStartY; my < mapEndY; my++) {
-                const locData = this.getLocData(mx, my);
-                if (!locData) {
-                    continue;
-                }
-                const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
-                const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
-                this.decodeLocs(scene, locData, offsetX, offsetY, locLoadType);
+        for (const { mapX: mx, mapY: my } of squares) {
+            const locData = this.getLocData(mx, my);
+            if (!locData) {
+                continue;
             }
+            const offsetX = mx * Scene.MAP_SQUARE_SIZE - baseX;
+            const offsetY = my * Scene.MAP_SQUARE_SIZE - baseY;
+            this.decodeLocs(scene, locData, offsetX, offsetY, locLoadType);
         }
 
         this.addTileModels(scene, smoothUnderlays);
@@ -360,59 +434,34 @@ export class SceneBuilder {
         offsetY: number,
         locLoadType: LocLoadType,
     ): void {
-        const buffer = new ByteBuffer(data);
-
-        let id = -1;
-        let idDelta: number;
-        while ((idDelta = buffer.readSmart3()) !== 0) {
-            id += idDelta;
-
-            let pos = 0;
-            let posDelta: number;
-            while ((posDelta = buffer.readUnsignedSmart()) !== 0) {
-                pos += posDelta - 1;
-
-                const localX = (pos >> 6) & 0x3f;
-                const localY = pos & 0x3f;
-                const level = pos >> 12;
-
-                const attributes = buffer.readUnsignedByte();
-
-                const type: LocModelType = attributes >> 2;
-                const rotation = attributes & 0x3;
-
-                const sceneX = localX + offsetX;
-                const sceneY = localY + offsetY;
-
-                if (
-                    sceneX > 0 &&
-                    sceneY > 0 &&
-                    sceneX < scene.sizeX - 1 &&
-                    sceneY < scene.sizeY - 1
-                ) {
-                    let transformedLevel = level;
-                    if ((scene.tileRenderFlags[1][sceneX][sceneY] & 2) === 2) {
-                        transformedLevel = level - 1;
-                    }
-
-                    let collisionMap: CollisionMap | undefined = undefined;
-                    if (transformedLevel >= 0) {
-                        collisionMap = scene.collisionMaps[transformedLevel];
-                    }
-
-                    this.addLoc(
-                        scene,
-                        level,
-                        sceneX,
-                        sceneY,
-                        id,
-                        type,
-                        rotation,
-                        collisionMap,
-                        locLoadType,
-                    );
-                }
+        for (const { id, localX, localY, level, type, rotation } of decodeLocPlacements(data)) {
+            const sceneX = localX + offsetX;
+            const sceneY = localY + offsetY;
+            if (!isLocPlacedInScene(scene.sizeX, scene.sizeY, sceneX, sceneY)) {
+                continue;
             }
+
+            let transformedLevel = level;
+            if ((scene.tileRenderFlags[1][sceneX][sceneY] & 2) === 2) {
+                transformedLevel = level - 1;
+            }
+
+            let collisionMap: CollisionMap | undefined = undefined;
+            if (transformedLevel >= 0) {
+                collisionMap = scene.collisionMaps[transformedLevel];
+            }
+
+            this.addLoc(
+                scene,
+                level,
+                sceneX,
+                sceneY,
+                id,
+                type,
+                rotation,
+                collisionMap,
+                locLoadType,
+            );
         }
     }
 

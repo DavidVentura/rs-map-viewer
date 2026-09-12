@@ -58,11 +58,14 @@ export abstract class CacheIndex<A extends ApiType = ApiType.SYNC> {
         key?: number[],
     ): ApiReturnType<A, ArchiveFile | undefined>;
 
+    // A one-file archive named by the id comes first: in a pack's subset table a one-file-per-archive
+    // index can list a single archive, which the archive count alone would misread as one archive
+    // holding every file.
     getFileSmart(id: number, key?: number[]): ApiReturnType<A, ArchiveFile | undefined> {
-        if (this.getArchiveCount() === 1) {
-            return this.getFile(0, id, key);
-        } else if (this.getFileCount(id) === 1) {
+        if (this.getFileCount(id) === 1) {
             return this.getFile(id, 0, key);
+        } else if (this.getArchiveCount() === 1) {
+            return this.getFile(0, id, key);
         }
         throw new Error("Invalid archive");
     }

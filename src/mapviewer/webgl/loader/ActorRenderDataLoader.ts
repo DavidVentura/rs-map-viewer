@@ -18,7 +18,7 @@ import { EnemyTypeId } from "../../game/EnemyType";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
-import { WorkerState } from "../../worker/RenderDataWorker";
+import { WorkerState } from "../../worker/WorkerState";
 import {
     EnemyTypeAnimationSet,
     GroundItemActorData,

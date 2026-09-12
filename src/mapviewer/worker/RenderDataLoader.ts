@@ -2,7 +2,7 @@ import { SerializerImplementation } from "threads";
 
 import { ActorRenderDataLoader } from "../webgl/loader/ActorRenderDataLoader";
 import { SdMapDataLoader } from "../webgl/loader/SdMapDataLoader";
-import { WorkerState } from "./RenderDataWorker";
+import { WorkerState } from "./WorkerState";
 
 export type RenderDataResult<T> = {
     data: T;

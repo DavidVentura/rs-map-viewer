@@ -1,11 +1,35 @@
 import { ByteBuffer } from "../../io/ByteBuffer";
+import { ByteWriter } from "../../io/ByteWriter";
 import { StringUtil } from "../../util/StringUtil";
 import { ArchiveReference } from "./ArchiveReference";
+
+const FLAG_NAMED = 0x1;
+const FLAG_WHIRLPOOL = 0x2;
+const FLAG_SIZES = 0x4;
+
+const WHIRLPOOL_SIZE = 64;
+
+export type ReferenceTableFormat = {
+    readonly protocol: number;
+    readonly revision: number;
+    readonly named: boolean;
+    readonly usesWhirlpool: boolean;
+    readonly hasSizes: boolean;
+};
+
+function assertAscending(kind: string, ids: ArrayLike<number>): void {
+    for (let i = 1; i < ids.length; i++) {
+        if (ids[i] <= ids[i - 1]) {
+            throw new Error(`Reference table ${kind} ids must ascend: ${ids[i - 1]}, ${ids[i]}`);
+        }
+    }
+}
 
 export class ReferenceTable {
     static INVALID_TABLE = new ReferenceTable(
         -1,
         -1,
+        false,
         false,
         false,
         0,
@@ -14,6 +38,7 @@ export class ReferenceTable {
         new Int32Array(),
         new Int32Array(),
         [],
+        new DataView(new ArrayBuffer(0)),
         new DataView(new ArrayBuffer(0)),
         new DataView(new ArrayBuffer(0)),
         new Int32Array(),
@@ -46,6 +71,7 @@ export class ReferenceTable {
             -1,
             false,
             false,
+            false,
             archiveCount,
             lastArchiveId,
             archiveIdIndexMap,
@@ -53,12 +79,98 @@ export class ReferenceTable {
             archiveNameHashes,
             archiveWhirlpools,
             new DataView(new ArrayBuffer(archiveCount * 4)),
+            new DataView(new ArrayBuffer(0)),
             new DataView(new ArrayBuffer(archiveCount * 4)),
             archiveFileCounts,
             archiveLastFileIds,
             archiveFileIds,
             archiveFileNameHashes,
         );
+    }
+
+    // The inverse of decode. Uncompressed crcs are never written, since decode does not read them.
+    static encode(format: ReferenceTableFormat, archives: readonly ArchiveReference[]): Int8Array {
+        const { protocol, named, usesWhirlpool, hasSizes } = format;
+        if (protocol < 5 || protocol > 7) {
+            throw new Error("Invalid protocol: " + protocol);
+        }
+        assertAscending(
+            "archive",
+            archives.map((archive) => archive.id),
+        );
+
+        const writer = new ByteWriter();
+        const writeCount = (value: number) => {
+            if (protocol === 7) {
+                writer.writeBigSmart(value);
+                return;
+            }
+            if (value > 0xffff) {
+                throw new Error(`Reference table protocol ${protocol} cannot hold ${value}`);
+            }
+            writer.writeShort(value);
+        };
+
+        writer.writeByte(protocol);
+        if (protocol > 5) {
+            writer.writeInt(format.revision);
+        }
+        writer.writeByte(
+            (named ? FLAG_NAMED : 0) |
+                (usesWhirlpool ? FLAG_WHIRLPOOL : 0) |
+                (hasSizes ? FLAG_SIZES : 0),
+        );
+        writeCount(archives.length);
+
+        let lastArchiveId = 0;
+        for (const archive of archives) {
+            writeCount(archive.id - lastArchiveId);
+            lastArchiveId = archive.id;
+        }
+        if (named) {
+            for (const archive of archives) {
+                writer.writeInt(archive.nameHash);
+            }
+        }
+        if (usesWhirlpool) {
+            for (const archive of archives) {
+                if (archive.whirlpool.length !== WHIRLPOOL_SIZE) {
+                    throw new Error(`Archive ${archive.id} has no whirlpool digest`);
+                }
+                writer.writeBytes(archive.whirlpool);
+            }
+        }
+        for (const archive of archives) {
+            writer.writeInt(archive.crc);
+        }
+        if (hasSizes) {
+            for (const archive of archives) {
+                writer.writeInt(archive.compressedSize);
+                writer.writeInt(archive.decompressedSize);
+            }
+        }
+        for (const archive of archives) {
+            writer.writeInt(archive.revision);
+        }
+        for (const archive of archives) {
+            writeCount(archive.fileIds.length);
+        }
+        for (const archive of archives) {
+            assertAscending(`archive ${archive.id} file`, archive.fileIds);
+            let lastFileId = 0;
+            for (const fileId of archive.fileIds) {
+                writeCount(fileId - lastFileId);
+                lastFileId = fileId;
+            }
+        }
+        if (named) {
+            for (const archive of archives) {
+                for (let i = 0; i < archive.fileIds.length; i++) {
+                    writer.writeInt(archive.fileNameHashes[i]);
+                }
+            }
+        }
+        return writer.toBytes();
     }
 
     static decode(buffer: ByteBuffer): ReferenceTable {
@@ -105,14 +217,27 @@ export class ReferenceTable {
             }
         }
 
-        const archiveCrcs = new DataView(buffer.data.buffer, buffer.offset, archiveCount * 4);
+        // buffer.data may be a view into a larger buffer (an uncompressed container), so the
+        // views are anchored to its byteOffset.
+        const archiveCrcs = new DataView(
+            buffer.data.buffer,
+            buffer.data.byteOffset + buffer.offset,
+            archiveCount * 4,
+        );
         buffer.offset += archiveCrcs.byteLength;
 
-        if (hasSizes) {
-            buffer.offset += archiveCount * 8;
-        }
+        const archiveSizes = new DataView(
+            buffer.data.buffer,
+            buffer.data.byteOffset + buffer.offset,
+            hasSizes ? archiveCount * 8 : 0,
+        );
+        buffer.offset += archiveSizes.byteLength;
 
-        const archiveRevisions = new DataView(buffer.data.buffer, buffer.offset, archiveCount * 4);
+        const archiveRevisions = new DataView(
+            buffer.data.buffer,
+            buffer.data.byteOffset + buffer.offset,
+            archiveCount * 4,
+        );
         buffer.offset += archiveRevisions.byteLength;
 
         const archiveFileCounts = new Int32Array(archiveCount);
@@ -152,6 +277,7 @@ export class ReferenceTable {
             revision,
             hasNames,
             hasWhirlpool,
+            hasSizes,
             archiveCount,
             lastArchiveId,
             archiveIdIndexMap,
@@ -159,6 +285,7 @@ export class ReferenceTable {
             archiveNameHashes,
             archiveWhirlpools,
             archiveCrcs,
+            archiveSizes,
             archiveRevisions,
             archiveFileCounts,
             archiveLastFileIds,
@@ -172,6 +299,7 @@ export class ReferenceTable {
         readonly revision: number,
         readonly named: boolean,
         readonly usesWhirlpool: boolean,
+        readonly hasSizes: boolean,
         readonly archiveCount: number,
         readonly lastArchiveId: number,
         private readonly _archiveIdIndexMap: Map<number, number>,
@@ -179,6 +307,7 @@ export class ReferenceTable {
         private readonly _archiveNameHashes: Int32Array,
         private readonly _archiveWhirlpools: Int8Array[],
         private readonly _archiveCrcs: DataView,
+        private readonly _archiveSizes: DataView,
         private readonly _archiveRevisions: DataView,
         private readonly _archiveFileCounts: Int32Array,
         private readonly _archiveLastFileIds: Int32Array,
@@ -191,6 +320,16 @@ export class ReferenceTable {
                 this._archiveNameHashIdMap.set(this._archiveNameHashes[i], this.archiveIds[i]);
             }
         }
+    }
+
+    get format(): ReferenceTableFormat {
+        return {
+            protocol: this.protocol,
+            revision: this.revision,
+            named: this.named,
+            usesWhirlpool: this.usesWhirlpool,
+            hasSizes: this.hasSizes,
+        };
     }
 
     getArchiveId(name: string): number | undefined {
@@ -210,6 +349,8 @@ export class ReferenceTable {
         const nameHash = this._archiveNameHashes[i];
         const whirlpool = this._archiveWhirlpools[i];
         const crc = this._archiveCrcs.getInt32(i * 4, false);
+        const compressedSize = this.hasSizes ? this._archiveSizes.getInt32(i * 8, false) : 0;
+        const decompressedSize = this.hasSizes ? this._archiveSizes.getInt32(i * 8 + 4, false) : 0;
         const revision = this._archiveRevisions.getInt32(i * 4, false);
         const fileCount = this._archiveFileCounts[i];
         const lastFileId = this._archiveLastFileIds[i];
@@ -225,6 +366,8 @@ export class ReferenceTable {
             nameHash,
             whirlpool,
             crc,
+            compressedSize,
+            decompressedSize,
             revision,
             fileCount,
             lastFileId,

@@ -16,10 +16,7 @@ import {
     LocTypeLoader,
 } from "../../config/loctype/LocTypeLoader";
 import { MapSceneTypeLoader } from "../../config/mapscenetype/MapSceneTypeLoader";
-import {
-    ArchiveMapElementTypeLoader,
-    MapElementTypeLoader,
-} from "../../config/meltype/MapElementTypeLoader";
+import { ArchiveMapElementTypeLoader } from "../../config/meltype/MapElementTypeLoader";
 import {
     ArchiveNpcTypeLoader,
     IndexNpcTypeLoader,
@@ -59,6 +56,7 @@ import { ProceduralTextureLoader } from "../../texture/ProceduralTextureLoader";
 import { SpriteTextureLoader } from "../../texture/SpriteTextureLoader";
 import { TextureLoader } from "../../texture/TextureLoader";
 import { ApiType } from "../ApiType";
+import { Archive } from "../Archive";
 import { CacheIndex } from "../CacheIndex";
 import { CacheInfo } from "../CacheInfo";
 import { CacheSystem } from "../CacheSystem";
@@ -287,19 +285,21 @@ export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
         }
     }
 
-    loadMapElementSprites(
-        spriteIndex: CacheIndex,
-        mapElementTypeLoader: MapElementTypeLoader,
-    ): IndexedSprite[] {
-        const mapElementSprites = new Array<IndexedSprite>(mapElementTypeLoader.getCount());
-        for (let i = 0; i < mapElementSprites.length; i++) {
-            const mapElement = mapElementTypeLoader.load(i);
+    // Walks the archive's own file ids, since element ids need not be contiguous.
+    loadMapElementSprites(spriteIndex: CacheIndex, mapElementArchive: Archive): IndexedSprite[] {
+        const mapElementTypeLoader = new ArchiveMapElementTypeLoader(
+            this.cacheInfo,
+            mapElementArchive,
+        );
+        const mapElementSprites = new Array<IndexedSprite>(mapElementArchive.lastFileId + 1);
+        for (const id of mapElementArchive.fileIds) {
+            const mapElement = mapElementTypeLoader.load(id);
             if (mapElement.spriteId === -1) {
                 continue;
             }
             const sprite = SpriteLoader.loadIntoIndexedSprite(spriteIndex, mapElement.spriteId);
             if (sprite) {
-                mapElementSprites[i] = sprite;
+                mapElementSprites[id] = sprite;
             }
         }
         return mapElementSprites;
@@ -314,23 +314,13 @@ export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
             configIndex.archiveExists(ConfigType.OSRS.mapFunctions)
         ) {
             const mapElementArchive = configIndex.getArchive(ConfigType.OSRS.mapFunctions);
-            const mapElementTypeLoader = new ArchiveMapElementTypeLoader(
-                this.cacheInfo,
-                mapElementArchive,
-            );
-
-            return this.loadMapElementSprites(spriteIndex, mapElementTypeLoader);
+            return this.loadMapElementSprites(spriteIndex, mapElementArchive);
         } else if (
             this.cacheInfo.game === "runescape" &&
             configIndex.archiveExists(ConfigType.RS2.mapFunctions)
         ) {
             const mapElementArchive = configIndex.getArchive(ConfigType.RS2.mapFunctions);
-            const mapElementTypeLoader = new ArchiveMapElementTypeLoader(
-                this.cacheInfo,
-                mapElementArchive,
-            );
-
-            return this.loadMapElementSprites(spriteIndex, mapElementTypeLoader);
+            return this.loadMapElementSprites(spriteIndex, mapElementArchive);
         } else {
             const graphicDefaults = GraphicsDefaults.load(this.cacheInfo, this.cacheSystem);
             if (graphicDefaults.mapFunctions === -1) {
