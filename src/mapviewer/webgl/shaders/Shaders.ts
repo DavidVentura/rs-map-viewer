@@ -1,4 +1,5 @@
 import { ACTOR_INSTANCE_TEXELS } from "../actor/ActorInstanceData";
+import { LOC_INSTANCE_TEXELS } from "../loc/LocInstanceData";
 import { NPC_INSTANCE_TEXELS } from "../npc/NpcInstanceData";
 import { ProgramSource, ShaderDefine, prependDefines } from "./ShaderUtil";
 import actorVertShader from "./actor.vert.glsl";
@@ -28,6 +29,23 @@ export function createProgram(
 
 export function createMainProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {
     return createProgram(mainVertShader, mainFragShader, hasMultiDraw, discardAlpha);
+}
+
+export function createSkinnedLocProgram(
+    hasMultiDraw: boolean,
+    discardAlpha: boolean,
+): ProgramSource {
+    const defines: ShaderDefine[] = [
+        "SKINNED",
+        { name: "LOC_INSTANCE_TEXELS", value: LOC_INSTANCE_TEXELS },
+    ];
+    if (hasMultiDraw) {
+        defines.push("MULTI_DRAW");
+    }
+    if (discardAlpha) {
+        defines.push("DISCARD_ALPHA");
+    }
+    return [prependDefines(mainVertShader, defines), prependDefines(mainFragShader, defines)];
 }
 
 export function createNpcProgram(hasMultiDraw: boolean, discardAlpha: boolean): ProgramSource {

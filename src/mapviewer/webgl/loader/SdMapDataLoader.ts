@@ -14,8 +14,7 @@ import { ObjSpawn, getMapObjSpawns } from "../../data/obj/ObjSpawn";
 import { loadMinimapBlob } from "../../worker/MinimapData";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/RenderDataWorker";
-import { AnimationFrames } from "../AnimationFrames";
-import { DrawRange, NULL_DRAW_RANGE, newDrawRange } from "../DrawRange";
+import { newDrawRange } from "../DrawRange";
 import { ModelHashBuffer, getModelHash } from "../buffer/ModelHashBuffer";
 import {
     ContourGroundType,
@@ -28,12 +27,14 @@ import {
     getModelFaces,
     isModelFaceTransparent,
 } from "../buffer/SceneBuffer";
+import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs } from "../loc/SceneLocs";
 import { NpcAnimation } from "../npc/NpcAnimation";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
+import { SkinAnimation } from "../skin/SkinAnimation";
 import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
 import { SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
 import { Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
@@ -256,52 +257,46 @@ function addSceneModels(
     }
 }
 
-function addLocAnimationFrames(
+// Undefined when the loc has no model or its sequence has nothing poseable, which the map omits.
+function createLocAnimation(
     locModelLoader: LocModelLoader,
-    sceneBuf: SceneBuffer,
+    skinning: Skinning,
     entity: LocEntity,
     locType: LocType,
-): AnimationFrames | undefined {
-    const seqType = locModelLoader.seqTypeLoader.load(entity.seqId);
-    let frameCount: number;
-    if (seqType.isSkeletalSeq()) {
-        frameCount = seqType.getSkeletalDuration();
-    } else {
-        if (!seqType.frameIds) {
-            return undefined;
-        }
-        frameCount = seqType.frameIds.length;
-    }
-    if (frameCount === 0) {
+): SkinAnimation | undefined {
+    const rest = locModelLoader.getRestModel(locType, entity.type, entity.rotation);
+    const frames = skinning.loadFrames(entity.seqId);
+    if (!rest || !frames) {
         return undefined;
     }
-    const frames = new Array<DrawRange>(frameCount);
-    const framesAlpha = new Array<DrawRange>(frameCount);
-    let alphaFrameCount = 0;
-    for (let i = 0; i < frameCount; i++) {
-        const model = locModelLoader.getModelAnimated(
-            locType,
-            entity.type,
-            entity.rotation,
-            entity.seqId,
-            i,
-        );
-        if (model) {
-            frames[i] = sceneBuf.addModelAnimFrame(model, false);
-            framesAlpha[i] = sceneBuf.addModelAnimFrame(model, true);
-            if (framesAlpha[i][1] > 0) {
-                alphaFrameCount++;
-            }
-        } else {
-            frames[i] = NULL_DRAW_RANGE;
-            framesAlpha[i] = NULL_DRAW_RANGE;
+    const set = skinning.addAnimationSet(
+        rest.model,
+        new Map([[entity.seqId, frames]]),
+        rest.poseSpace,
+    );
+    return { mesh: set.mesh, frames: set.animationsBySeqId.get(entity.seqId)! };
+}
+
+function createLocAnimatedDatas(groups: Iterable<LocAnimatedGroup>): LocAnimatedData[] {
+    const locsAnimated: LocAnimatedData[] = [];
+    for (const group of groups) {
+        for (const loc of group.locs) {
+            locsAnimated.push({
+                placement: {
+                    sceneX: loc.sceneX,
+                    sceneZ: loc.sceneZ,
+                    heightOffset: loc.heightOffset,
+                    level: loc.level,
+                    contourGround: loc.contourGround,
+                    priority: loc.priority,
+                },
+                animation: group.animation,
+                seqId: loc.entity.seqId,
+                randomStart: loc.entity.seqRandomStart,
+            });
         }
     }
-
-    return {
-        frames,
-        framesAlpha: alphaFrameCount > 0 ? framesAlpha : undefined,
-    };
+    return locsAnimated;
 }
 
 function addLocEntities(
@@ -310,7 +305,7 @@ function addLocEntities(
     varManager: VarManager,
     scene: Scene,
     sceneModels: SceneModel[],
-    sceneBuf: SceneBuffer,
+    skinning: Skinning,
     locEntities: SceneLocEntity[],
 ): Iterable<LocAnimatedGroup> {
     const locAnimatedGroupMap = new Map<number, LocAnimatedGroup>();
@@ -382,13 +377,13 @@ function addLocEntities(
             if (group) {
                 group.locs.push(sceneLocEntity);
             } else {
-                const anim = addLocAnimationFrames(locModelLoader, sceneBuf, entity, locType);
-                if (!anim) {
+                const animation = createLocAnimation(locModelLoader, skinning, entity, locType);
+                if (!animation) {
                     continue;
                 }
 
                 locAnimatedGroupMap.set(key, {
-                    anim,
+                    animation,
                     locs: [sceneLocEntity],
                 });
             }
@@ -550,7 +545,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             varManager,
             scene,
             sceneModels,
-            sceneBuf,
+            skinning,
             sceneLocs.locEntities,
         );
 
@@ -562,7 +557,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         addSceneModels(this.modelHashBuf!, textureLoader, sceneBuf, sceneModels, minimizeDrawCalls);
 
         // Animated locs
-        const locsAnimated = sceneBuf.addLocAnimatedGroups(locAnimatedGroups);
+        const locsAnimated = createLocAnimatedDatas(locAnimatedGroups);
         console.log(`animated locs: ${locsAnimated.length}`);
 
         // Npcs

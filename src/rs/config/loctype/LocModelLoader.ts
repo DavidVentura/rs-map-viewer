@@ -1,7 +1,9 @@
 import { getModelFaces, isModelFaceTransparent } from "../../../mapviewer/webgl/buffer/SceneBuffer";
+import { COSINE, SINE } from "../../MathConstants";
 import { Model } from "../../model/Model";
 import { ModelData } from "../../model/ModelData";
 import { ModelLoader } from "../../model/ModelLoader";
+import { AffineTransform, PoseSpace } from "../../model/animation/FramePalette";
 import { SeqFrameLoader } from "../../model/seq/SeqFrameLoader";
 import { SkeletalSeqLoader } from "../../model/skeletal/SkeletalSeqLoader";
 import { TextureLoader } from "../../texture/TextureLoader";
@@ -20,6 +22,35 @@ export type ContourGroundInfo = {
     entityY: number;
     entityZ: number;
 };
+
+export interface LocRestModel {
+    readonly model: Model;
+    readonly poseSpace: PoseSpace;
+}
+
+const QUARTER_TURNS: readonly AffineTransform[] = [
+    AffineTransform.identity(),
+    AffineTransform.fromRows([0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0]),
+    AffineTransform.fromRows([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0]),
+    AffineTransform.fromRows([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0]),
+];
+
+// Matches transformModel, which undoes the orientation before animating and reapplies it after,
+// and getModelAnimated, which turns diagonal locs by 256 once posed. QUARTER_TURNS[n] is
+// Model.rotate90 applied n times.
+export function locPoseSpace(type: LocModelType, rotation: number): PoseSpace {
+    const quarterTurns = rotation & 3;
+    const toPose = QUARTER_TURNS[(4 - quarterTurns) & 3];
+    const orient = QUARTER_TURNS[quarterTurns];
+    const isDiagonal = type === LocModelType.NORMAL && rotation > 3;
+    if (!isDiagonal) {
+        return PoseSpace.between(toPose, orient);
+    }
+    const sin = SINE[256] / 65536;
+    const cos = COSINE[256] / 65536;
+    const diagonal = AffineTransform.fromRows([cos, 0, sin, 0, 0, 1, 0, 0, -sin, 0, cos, 0]);
+    return PoseSpace.between(toPose, orient.then(diagonal));
+}
 
 export class LocModelLoader {
     static mergeLocModelsCache: ModelData[] = new Array(4);
@@ -270,6 +301,47 @@ export class LocModelLoader {
         frame: number,
         contourGroundInfo?: ContourGroundInfo,
     ): Model | undefined {
+        let model = this.getLitModel(locType, type, rotation);
+        if (!model) {
+            return undefined;
+        }
+
+        if (seqId !== -1 && frame !== -1) {
+            const seqType = this.seqTypeLoader.load(seqId);
+            model = this.transformModel(model, seqType, frame, rotation);
+        }
+
+        const isDiagonal = type === LocModelType.NORMAL && rotation > 3;
+        if (isDiagonal) {
+            model.rotate(256);
+        }
+
+        if (locType.contourGroundType !== 0 && contourGroundInfo) {
+            model = model.contourGround(
+                contourGroundInfo.type,
+                contourGroundInfo.param,
+                contourGroundInfo.heightMap,
+                contourGroundInfo.heightMapAbove,
+                contourGroundInfo.entityX,
+                contourGroundInfo.entityY,
+                contourGroundInfo.entityZ,
+            );
+        }
+
+        return model;
+    }
+
+    // The shared, lit model stored rotated to its orientation, with the space its sequence frames
+    // pose it in (see transformModel and getModelAnimated). Callers must not mutate the model.
+    getRestModel(locType: LocType, type: LocModelType, rotation: number): LocRestModel | undefined {
+        const model = this.getLitModel(locType, type, rotation);
+        if (!model) {
+            return undefined;
+        }
+        return { model, poseSpace: locPoseSpace(type, rotation) };
+    }
+
+    private getLitModel(locType: LocType, type: LocModelType, rotation: number): Model | undefined {
         let key: number;
         if (locType.types) {
             key = rotation + (type << 3) + (locType.id << 10);
@@ -295,29 +367,6 @@ export class LocModelLoader {
 
             this.modelCache.set(key, model);
         }
-
-        if (seqId !== -1 && frame !== -1) {
-            const seqType = this.seqTypeLoader.load(seqId);
-            model = this.transformModel(model, seqType, frame, rotation);
-        }
-
-        const isDiagonal = type === LocModelType.NORMAL && rotation > 3;
-        if (isDiagonal) {
-            model.rotate(256);
-        }
-
-        if (locType.contourGroundType !== 0 && contourGroundInfo) {
-            model = model.contourGround(
-                contourGroundInfo.type,
-                contourGroundInfo.param,
-                contourGroundInfo.heightMap,
-                contourGroundInfo.heightMapAbove,
-                contourGroundInfo.entityX,
-                contourGroundInfo.entityY,
-                contourGroundInfo.entityZ,
-            );
-        }
-
         return model;
     }
 

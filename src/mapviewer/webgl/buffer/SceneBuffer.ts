@@ -4,10 +4,6 @@ import { Model } from "../../../rs/model/Model";
 import { Scene } from "../../../rs/scene/Scene";
 import { SceneTile } from "../../../rs/scene/SceneTile";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
-import { DrawRange, newDrawRange } from "../DrawRange";
-import { LocAnimatedData } from "../loc/LocAnimatedData";
-import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
-import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { VertexBuffer } from "./VertexBuffer";
 
 export enum ContourGroundType {
@@ -143,57 +139,6 @@ export class SceneBuffer {
         }
 
         return this.vertexCount() - terrainStartVertexCount;
-    }
-
-    addModelAnimFrame(model: Model, transparent: boolean): DrawRange {
-        const faces = getModelFaces(model).filter(
-            (face) => isModelFaceTransparent(this.textureLoader, face) === transparent,
-        );
-
-        const offset = this.indexByteOffset();
-        this.addModel(model, faces);
-        const elements = (this.indexByteOffset() - offset) / 4;
-
-        return newDrawRange(offset, elements, 1);
-    }
-
-    addLocAnimatedGroups(groups: Iterable<LocAnimatedGroup>): LocAnimatedData[] {
-        const locsAnimated: LocAnimatedData[] = [];
-
-        for (const group of groups) {
-            for (const loc of group.locs) {
-                locsAnimated.push(this.addLocAnimated(group, loc));
-            }
-        }
-
-        return locsAnimated;
-    }
-
-    addLocAnimated(group: LocAnimatedGroup, loc: SceneLocEntity): LocAnimatedData {
-        const anim = group.anim;
-
-        const drawRangeIndex = this.drawCommands.length;
-        this.drawCommands.push({
-            offset: 0,
-            elements: 0,
-            instances: [loc],
-        });
-        const drawRangeAlphaIndex = this.drawCommandsAlpha.length;
-        if (anim.framesAlpha) {
-            this.drawCommandsAlpha.push({
-                offset: 0,
-                elements: 0,
-                instances: [loc],
-            });
-        }
-        return {
-            drawRangeIndex,
-            drawRangeAlphaIndex,
-
-            anim,
-            seqId: loc.entity.seqId,
-            randomStart: loc.entity.seqRandomStart,
-        };
     }
 
     addModelGroup(group: ModelMergeGroup): void {
@@ -434,6 +379,15 @@ export function getModelFaces(model: Model): ModelFace[] {
     return faces;
 }
 
+// Three 16-bit words, decoded by decodeModelInfoTexel in main.vert.glsl.
+export function encodeModelInfo(info: ModelInfo): readonly [number, number, number] {
+    return [
+        info.sceneX | (info.level << 14),
+        info.sceneZ | (info.contourGround << 14),
+        ((info.priority & 0x7) | (Math.round(info.heightOffset / 8) << 6)) & 0xffff,
+    ];
+}
+
 export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16Array {
     const instances: ModelInfo[] = [];
     for (const cmd of drawCommands) {
@@ -453,13 +407,10 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
     instances.forEach((data, index) => {
         const offset = drawCommands.length * 4 + index * 4;
 
-        const contourGround = data.contourGround;
-
-        const height = data.heightOffset;
-
-        textureData[offset] = data.sceneX | (data.level << 14);
-        textureData[offset + 1] = data.sceneZ | (contourGround << 14);
-        textureData[offset + 2] = (data.priority & 0x7) | (Math.round(height / 8) << 6);
+        const [x, z, heightPriority] = encodeModelInfo(data);
+        textureData[offset] = x;
+        textureData[offset + 1] = z;
+        textureData[offset + 2] = heightPriority;
     });
 
     return textureData;

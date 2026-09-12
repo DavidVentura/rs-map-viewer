@@ -1,7 +1,7 @@
-import { AnimationFrames } from "../AnimationFrames";
+import { SkinAnimation } from "../skin/SkinAnimation";
 import { SceneLocEntity } from "./SceneLocEntity";
 
 export type LocAnimatedGroup = {
-    anim: AnimationFrames;
+    animation: SkinAnimation;
     locs: SceneLocEntity[];
 };

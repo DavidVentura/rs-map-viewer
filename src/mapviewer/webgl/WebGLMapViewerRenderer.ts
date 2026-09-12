@@ -60,7 +60,7 @@ import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextu
 import { NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
 import { MapDrawPass } from "./MapDrawPass";
-import { NPC_DATA_TEXTURE_BUFFER_SIZE, WebGLMapSquare } from "./WebGLMapSquare";
+import { MAP_DATA_TEXTURE_RING_SIZE, MapPrograms, WebGLMapSquare } from "./WebGLMapSquare";
 import { WebGLTerrain } from "./WebGLTerrain";
 import {
     ACTOR_INSTANCE_TEXELS,
@@ -83,6 +83,7 @@ import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
 import { SdMapData } from "./loader/SdMapData";
 import { SdMapDataLoader } from "./loader/SdMapDataLoader";
 import { SdMapLoaderInput } from "./loader/SdMapLoaderInput";
+import { LOC_INSTANCE_TEXELS, writeLocInstance } from "./loc/LocInstanceData";
 import { NPC_INSTANCE_TEXELS, writeNpcInstance } from "./npc/NpcInstanceData";
 import {
     FRAME_FXAA_PROGRAM,
@@ -90,6 +91,7 @@ import {
     createActorProgram,
     createMainProgram,
     createNpcProgram,
+    createSkinnedLocProgram,
 } from "./shaders/Shaders";
 import { SkinAnimation } from "./skin/SkinAnimation";
 import { SkinnedMesh } from "./skin/SkinnedMeshBuilder";
@@ -214,9 +216,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     // Shaders
     shadersPromise?: Promise<Program[]>;
-    mainProgram?: Program;
-    mainAlphaProgram?: Program;
-    npcProgram?: Program;
+    mapPrograms?: MapPrograms;
     actorProgram?: Program;
     frameProgram?: Program;
     frameFxaaProgram?: Program;
@@ -288,6 +288,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     npcDataTextures?: DataTextureRing;
 
+    locRenderCount: number = 0;
+    locRenderData: Uint32Array = new Uint32Array(16 * 4 * LOC_INSTANCE_TEXELS);
+    locDataTextures?: DataTextureRing;
+
     // Actors: player, enemies, projectiles and visual effects, decoupled from any map square.
     actorBuffer?: WebGLActorBuffer;
     // Textures the current actor bake needs that haven't been uploaded yet; set once the actor
@@ -352,9 +356,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         this.timer = this.app.createTimer();
 
+        this.locDataTextures = new DataTextureRing(
+            this.app,
+            MAP_DATA_TEXTURE_RING_SIZE,
+            DataTextureFormat.RGBA32UI,
+        );
         this.npcDataTextures = new DataTextureRing(
             this.app,
-            NPC_DATA_TEXTURE_BUFFER_SIZE,
+            MAP_DATA_TEXTURE_RING_SIZE,
             DataTextureFormat.RGBA32UI,
         );
         this.actorDataTextures = new DataTextureRing(
@@ -419,6 +428,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const programs = await this.app.createPrograms(
             createMainProgram(hasMultiDraw, false),
             createMainProgram(hasMultiDraw, true),
+            createSkinnedLocProgram(hasMultiDraw, false),
+            createSkinnedLocProgram(hasMultiDraw, true),
             createNpcProgram(hasMultiDraw, true),
             createActorProgram(hasMultiDraw, true),
             FRAME_PROGRAM,
@@ -428,14 +439,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const [
             mainProgram,
             mainAlphaProgram,
+            skinnedLocProgram,
+            skinnedLocAlphaProgram,
             npcProgram,
             actorProgram,
             frameProgram,
             frameFxaaProgram,
         ] = programs;
-        this.mainProgram = mainProgram;
-        this.mainAlphaProgram = mainAlphaProgram;
-        this.npcProgram = npcProgram;
+        this.mapPrograms = {
+            main: mainProgram,
+            mainAlpha: mainAlphaProgram,
+            skinnedLoc: skinnedLocProgram,
+            skinnedLocAlpha: skinnedLocAlphaProgram,
+            npc: npcProgram,
+        };
         this.actorProgram = actorProgram;
         this.frameProgram = frameProgram;
         this.frameFxaaProgram = frameFxaaProgram;
@@ -1062,9 +1079,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     loadMap(
-        mainProgram: Program,
-        mainAlphaProgram: Program,
-        npcProgram: Program,
+        programs: MapPrograms,
         textureArray: Texture,
         textureMaterials: Texture,
         sceneUniformBuffer: UniformBuffer,
@@ -1087,9 +1102,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.mapViewer.npcTypeLoader,
             this.mapViewer.basTypeLoader,
             this.app,
-            mainProgram,
-            mainAlphaProgram,
-            npcProgram,
+            programs,
             textureArray,
             textureMaterials,
             sceneUniformBuffer,
@@ -1415,9 +1428,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         if (
-            !this.mainProgram ||
-            !this.mainAlphaProgram ||
-            !this.npcProgram ||
+            !this.mapPrograms ||
             !this.actorProgram ||
             !this.sceneUniformBuffer ||
             !this.framebuffer ||
@@ -1501,13 +1512,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const tickTime = performance.now() - tickStart;
 
         const { index: npcDataTextureIndex, texture: npcDataTexture } = this.updateNpcDataTexture();
+        this.buildLocInstanceData();
+        const { index: locDataTextureIndex, texture: locDataTexture } = this.updateLocDataTexture();
 
         this.buildActorInstanceData();
         const actorDataTexture = this.updateActorDataTexture().texture;
 
         this.app.disable(PicoGL.BLEND);
         const opaquePassStart = performance.now();
-        this.renderOpaquePass();
+        this.renderOpaquePass(locDataTextureIndex, locDataTexture);
         const opaquePassTime = performance.now() - opaquePassStart;
         const opaqueNpcPassStart = performance.now();
         this.renderOpaqueNpcPass(npcDataTextureIndex, npcDataTexture);
@@ -1516,7 +1529,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         this.app.enable(PicoGL.BLEND);
         const transparentPassStart = performance.now();
-        this.renderTransparentPass();
+        this.renderTransparentPass(locDataTextureIndex, locDataTexture);
         const transparentPassTime = performance.now() - transparentPassStart;
         const transparentNpcPassStart = performance.now();
         this.renderTransparentNpcPass(npcDataTextureIndex, npcDataTexture);
@@ -1552,9 +1565,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const mapData = this.mapsToLoad.shift();
         if (mapData && this.isValidMapData(mapData)) {
             this.loadMap(
-                this.mainProgram,
-                this.mainAlphaProgram,
-                this.npcProgram,
+                this.mapPrograms,
                 this.textureArray,
                 this.textureMaterials,
                 this.sceneUniformBuffer,
@@ -2266,6 +2277,46 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
+    // Every visible map's animated locs, including maps outside the tick range: those keep
+    // rendering their last frame.
+    buildLocInstanceData(): void {
+        const frameCount = this.stats.frameCount;
+        this.locRenderCount = 0;
+        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
+            const map = this.mapManager.visibleMaps[i];
+            const slot = frameCount % map.locDataTextureOffsets.length;
+            if (map.locsAnimated.length === 0) {
+                map.locDataTextureOffsets[slot] = -1;
+                continue;
+            }
+            map.locDataTextureOffsets[slot] = this.locRenderCount;
+
+            const newCount = this.locRenderCount + map.locsAnimated.length;
+            if (this.locRenderData.length / (4 * LOC_INSTANCE_TEXELS) < newCount) {
+                const newData = new Uint32Array(
+                    Math.ceil((newCount * 2 * LOC_INSTANCE_TEXELS) / 16) * 16 * 4,
+                );
+                newData.set(this.locRenderData);
+                this.locRenderData = newData;
+            }
+            for (const loc of map.locsAnimated) {
+                writeLocInstance(this.locRenderData, this.locRenderCount, loc);
+                this.locRenderCount++;
+            }
+        }
+    }
+
+    updateLocDataTexture(): DataTextureSlot {
+        if (!this.locDataTextures) {
+            throw new Error("Loc data texture ring used before init()");
+        }
+        return this.locDataTextures.upload(
+            this.stats.frameCount,
+            this.locRenderData,
+            this.locRenderCount * LOC_INSTANCE_TEXELS,
+        );
+    }
+
     updateNpcDataTexture(): DataTextureSlot {
         if (!this.npcDataTextures) {
             throw new Error("NPC data texture ring used before init()");
@@ -2521,27 +2572,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    renderOpaquePass(): void {
+    renderOpaquePass(locDataTextureIndex: number, locDataTexture: Texture): void {
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
 
             const { drawCall, drawRanges } = map.getDrawCall(MapDrawPass.OPAQUE);
-
-            for (const loc of map.locsAnimated) {
-                const frameId = loc.frame;
-                const frame = loc.anim.frames[frameId | 0];
-
-                const index = loc.getDrawRangeIndex(MapDrawPass.OPAQUE);
-                if (index !== -1) {
-                    drawCall.offsets[index] = frame[0];
-                    (drawCall as any).numElements[index] = frame[1];
-
-                    drawRanges[index] = frame;
-                }
-            }
-
             this.draw(drawCall, drawRanges);
+            this.drawAnimatedLocs(map, MapDrawPass.OPAQUE, locDataTextureIndex, locDataTexture);
         }
+    }
+
+    private drawAnimatedLocs(
+        map: WebGLMapSquare,
+        pass: MapDrawPass,
+        locDataTextureIndex: number,
+        locDataTexture: Texture,
+    ): void {
+        const dataOffset = map.locDataTextureOffsets[locDataTextureIndex];
+        if (dataOffset === -1) {
+            return;
+        }
+        const { drawCall, drawRanges } = map.getLocDrawCall(pass);
+        drawCall.uniform("u_locDataOffset", dataOffset);
+        drawCall.texture("u_locDataTexture", locDataTexture);
+        this.draw(drawCall, drawRanges);
     }
 
     renderOpaqueNpcPass(npcDataTextureIndex: number, npcDataTexture: Texture): void {
@@ -2679,28 +2733,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.drawActorPass(actorDataTexture, true);
     }
 
-    renderTransparentPass(): void {
+    renderTransparentPass(locDataTextureIndex: number, locDataTexture: Texture): void {
         for (let i = this.mapManager.visibleMapCount - 1; i >= 0; i--) {
             const map = this.mapManager.visibleMaps[i];
 
             const { drawCall, drawRanges } = map.getDrawCall(MapDrawPass.ALPHA);
-
-            for (const loc of map.locsAnimated) {
-                if (loc.anim.framesAlpha) {
-                    const frameId = loc.frame;
-                    const frame = loc.anim.framesAlpha[frameId | 0];
-
-                    const index = loc.getDrawRangeIndex(MapDrawPass.ALPHA);
-                    if (index !== -1) {
-                        drawCall.offsets[index] = frame[0];
-                        (drawCall as any).numElements[index] = frame[1];
-
-                        drawRanges[index] = frame;
-                    }
-                }
-            }
-
             this.draw(drawCall, drawRanges);
+            this.drawAnimatedLocs(map, MapDrawPass.ALPHA, locDataTextureIndex, locDataTexture);
         }
     }
 
@@ -2782,6 +2821,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         this.npcDataTextures?.delete();
         this.npcDataTextures = undefined;
+        this.locDataTextures?.delete();
+        this.locDataTextures = undefined;
 
         this.actorDataTextures?.delete();
         this.actorDataTextures = undefined;

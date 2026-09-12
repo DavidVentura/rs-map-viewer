@@ -49,6 +49,15 @@ out float v_roofHidden;
 
 #include "./includes/vertex.glsl";
 
+#ifdef SKINNED
+// Animated locs: LOC_INSTANCE_TEXELS per draw in u_locDataTexture, the placement texel followed by
+// the skinned frame's matrix/alpha offsets (see LocInstanceData.ts).
+#include "./includes/skinning.glsl";
+
+uniform highp usampler2D u_locDataTexture;
+uniform int u_locDataOffset;
+#endif
+
 struct ModelInfo {
     vec2 tilePos;
     uint height;
@@ -61,9 +70,7 @@ ivec2 getDataTexCoordFromIndex(int index) {
     return ivec2(index % 16, index / 16);
 }
 
-ModelInfo decodeModelInfo(int offset) {
-    uvec4 data = texelFetch(u_modelInfoTexture, getDataTexCoordFromIndex(offset + gl_InstanceID), 0);
-
+ModelInfo decodeModelInfoTexel(uvec4 data) {
     ModelInfo info;
 
     info.tilePos = vec2(float(data.r & 0x3FFFu), float(data.g & 0x3FFFu));
@@ -75,10 +82,27 @@ ModelInfo decodeModelInfo(int offset) {
     return info;
 }
 
-void main() {
-    int offset = int(texelFetch(u_modelInfoTexture, getDataTexCoordFromIndex(DRAW_ID + u_drawIdOffset), 0).r);
+ModelInfo decodeModelInfo(int offset) {
+    return decodeModelInfoTexel(
+        texelFetch(u_modelInfoTexture, getDataTexCoordFromIndex(offset + gl_InstanceID), 0)
+    );
+}
 
+void main() {
     Vertex vertex = decodeVertex(a_vertex.x, a_vertex.y, a_vertex.z, u_brightness);
+
+#ifdef SKINNED
+    int locTexel = (DRAW_ID + u_locDataOffset) * LOC_INSTANCE_TEXELS;
+    ModelInfo modelInfo = decodeModelInfoTexel(
+        texelFetch(u_locDataTexture, getDataTexCoordFromIndex(locTexel), 0)
+    );
+    uvec4 skinFrame = texelFetch(u_locDataTexture, getDataTexCoordFromIndex(locTexel + 1), 0);
+    vertex.pos = skinPosition(vertex.pos, skinFrame.r);
+    vertex.color.a = skinAlpha(vertex.color.a, skinFrame.g);
+#else
+    int offset = int(texelFetch(u_modelInfoTexture, getDataTexCoordFromIndex(DRAW_ID + u_drawIdOffset), 0).r);
+    ModelInfo modelInfo = decodeModelInfo(offset);
+#endif
 
     v_color = vertex.color;
 
@@ -92,8 +116,6 @@ void main() {
     }
     v_texId = vertex.textureId;
     v_alphaCutOff = material.alphaCutOff;
-
-    ModelInfo modelInfo = decodeModelInfo(offset);
 
     vec3 localPos = vertex.pos + vec3(modelInfo.tilePos.x, 0, modelInfo.tilePos.y);
 
@@ -135,4 +157,7 @@ void main() {
     // gl_Position.z += (float(vertex.priority)) * 0.0007;
     gl_Position.z += float(modelInfo.plane) * 0.005 + (float(vertex.priority) + float(modelInfo.priority)) * 0.0007;
     gl_Position = u_projectionMatrix * gl_Position;
+#ifdef SKINNED
+    gl_Position = hideFadedSkinnedVertex(gl_Position, vertex.color.a);
+#endif
 }

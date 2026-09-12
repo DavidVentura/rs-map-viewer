@@ -1,7 +1,7 @@
 import { SeqType } from "../../../rs/config/seqtype/SeqType";
 import { SeqFrameLoader } from "../../../rs/model/seq/SeqFrameLoader";
-import { AnimationFrames } from "../AnimationFrames";
-import { MapDrawPass } from "../MapDrawPass";
+import { ModelInfo } from "../buffer/SceneBuffer";
+import { SkinAnimation, SkinFrame } from "../skin/SkinAnimation";
 
 export class LocAnimated {
     seqType?: SeqType;
@@ -10,10 +10,8 @@ export class LocAnimated {
     cycleStart: number;
 
     constructor(
-        readonly drawRangeIndex: number,
-        readonly drawRangeAlphaIndex: number,
-
-        readonly anim: AnimationFrames,
+        readonly placement: ModelInfo,
+        readonly animation: SkinAnimation,
         seqType: SeqType,
         cycle: number,
         randomStart: boolean,
@@ -31,8 +29,9 @@ export class LocAnimated {
         }
     }
 
-    getDrawRangeIndex(pass: MapDrawPass): number {
-        return pass === MapDrawPass.ALPHA ? this.drawRangeAlphaIndex : this.drawRangeIndex;
+    // Skeletal sequences advance frame by fractional cycles.
+    currentFrame(): SkinFrame {
+        return this.animation.frames[this.frame | 0];
     }
 
     update(seqFrameLoader: SeqFrameLoader, cycle: number): number {

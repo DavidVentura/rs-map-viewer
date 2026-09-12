@@ -1,10 +1,9 @@
-import { AnimationFrames } from "../AnimationFrames";
+import { ModelInfo } from "../buffer/SceneBuffer";
+import { SkinAnimation } from "../skin/SkinAnimation";
 
 export type LocAnimatedData = {
-    drawRangeIndex: number;
-    drawRangeAlphaIndex: number;
-
-    anim: AnimationFrames;
+    placement: ModelInfo;
+    animation: SkinAnimation;
 
     seqId: number;
     randomStart: boolean;

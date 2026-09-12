@@ -28,7 +28,7 @@ const DEFAULT_HIDE_ABOVE_PLANE = Scene.MAX_LEVELS - 1;
 
 const FRAME_RENDER_DELAY = 3;
 
-export const NPC_DATA_TEXTURE_BUFFER_SIZE = 5;
+export const MAP_DATA_TEXTURE_RING_SIZE = 5;
 
 function createModelInfoTexture(app: PicoApp, data: Uint16Array): Texture {
     return app.createTexture2D(data, 16, Math.max(Math.ceil(data.length / 16 / 4), 1), {
@@ -36,6 +36,14 @@ function createModelInfoTexture(app: PicoApp, data: Uint16Array): Texture {
         minFilter: PicoGL.NEAREST,
         magFilter: PicoGL.NEAREST,
     });
+}
+
+export interface MapPrograms {
+    readonly main: Program;
+    readonly mainAlpha: Program;
+    readonly skinnedLoc: Program;
+    readonly skinnedLocAlpha: Program;
+    readonly npc: Program;
 }
 
 export type DrawCallRange = {
@@ -47,6 +55,7 @@ export class WebGLMapSquare {
     readonly id: number;
 
     npcDataTextureOffsets: number[];
+    locDataTextureOffsets: number[];
 
     private readonly mainDrawCalls: DrawCallRange[];
 
@@ -55,9 +64,7 @@ export class WebGLMapSquare {
         npcTypeLoader: NpcTypeLoader,
         basTypeLoader: BasTypeLoader,
         app: PicoApp,
-        mainProgram: Program,
-        mainAlphaProgram: Program,
-        npcProgram: Program,
+        programs: MapPrograms,
         textureArray: Texture,
         textureMaterials: Texture,
         sceneUniformBuffer: UniformBuffer,
@@ -159,30 +166,38 @@ export class WebGLMapSquare {
             };
         };
 
-        const drawCall = createDrawCall(mainProgram, modelInfoTexture, mapData.drawRanges);
+        const drawCall = createDrawCall(programs.main, modelInfoTexture, mapData.drawRanges);
         const drawCallAlpha = createDrawCall(
-            mainAlphaProgram,
+            programs.mainAlpha,
             modelInfoTextureAlpha,
             mapData.drawRangesAlpha,
         );
 
         const cycle = time / 0.02;
 
-        const locsAnimated: LocAnimated[] = [];
-        for (const loc of mapData.locsAnimated) {
-            const seqType = seqTypeLoader.load(loc.seqId);
-            locsAnimated.push(
+        const locsAnimated = mapData.locsAnimated.map(
+            (loc) =>
                 new LocAnimated(
-                    loc.drawRangeIndex,
-                    loc.drawRangeAlphaIndex,
-
-                    loc.anim,
-                    seqType,
+                    loc.placement,
+                    loc.animation,
+                    seqTypeLoader.load(loc.seqId),
                     cycle,
                     loc.randomStart,
                 ),
-            );
-        }
+        );
+        const createSkinnedDrawCall = (program: Program, drawRanges: DrawRange[]) => {
+            const range = createDrawCall(program, undefined, drawRanges, skinnedVertexArray);
+            skinTables.bind(range.drawCall);
+            return range;
+        };
+        const drawCallLoc = createSkinnedDrawCall(
+            programs.skinnedLoc,
+            locsAnimated.map((loc) => loc.animation.mesh.opaque),
+        );
+        const drawCallLocAlpha = createSkinnedDrawCall(
+            programs.skinnedLocAlpha,
+            locsAnimated.map((loc) => loc.animation.mesh.transparent),
+        );
 
         const npcs: Npc[] = [];
         for (const npc of mapData.npcs) {
@@ -221,13 +236,7 @@ export class WebGLMapSquare {
 
         const drawRangesNpc = Array.from({ length: npcs.length }, () => newDrawRange(0, 0, 1));
 
-        const drawCallNpc = createDrawCall(
-            npcProgram,
-            undefined,
-            drawRangesNpc,
-            skinnedVertexArray,
-        );
-        skinTables.bind(drawCallNpc.drawCall);
+        const drawCallNpc = createSkinnedDrawCall(programs.npc, drawRangesNpc);
 
         return new WebGLMapSquare(
             mapX,
@@ -260,6 +269,8 @@ export class WebGLMapSquare {
 
             drawCall,
             drawCallAlpha,
+            drawCallLoc,
+            drawCallLocAlpha,
 
             drawCallNpc,
 
@@ -301,6 +312,8 @@ export class WebGLMapSquare {
         // Draw calls
         readonly drawCall: DrawCallRange,
         readonly drawCallAlpha: DrawCallRange,
+        private readonly drawCallLoc: DrawCallRange,
+        private readonly drawCallLocAlpha: DrawCallRange,
 
         readonly drawCallNpc: DrawCallRange,
 
@@ -311,8 +324,9 @@ export class WebGLMapSquare {
         readonly npcs: Npc[],
     ) {
         this.id = getMapSquareId(mapX, mapY);
-        this.npcDataTextureOffsets = new Array(NPC_DATA_TEXTURE_BUFFER_SIZE).fill(-1);
-        this.mainDrawCalls = [drawCall, drawCallAlpha];
+        this.npcDataTextureOffsets = new Array(MAP_DATA_TEXTURE_RING_SIZE).fill(-1);
+        this.locDataTextureOffsets = new Array(MAP_DATA_TEXTURE_RING_SIZE).fill(-1);
+        this.mainDrawCalls = [drawCall, drawCallAlpha, drawCallLoc, drawCallLocAlpha];
     }
 
     canRender(frameCount: number): boolean {
@@ -384,6 +398,10 @@ export class WebGLMapSquare {
 
     getDrawCall(pass: MapDrawPass): DrawCallRange {
         return pass === MapDrawPass.ALPHA ? this.drawCallAlpha : this.drawCall;
+    }
+
+    getLocDrawCall(pass: MapDrawPass): DrawCallRange {
+        return pass === MapDrawPass.ALPHA ? this.drawCallLocAlpha : this.drawCallLoc;
     }
 
     delete() {
