@@ -4,8 +4,9 @@ import { AppearanceSlot, BodyKitPart, resolveAppearance } from "../game/Appearan
 import { Encounter } from "../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import {
+    DroppableItemDisplay,
     EquipmentPath,
-    allDroppableItemIds,
+    allDroppableItemDrops,
     armourItemIdsForStyle,
     armourWearInfoForStyle,
     secondaryPathForStyle,
@@ -13,7 +14,7 @@ import {
     weaponVisualItemIds,
 } from "../game/Equipment";
 import { WorldObjectKind } from "../game/Interaction";
-import { Player, StanceSeqIds, StanceSeqIdsByStance } from "../game/Player";
+import { Player } from "../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
@@ -26,23 +27,27 @@ import {
     WARPED_SCEPTRE_TRAVEL_SEQ_ID,
 } from "../game/Projectile";
 import {
+    ARROW_LAUNCH_SEQ_ID,
     CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
     DUST_WAVE_SEQ_ID,
     FALLING_SHADOW_SEQ_ID,
+    FIRE_BOLT_CAST_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
     MAUL_IMPACT_SPARK_SEQ_ID,
+    SWAMP_TRIDENT_CAST_SEQ_ID,
     SWAMP_TRIDENT_IMPACT_SEQ_ID,
+    TUMEKENS_SHADOW_CAST_SEQ_ID,
     TUMEKENS_SHADOW_IMPACT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
 } from "../game/VisualEffect";
 import {
-    BOW_SHOT_CAST_SEQ_ID,
     HEALING_POTION_CAST_SEQ_ID,
-    MAGIC_BOLT_CAST_SEQ_ID,
-    SCIMITAR_SLASH_CAST_SEQ_ID,
+    WEAPON_LADDERS,
+    WeaponStanceSeqIds,
     allPlayerAbilities,
+    resolveWeaponStance,
 } from "../game/abilities";
 
 const PLAYER_BASE_NPC_TYPE_ID = 3105;
@@ -60,37 +65,34 @@ const COMMON_EXTRA_SEQ_IDS: readonly number[] = [
     Player.DEATH_SEQ_ID,
 ];
 
-type StanceSeqConfig = StanceSeqIds;
-
 // bow: unarmed idle/walk/run, bow attack (shared by every ranged tier)
 // staff: standard spellcast idle/walk/run/attack
 // scimitar: unarmed idle/walk/run, slash attack
-// Seq ids are fixed per style; which item ids are actually worn for a given style/equipment/cast
-// now comes from Equipment.equippedVisualItemIds, resolved separately per attachment instance
-// rather than folded into one PlayerAppearance here (see ActorRenderDataLoader's
-// createPlayerActorData). attackSeqId is StanceSeqIds' single representative seq (unused at
-// runtime - Player reads the basic attack's own castSeqId instead - kept as tier 0's for the type).
-// Every ability's own cast seq (every weapon tier's basic attack, every skill) is baked generically
-// via allPlayerAbilities() in playerAssets() below, so this config only needs the seqs that aren't
-// tied to an ability at all: the style idle/walk/run and COMMON_EXTRA_SEQ_IDS' switch/death seqs.
-const STANCE_SEQ_CONFIG: Record<WeaponStyle, StanceSeqConfig> = {
+// This is each style's *default* stance - the one every weapon tier plays unless its own
+// WeaponTier.stance overrides it (see WEAPON_LADDERS/resolveWeaponStance and stancesByTier below;
+// e.g. the dragon 2h sword rests on the shoulder rather than sharing melee's default one-handed
+// idle). Which item ids are actually worn for a given style/equipment/cast comes from
+// Equipment.equippedVisualItemIds, resolved separately per attachment instance rather than folded
+// into one PlayerAppearance here (see ActorRenderDataLoader's createPlayerActorData). Every
+// ability's own cast seq (every weapon tier's basic attack, every skill) is baked generically via
+// allPlayerAbilities() in
+// playerAssets() below, so this config only needs the seqs that aren't tied to an ability at all:
+// the style default idle/walk/run and COMMON_EXTRA_SEQ_IDS' switch/death seqs.
+const STANCE_SEQ_CONFIG: Record<WeaponStyle, WeaponStanceSeqIds> = {
     [WeaponStyle.RANGED]: {
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
-        attackSeqId: BOW_SHOT_CAST_SEQ_ID,
     },
     [WeaponStyle.MAGIC]: {
         idleSeqId: 813,
         walkSeqId: 1146,
         runSeqId: 1210,
-        attackSeqId: MAGIC_BOLT_CAST_SEQ_ID,
     },
     [WeaponStyle.MELEE]: {
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
-        attackSeqId: SCIMITAR_SLASH_CAST_SEQ_ID,
     },
 };
 
@@ -199,6 +201,25 @@ const TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID = 2127;
 // Crystal halberd special weapon-trail (SpotAnimType id): 1232, DRAGON_HALBERD_SPECIAL_SOUTH_WHITE
 // (see VisualEffect.CRYSTAL_HALBERD_SPECIAL_SEQ_ID for why only the SOUTH bake is kept).
 const CRYSTAL_HALBERD_SPECIAL_SPOTANIM_ID = 1232;
+// The scythe of vitur basic attack's weapon-trail (SpotAnimType id): 478,
+// DRAGON_HALBERD_SPECIAL_SOUTH_RED, the same sequence as the crystal halberd's above (see
+// VisualEffect.ts's comment on CRYSTAL_HALBERD_SPECIAL_SEQ_ID).
+const DRAGON_HALBERD_SPECIAL_RED_SPOTANIM_ID = 478;
+
+// The generic bow release (SpotAnimType id): 19, BRONZE_ARROW_LAUNCH (see
+// VisualEffect.ARROW_LAUNCH_SEQ_ID).
+const ARROW_LAUNCH_SPOTANIM_ID = 19;
+// Bow of Faerdhinen's own crystal-arrow launch (SpotAnimType id): 1888,
+// SP_ATTACK_ARROW_LAUNCH_FAERDHINEN, the same sequence as the generic bow release above in the
+// bow's own crystal livery.
+const CRYSTAL_ARROW_LAUNCH_SPOTANIM_ID = 1888;
+
+// Trident of the swamp's own cast graphic (SpotAnimType id): 665, TOXIC_TOTS_CASTING.
+const SWAMP_TRIDENT_CAST_SPOTANIM_ID = 665;
+// Tumeken's shadow's own cast graphic (SpotAnimType id): 2125, TUMEKENS_SHADOW_CASTING.
+const TUMEKENS_SHADOW_CAST_SPOTANIM_ID = 2125;
+// The tier-0 staff's fire bolt cast graphic (SpotAnimType id): 126, FIREBOLT_CASTING.
+const FIRE_BOLT_CAST_SPOTANIM_ID = 126;
 
 export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> = {
     [ProjectileKind.ARROW]: {
@@ -289,6 +310,30 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
         TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID,
         TUMEKENS_SHADOW_IMPACT_SEQ_ID,
     ),
+    [VisualEffectKind.DRAGON_HALBERD_SPECIAL_RED]: animatedSpotAnim(
+        DRAGON_HALBERD_SPECIAL_RED_SPOTANIM_ID,
+        CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
+    ),
+    [VisualEffectKind.ARROW_LAUNCH]: animatedSpotAnim(
+        ARROW_LAUNCH_SPOTANIM_ID,
+        ARROW_LAUNCH_SEQ_ID,
+    ),
+    [VisualEffectKind.CRYSTAL_ARROW_LAUNCH]: animatedSpotAnim(
+        CRYSTAL_ARROW_LAUNCH_SPOTANIM_ID,
+        ARROW_LAUNCH_SEQ_ID,
+    ),
+    [VisualEffectKind.SWAMP_TRIDENT_CAST]: animatedSpotAnim(
+        SWAMP_TRIDENT_CAST_SPOTANIM_ID,
+        SWAMP_TRIDENT_CAST_SEQ_ID,
+    ),
+    [VisualEffectKind.TUMEKENS_SHADOW_CAST]: animatedSpotAnim(
+        TUMEKENS_SHADOW_CAST_SPOTANIM_ID,
+        TUMEKENS_SHADOW_CAST_SEQ_ID,
+    ),
+    [VisualEffectKind.FIRE_BOLT_CAST]: animatedSpotAnim(
+        FIRE_BOLT_CAST_SPOTANIM_ID,
+        FIRE_BOLT_CAST_SEQ_ID,
+    ),
 };
 
 // A world object (lever/chest) has no animation of its own in this cache - see the comment on
@@ -335,7 +380,10 @@ export function bodyModelIdsForStyle(style: WeaponStyle): readonly number[] {
 
 export type PlayerAssets = {
     readonly baseNpcTypeId: number;
-    readonly stanceSeqIds: StanceSeqIdsByStance;
+    // Every weapon tier's own resolved idle/walk/run (see WEAPON_LADDERS/resolveWeaponStance),
+    // indexed the same way as basicAttackByTier - which one is active depends on the player's
+    // currently-equipped tier for this style, not just the style itself.
+    readonly stancesByTier: Readonly<Record<WeaponStyle, readonly WeaponStanceSeqIds[]>>;
     // Every seq the body rig is posed with, across all styles.
     readonly seqIds: readonly number[];
     readonly attachmentItemIds: readonly number[];
@@ -364,8 +412,9 @@ export type ActorAssets = {
     readonly preview?: PreviewAssets;
     readonly projectiles: Readonly<Record<ProjectileKind, ProjectileBake>>;
     readonly effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>;
-    // Every OSRS item that can ever appear as a ground drop (see Equipment.allDroppableItemIds).
-    readonly groundItemIds: readonly number[];
+    // Every OSRS item that can ever appear as a ground drop, with how many of it to show stacked
+    // (see Equipment.allDroppableItemDrops).
+    readonly groundItemDrops: readonly DroppableItemDisplay[];
     // The kinds of world object (lever, chest) this encounter actually declares, deduplicated -
     // each is baked once regardless of how many Interactions in the encounter operate it.
     readonly worldObjectKinds: readonly WorldObjectKind[];
@@ -375,16 +424,19 @@ export type ActorAssets = {
 function playerAssets(interactionSeqIds: readonly number[]): PlayerAssets {
     const seqIds = new Set<number>();
     const itemIds = new Set<number>();
-    const stanceSeqIds = {} as Record<WeaponStyle, StanceSeqIds>;
+    const stancesByTier = {} as Record<WeaponStyle, readonly WeaponStanceSeqIds[]>;
     const bodyModelIdsByStyle = {} as Record<WeaponStyle, readonly number[]>;
     for (const seqId of [...COMMON_EXTRA_SEQ_IDS, ...interactionSeqIds]) {
         seqIds.add(seqId);
     }
     for (const style of ALL_STYLES) {
-        const { idleSeqId, walkSeqId, runSeqId, attackSeqId } = STANCE_SEQ_CONFIG[style];
-        stanceSeqIds[style] = { idleSeqId, walkSeqId, runSeqId, attackSeqId };
-        for (const seqId of [idleSeqId, walkSeqId, runSeqId, attackSeqId]) {
-            seqIds.add(seqId);
+        stancesByTier[style] = WEAPON_LADDERS[style].map((tier) =>
+            resolveWeaponStance(STANCE_SEQ_CONFIG[style], tier),
+        );
+        for (const stance of stancesByTier[style]) {
+            seqIds.add(stance.idleSeqId);
+            seqIds.add(stance.walkSeqId);
+            seqIds.add(stance.runSeqId);
         }
         for (const itemId of weaponVisualItemIds(style)) {
             itemIds.add(itemId);
@@ -414,7 +466,7 @@ function playerAssets(interactionSeqIds: readonly number[]): PlayerAssets {
     }
     return {
         baseNpcTypeId: PLAYER_BASE_NPC_TYPE_ID,
-        stanceSeqIds,
+        stancesByTier,
         seqIds: [...seqIds],
         attachmentItemIds: [...itemIds],
         bodyModelIdsByStyle,
@@ -472,7 +524,9 @@ export function actorAssets(encounter: Encounter, preview?: AnimPreviewParams): 
         preview: preview ? previewAssets(preview) : undefined,
         projectiles: PROJECTILE_BAKES,
         effects: EFFECT_BAKES,
-        groundItemIds: [...new Set(allDroppableItemIds())],
+        groundItemDrops: [
+            ...new Map(allDroppableItemDrops().map((drop) => [drop.itemId, drop])).values(),
+        ],
         worldObjectKinds: [...new Set(encounter.worldObjects.map((object) => object.kind))],
     };
 }

@@ -147,24 +147,32 @@ export class IndexedSprite {
         return dst;
     }
 
-    getCanvas(): OffscreenCanvas {
-        const canvas = new OffscreenCanvas(this.width, this.height);
-
-        const ctx = canvas.getContext("2d")!;
-        const imageData = ctx.createImageData(this.width, this.height);
-
-        for (let i = 0; i < this.pixels.length; i++) {
-            const rgb = this.palette[this.pixels[i] & 0xff];
-            if (rgb !== 0) {
-                imageData.data[i * 4] = (rgb >> 16) & 0xff;
-                imageData.data[i * 4 + 1] = (rgb >> 8) & 0xff;
-                imageData.data[i * 4 + 2] = rgb & 0xff;
-                imageData.data[i * 4 + 3] = 255;
+    // The sprite at its full width x height, with the trimmed subWidth x subHeight pixels placed at
+    // their offset (as normalize does) and palette index 0 transparent.
+    toFullSizeRgba(): Uint8ClampedArray {
+        const rgba = new Uint8ClampedArray(this.width * this.height * 4);
+        for (let y = 0; y < this.subHeight; y++) {
+            for (let x = 0; x < this.subWidth; x++) {
+                const rgb = this.palette[this.pixels[x + y * this.subWidth] & 0xff];
+                if (rgb === 0) {
+                    continue;
+                }
+                const out = (x + this.xOffset + (y + this.yOffset) * this.width) * 4;
+                rgba[out] = (rgb >> 16) & 0xff;
+                rgba[out + 1] = (rgb >> 8) & 0xff;
+                rgba[out + 2] = rgb & 0xff;
+                rgba[out + 3] = 255;
             }
         }
+        return rgba;
+    }
 
+    getCanvas(): OffscreenCanvas {
+        const canvas = new OffscreenCanvas(this.width, this.height);
+        const ctx = canvas.getContext("2d")!;
+        const imageData = ctx.createImageData(this.width, this.height);
+        imageData.data.set(this.toFullSizeRgba());
         ctx.putImageData(imageData, 0, 0);
-
         return canvas;
     }
 

@@ -1,4 +1,6 @@
 import { PhaseId } from "./Phase";
+import { TILE_SIZE } from "./Terrain";
+import { directionToRotation } from "./projectileMath";
 
 declare const interactionIdBrand: unique symbol;
 
@@ -12,7 +14,8 @@ export type WorldPosition = {
 
 export type InteractionPose = {
     readonly position: WorldPosition;
-    readonly facingRadians: number;
+    // Client rotation units, the same convention as Player.rotation.
+    readonly facingRotation: number;
 };
 
 declare const worldObjectIdBrand: unique symbol;
@@ -41,8 +44,6 @@ export type WorldObject = {
     readonly orientation: ObjectOrientation;
 };
 
-const TILE_SIZE = 128;
-
 const ORIENTATION_ROTATION_UNITS: Readonly<Record<ObjectOrientation, number>> = {
     0: 0,
     1: 512,
@@ -58,22 +59,15 @@ const ORIENTATION_TILE_OFFSET: Readonly<Record<ObjectOrientation, { dx: number; 
     3: { dx: -1, dy: 0 },
 };
 
-function oppositeOrientation(orientation: ObjectOrientation): ObjectOrientation {
-    return ((orientation + 2) % 4) as ObjectOrientation;
-}
-
-function orientationFacingRadians(orientation: ObjectOrientation): number {
-    return (ORIENTATION_ROTATION_UNITS[orientation] / 2048) * Math.PI * 2;
-}
-
 // The client rotation the object itself renders at (see ActorInstance.rotation).
 export function worldObjectRotationUnits(object: WorldObject): number {
     return ORIENTATION_ROTATION_UNITS[object.orientation];
 }
 
 // Where the player stands and which way they face to operate this object: one tile in front of
-// it, looking back. An object's orientation is authored to face the tile the player approaches
-// from, so the two poses always face each other.
+// it, looking at it. An object's orientation is authored to face the tile the player approaches
+// from. The facing comes from the direction to the object because a loc's orientation units and
+// an actor's rotation units don't share a zero.
 export function worldObjectApproachPose(object: WorldObject): InteractionPose {
     const offset = ORIENTATION_TILE_OFFSET[object.orientation];
     return {
@@ -82,12 +76,13 @@ export function worldObjectApproachPose(object: WorldObject): InteractionPose {
             y: object.position.y + offset.dy * TILE_SIZE,
             level: object.position.level,
         },
-        facingRadians: orientationFacingRadians(oppositeOrientation(object.orientation)),
+        facingRotation: directionToRotation(-offset.dx, -offset.dy),
     };
 }
 
+// Starts at 1 because the actor shader's highlight uniform uses 0 for "nothing highlighted".
 export function createWorldObjectId(value: number): WorldObjectId {
-    if (!Number.isInteger(value) || value < 0) {
+    if (!Number.isInteger(value) || value < 1) {
         throw new TypeError(`Invalid world object id: ${value}`);
     }
     return value as WorldObjectId;
@@ -160,16 +155,6 @@ export function createWorldPosition(x: number, y: number, level: number): WorldP
         );
     }
     return { x, y, level };
-}
-
-export function createInteractionPose(
-    position: WorldPosition,
-    facingRadians: number,
-): InteractionPose {
-    if (!Number.isFinite(facingRadians)) {
-        throw new TypeError("An interaction pose requires a finite facing angle");
-    }
-    return { position, facingRadians };
 }
 
 export function createInteraction(

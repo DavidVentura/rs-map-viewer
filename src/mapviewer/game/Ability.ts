@@ -38,12 +38,23 @@ export type TargetDelivery = {
     readonly reach: number;
 };
 
+// POINT: the cone always swings toward the aimed ground point, ignoring any hovered combatant -
+// the right choice for a special that reads wrong when snapped onto a body (see aimModeFor).
+// TRACKED_TARGET: the cone is a basic attack's own ladder tier - it targets a combatant like
+// TargetDelivery (reach-gated, chased into range, see GameWorld.computeMeleeChaseInput/
+// canUseAbility) and swings toward wherever that combatant now stands once in reach.
+export enum ConeAim {
+    POINT = 0,
+    TRACKED_TARGET = 1,
+}
+
 // Everything in the cone in front of the caster.
 export type ConeDelivery = {
     readonly kind: DeliveryKind.CONE;
     readonly angleRadians: number;
     readonly reach: number;
     readonly casterHalfWidth: number;
+    readonly aim: ConeAim;
 };
 
 // Everything within the radius (plus its hit radius) of the aimed point/combatant or the caster.
@@ -189,7 +200,9 @@ export enum AimMode {
 export function aimModeFor(delivery: Delivery): AimMode {
     switch (delivery.kind) {
         case DeliveryKind.CONE:
-            return AimMode.POINT_ONLY;
+            return delivery.aim === ConeAim.TRACKED_TARGET
+                ? AimMode.COMBATANT_OR_POINT
+                : AimMode.POINT_ONLY;
         case DeliveryKind.PROJECTILE:
             return delivery.spec.landing.kind === "FREE_FLIGHT"
                 ? AimMode.POINT_ONLY
@@ -197,6 +210,24 @@ export function aimModeFor(delivery: Delivery): AimMode {
         case DeliveryKind.TARGET:
         case DeliveryKind.CIRCLE:
             return AimMode.COMBATANT_OR_POINT;
+    }
+}
+
+// The reach a delivery chases/gates a live combatant to, for deliveries whose AimMode is
+// COMBATANT_OR_POINT and so can be aimed at one: TargetDelivery always, and a TRACKED_TARGET
+// ConeDelivery (a melee basic attack's own ladder tier). undefined for anything else - a
+// POINT_ONLY cone special (no combatant to chase) or a CIRCLE/PROJECTILE delivery, which have
+// their own aim/range rules. GameWorld's melee chase-to-target movement and its canUseAbility
+// reach check both derive their reach from this, rather than special-casing DeliveryKind.TARGET.
+export function trackedDeliveryReach(delivery: Delivery): number | undefined {
+    switch (delivery.kind) {
+        case DeliveryKind.TARGET:
+            return delivery.reach;
+        case DeliveryKind.CONE:
+            return delivery.aim === ConeAim.TRACKED_TARGET ? delivery.reach : undefined;
+        case DeliveryKind.CIRCLE:
+        case DeliveryKind.PROJECTILE:
+            return undefined;
     }
 }
 

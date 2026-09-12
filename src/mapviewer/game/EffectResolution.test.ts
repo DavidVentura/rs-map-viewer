@@ -2,6 +2,7 @@ import {
     AbilityTarget,
     AbilityTargetKind,
     CircleCenter,
+    ConeAim,
     ConeDelivery,
     DeliveryKind,
 } from "./Ability";
@@ -51,6 +52,7 @@ const CONE: DirectDelivery = {
     angleRadians: Math.PI / 2,
     reach: 300,
     casterHalfWidth: 0,
+    aim: ConeAim.POINT,
 };
 const CIRCLE_AT_TARGET: DirectDelivery = {
     kind: DeliveryKind.CIRCLE,
@@ -137,6 +139,7 @@ describe("affectedCombatants: CONE", () => {
             angleRadians: Math.PI / 2,
             reach: 300,
             casterHalfWidth: 150,
+            aim: ConeAim.POINT,
         };
         const besideEast = makeCombatant(140, 0, Faction.ENEMY);
         const besideWest = makeCombatant(-140, 0, Faction.ENEMY);
@@ -229,6 +232,7 @@ describe("coneTileSpawns", () => {
         angleRadians: (2 * Math.PI) / 3,
         reach: 3 * TILE_SIZE,
         casterHalfWidth: 0,
+        aim: ConeAim.POINT,
     };
     const casterX = 0.5 * TILE_SIZE;
     const casterY = 0.5 * TILE_SIZE;

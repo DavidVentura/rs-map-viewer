@@ -1,14 +1,12 @@
 import { WeaponStyle } from "../../game/Ability";
 import { EnemyTypeId } from "../../game/EnemyType";
 import { WorldObjectKind, WorldObjectVariant } from "../../game/Interaction";
-import { StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
 import { SkinAnimation, SkinAnimationSet, SkinFrame } from "../skin/SkinAnimation";
 import { SkinnedMesh } from "../skin/SkinnedMeshBuilder";
 
 export interface PlayerActorData {
-    readonly stanceSeqIds: StanceSeqIdsByStance;
     // One body mesh per style (its permanently-worn armour hides different body-kit parts - see
     // ActorAssets.bodyModelIdsForStyle), sharing one set of posed frames (armour never changes the
     // skeleton, only which body-kit faces are included in each style's mesh).

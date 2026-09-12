@@ -16,7 +16,7 @@ function packServerTarget() {
 
 module.exports = {
     webpack: {
-        configure: (webpackConfig) => {
+        configure: (webpackConfig, { env }) => {
             const glslLoader = {
                 test: /\.(glsl|vs|fs)$/,
                 loader: "ts-shader-loader",
@@ -44,21 +44,31 @@ module.exports = {
 
             webpackConfig.optimization.minimizer.push(new JsonMinimizerPlugin());
 
-            // CRA's type checker takes its file list from tsconfig's include and registers every
-            // file as a webpack watch dependency, so editing a test would rebuild the app. Tests
-            // stay type-checked by tsc against the root tsconfig.
-            const typeChecker = webpackConfig.plugins.find(
+            const typeCheckerIndex = webpackConfig.plugins.findIndex(
                 (plugin) => plugin instanceof ForkTsCheckerWebpackPlugin,
             );
-            if (!typeChecker) {
-                throw new Error("CRA's ForkTsCheckerWebpackPlugin is missing from the webpack config");
+            if (typeCheckerIndex === -1) {
+                throw new Error(
+                    "CRA's ForkTsCheckerWebpackPlugin is missing from the webpack config",
+                );
             }
-            typeChecker.options.typescript.configOverwrite.exclude = [
-                "**/*.test.ts",
-                "**/*.test.tsx",
-                "src/setupTests.ts",
-                "src/mapviewer/game/testLoaders.ts",
-            ];
+            if (env === "development") {
+                // The dev server doesn't type-check: CRA's in-process checker re-checks the whole
+                // project on every save and competes with the game for CPU. Type checking runs as
+                // `npx tsc --noEmit -p .` instead.
+                webpackConfig.plugins.splice(typeCheckerIndex, 1);
+            } else {
+                // CRA's type checker takes its file list from tsconfig's include and registers every
+                // file as a webpack watch dependency, so editing a test would rebuild the app. Tests
+                // stay type-checked by tsc against the root tsconfig.
+                webpackConfig.plugins[typeCheckerIndex].options.typescript.configOverwrite.exclude =
+                    [
+                        "**/*.test.ts",
+                        "**/*.test.tsx",
+                        "src/setupTests.ts",
+                        "src/mapviewer/game/testLoaders.ts",
+                    ];
+            }
 
             return webpackConfig;
         },

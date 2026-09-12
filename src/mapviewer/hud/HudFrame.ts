@@ -2,6 +2,8 @@ import { mat4 } from "gl-matrix";
 
 import { WeaponStyle } from "../game/Ability";
 import { Faction } from "../game/Combatant";
+import { ClickCrossKind, CrossSprites } from "./ClickCross";
+import { MenuEntry, OpenMenuState, Point } from "./contextMenu";
 
 export type ScreenSize = {
     width: number;
@@ -101,20 +103,26 @@ export type BossHudInfo = {
     readonly phaseLabel?: string;
 };
 
-// A dropped equipment upgrade lying on the ground: always-visible Diablo-style floor label,
-// projected to screen space by the renderer (see WebGLMapViewerRenderer.buildGroundItemHudInfos).
-export type GroundItemHudInfo = {
-    readonly groundItemId: number;
-    readonly screenX: number;
-    readonly screenY: number;
-    readonly name: string;
-    readonly pathLabel: string;
-};
-
 // A transient "Equipped: <name>" banner shown for a couple of seconds after a pickup; fixed to the
 // screen rather than projected from a world position, so it's tracked separately from SplatEvent.
 export type PickupFlashEvent = {
     readonly text: string;
+};
+
+// The default (nearest) option under the cursor while the right-click menu is closed - see
+// contextMenu.tooltipTextRuns for how it turns into "Pull Lever / 2 more options" text.
+export type ContextMenuTooltipHudInfo = {
+    readonly anchor: Point;
+    readonly entries: readonly MenuEntry[];
+};
+
+// The click cross's resolved display state for this frame (see hud/ClickCross.ts) - undefined once
+// its animation has finished.
+export type ClickCrossHudInfo = {
+    readonly kind: ClickCrossKind;
+    readonly screenX: number;
+    readonly screenY: number;
+    readonly frameIndex: number;
 };
 
 export type HudFrame = {
@@ -129,8 +137,10 @@ export type HudFrame = {
     phase?: PhaseHudInfo;
     previewSeqId?: number;
     boss?: BossHudInfo;
-    groundItems: GroundItemHudInfo[];
-    interactionActionText?: string;
+    contextMenu?: OpenMenuState;
+    contextMenuTooltip?: ContextMenuTooltipHudInfo;
     upgradeOffer?: UpgradeOfferHudInfo;
     pickupFlashEvents: PickupFlashEvent[];
+    crossSprites: CrossSprites;
+    clickCross?: ClickCrossHudInfo;
 };

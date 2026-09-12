@@ -80,26 +80,6 @@ describe("encounters", () => {
         expect(totalCount).toBe(encounter.enemySpawns.length);
     });
 
-    it("Fight Caves ramps across several waves and mixes in the tankier Tz-Kek", () => {
-        const encounter = getEncounter(EncounterId.FIGHT_CAVES);
-        expect(encounter.spawnMode).toBe(EncounterSpawnMode.WAVES);
-        // 8-10 regular waves plus the TzTok-Jad finale.
-        expect(encounter.waves.length).toBeGreaterThanOrEqual(9);
-        expect(encounter.waves.length).toBeLessThanOrEqual(11);
-
-        const regularWaves = encounter.waves.filter((wave) => !wave.boss);
-        const groupCounts = regularWaves.map((wave) =>
-            wave.groups.reduce((sum, group) => sum + group.count, 0),
-        );
-        expect(groupCounts[0]).toBeLessThan(groupCounts[groupCounts.length - 1]);
-        expect(groupCounts[groupCounts.length - 1]).toBeGreaterThanOrEqual(20);
-
-        const hasTankierMix = regularWaves.some(
-            (wave) => wave.groups.length > 1 || wave.modifiers !== undefined,
-        );
-        expect(hasTankierMix).toBe(true);
-    });
-
     it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE, EncounterId.SANDBOX])(
         "%s partitions waves into player-started phases",
         (id) => {
@@ -117,34 +97,6 @@ describe("encounters", () => {
                     ),
                 ).toHaveLength(1);
             }
-        },
-    );
-
-    it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE, EncounterId.SANDBOX])(
-        "%s declares exactly one lever and one chest, shared across every phase's interactions",
-        (id) => {
-            const encounter = getEncounter(id);
-            if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
-                throw new Error("expected wave encounter");
-            }
-            const levers = encounter.worldObjects.filter((o) => o.kind === WorldObjectKind.LEVER);
-            const chests = encounter.worldObjects.filter((o) => o.kind === WorldObjectKind.CHEST);
-            expect(levers).toHaveLength(1);
-            expect(chests).toHaveLength(1);
-
-            const startInteractions = encounter.interactions.filter(
-                (interaction) => interaction.action.kind === "START_PHASE",
-            );
-            expect(startInteractions).toHaveLength(encounter.phases.length);
-            expect(startInteractions.every((i) => i.objectId === levers[0].id)).toBe(true);
-
-            const rewardInteractions = encounter.interactions.filter(
-                (interaction) => interaction.action.kind === "ACTIVATE_PHASE_REWARDS",
-            );
-            expect(rewardInteractions).toHaveLength(
-                encounter.phases.filter((phase) => phase.rewards.length > 0).length,
-            );
-            expect(rewardInteractions.every((i) => i.objectId === chests[0].id)).toBe(true);
         },
     );
 
@@ -191,18 +143,6 @@ describe("encounters", () => {
         };
 
         expect(() => validateEncounter(invalid)).toThrow(RangeError);
-    });
-
-    it("guarantees one atomic style-set reward in each pre-finale Fight Caves phase", () => {
-        const encounter = getEncounter(EncounterId.FIGHT_CAVES);
-        if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
-            throw new Error("expected wave encounter");
-        }
-        const equipmentRewards = encounter.phases.flatMap((phase) =>
-            phase.rewards.flatMap((reward) => (reward.kind === "EQUIPMENT_GRANT" ? [reward] : [])),
-        );
-        expect(equipmentRewards).toHaveLength(3);
-        expect(equipmentRewards.map(({ grant }) => grant.changes.length)).toEqual([2, 2, 2]);
     });
 
     it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE])(

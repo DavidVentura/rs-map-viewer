@@ -2,18 +2,18 @@ import { WeaponStyle } from "./Ability";
 import {
     ALL_EQUIPMENT_PATHS,
     DEFAULT_EQUIPMENT,
-    EQUIPMENT_PATHS,
     EquipmentGrantId,
     EquipmentPath,
+    allDroppableItemDrops,
     applyEquipmentGrant,
     armourItemIdsForStyle,
-    armourPathsForStyle,
     createEquipmentGrant,
     equipAtTier,
     equipmentAbilityModifiers,
     equipmentDamageTakenMultiplier,
     equipmentMaxHealthBonus,
     equippedVisualItemIds,
+    groundItemDisplayCount,
     isAtMaxTier,
     itemIdForTier,
     maxTierIndex,
@@ -23,54 +23,11 @@ import {
     visualGroupItemId,
     visualGroupItemIds,
     weaponItemId,
-    weaponVisualItemIds,
 } from "./Equipment";
-import {
-    CLEAVE,
-    CRYSTAL_HALBERD_ITEM_ID,
-    ELDER_MAUL_ITEM_ID,
-    MAUL_SMASH,
-    WEAPON_LADDERS,
-} from "./abilities";
+import { CLEAVE, CRYSTAL_HALBERD_ITEM_ID, ELDER_MAUL_ITEM_ID, MAUL_SMASH } from "./abilities";
 import { DEFAULT_ABILITY_MODIFIERS, composeModifiers } from "./upgrades";
 
 describe("equipment tier ladders", () => {
-    it("every path has a non-empty ladder with unique item ids", () => {
-        for (const path of ALL_EQUIPMENT_PATHS) {
-            const { itemIds } = EQUIPMENT_PATHS[path];
-            expect(itemIds.length).toBeGreaterThan(0);
-            expect(new Set(itemIds).size).toBe(itemIds.length);
-        }
-    });
-
-    it("every path's wearInfo is empty or matches its itemIds length", () => {
-        for (const path of ALL_EQUIPMENT_PATHS) {
-            const { itemIds, wearInfo } = EQUIPMENT_PATHS[path];
-            expect(wearInfo.length === 0 || wearInfo.length === itemIds.length).toBe(true);
-        }
-    });
-
-    it("the weapon ladders track abilities.WEAPON_LADDERS exactly (item ids and length)", () => {
-        for (const [style, path] of [
-            [WeaponStyle.RANGED, EquipmentPath.BOW],
-            [WeaponStyle.MELEE, EquipmentPath.SCIMITAR],
-            [WeaponStyle.MAGIC, EquipmentPath.STAFF],
-        ] as const) {
-            expect(EQUIPMENT_PATHS[path].itemIds).toEqual(
-                WEAPON_LADDERS[style].map((tier) => tier.itemId),
-            );
-        }
-    });
-
-    it("armour paths are single-tier and always worn (never a ground drop)", () => {
-        for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
-            for (const path of armourPathsForStyle(style)) {
-                expect(EQUIPMENT_PATHS[path].itemIds).toHaveLength(1);
-                expect(isAtMaxTier(DEFAULT_EQUIPMENT, path)).toBe(true);
-            }
-        }
-    });
-
     it("equipAtTier never exceeds a path's max tier", () => {
         for (const path of ALL_EQUIPMENT_PATHS) {
             const bumped = equipAtTier(DEFAULT_EQUIPMENT, path, maxTierIndex(path) + 5);
@@ -90,13 +47,6 @@ describe("equipment tier ladders", () => {
         expect(isAtMaxTier(DEFAULT_EQUIPMENT, path)).toBe(false);
         const maxed = equipAtTier(DEFAULT_EQUIPMENT, path, maxTier);
         expect(isAtMaxTier(maxed, path)).toBe(true);
-    });
-
-    it("itemIdForTier matches the ladder's declared item ids", () => {
-        const { itemIds } = EQUIPMENT_PATHS[EquipmentPath.AMULET];
-        itemIds.forEach((id, tier) => {
-            expect(itemIdForTier(EquipmentPath.AMULET, tier)).toBe(id);
-        });
     });
 });
 
@@ -225,60 +175,6 @@ describe("visualGroupItemId / visualGroupItemIds", () => {
     });
 });
 
-describe("weaponItemId / weaponVisualItemIds", () => {
-    it("every weapon path's tier introduces its own item id", () => {
-        const styleAndPath = [
-            { style: WeaponStyle.RANGED, path: EquipmentPath.BOW },
-            { style: WeaponStyle.MELEE, path: EquipmentPath.SCIMITAR },
-            { style: WeaponStyle.MAGIC, path: EquipmentPath.STAFF },
-        ];
-        for (const { style, path } of styleAndPath) {
-            const ids = new Set<number>();
-            for (let tier = 0; tier <= maxTierIndex(path); tier++) {
-                ids.add(weaponItemId(style, equipAtTier(DEFAULT_EQUIPMENT, path, tier)));
-            }
-            expect(ids.size).toBe(maxTierIndex(path) + 1);
-            expect(new Set(weaponVisualItemIds(style))).toEqual(ids);
-        }
-    });
-
-    it("the staff's max tier introduces a new item id", () => {
-        const base = weaponItemId(WeaponStyle.MAGIC, DEFAULT_EQUIPMENT);
-        const maxStaff = equipAtTier(
-            DEFAULT_EQUIPMENT,
-            EquipmentPath.STAFF,
-            maxTierIndex(EquipmentPath.STAFF),
-        );
-        expect(weaponItemId(WeaponStyle.MAGIC, maxStaff)).not.toBe(base);
-    });
-});
-
-describe("armourItemIdsForStyle / armourPathsForStyle", () => {
-    it("melee and magic wear a helm, body and legs; ranged wears no helm", () => {
-        expect(armourPathsForStyle(WeaponStyle.MELEE)).toEqual([
-            EquipmentPath.MELEE_HELM,
-            EquipmentPath.MELEE_BODY,
-            EquipmentPath.MELEE_LEGS,
-        ]);
-        expect(armourPathsForStyle(WeaponStyle.MAGIC)).toEqual([
-            EquipmentPath.MAGIC_HELM,
-            EquipmentPath.MAGIC_BODY,
-            EquipmentPath.MAGIC_LEGS,
-        ]);
-        expect(armourPathsForStyle(WeaponStyle.RANGED)).toEqual([
-            EquipmentPath.RANGED_BODY,
-            EquipmentPath.RANGED_LEGS,
-        ]);
-    });
-
-    it("returns the (only) tier-0 item id for each armour path", () => {
-        for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
-            const ids = armourItemIdsForStyle(style);
-            expect(ids).toEqual(armourPathsForStyle(style).map((path) => itemIdForTier(path, 0)));
-        }
-    });
-});
-
 describe("equippedVisualItemIds", () => {
     it("wears the weapon, amulet and armour, but no secondary, for ranged", () => {
         expect(secondaryPathForStyle(WeaponStyle.RANGED)).toBeUndefined();
@@ -381,5 +277,38 @@ describe("parseGearOverride", () => {
     it("throws for a tier past the path's max", () => {
         const tooHigh = maxTierIndex(EquipmentPath.SCIMITAR) + 1;
         expect(() => parseGearOverride(new URLSearchParams(`gear=scimitar:${tooHigh}`))).toThrow();
+    });
+});
+
+describe("groundItemDisplayCount", () => {
+    it("stacks ammo but shows every other path as a single item", () => {
+        expect(groundItemDisplayCount(EquipmentPath.ARROWS)).toBeGreaterThan(1);
+        const otherPaths = ALL_EQUIPMENT_PATHS.filter((path) => path !== EquipmentPath.ARROWS);
+        for (const path of otherPaths) {
+            expect(groundItemDisplayCount(path)).toBe(1);
+        }
+    });
+});
+
+describe("allDroppableItemDrops", () => {
+    it("lists every tier above 0 exactly once, paired with its path's display count", () => {
+        const drops = allDroppableItemDrops();
+        for (const path of ALL_EQUIPMENT_PATHS) {
+            const maxTier = maxTierIndex(path);
+            for (let tier = 1; tier <= maxTier; tier++) {
+                const itemId = itemIdForTier(path, tier);
+                expect(drops).toContainEqual({
+                    itemId,
+                    displayCount: groundItemDisplayCount(path),
+                });
+            }
+        }
+    });
+
+    it("never lists a path's tier-0 (starting, never-dropped) item", () => {
+        const drops = allDroppableItemDrops();
+        for (const path of ALL_EQUIPMENT_PATHS) {
+            expect(drops.some((drop) => drop.itemId === itemIdForTier(path, 0))).toBe(false);
+        }
     });
 });

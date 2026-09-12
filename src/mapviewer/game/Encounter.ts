@@ -382,8 +382,8 @@ function createEncounterPhases(
     return [phases[0], ...phases.slice(1)];
 }
 
-const LEVER_WORLD_OBJECT_ID = createWorldObjectId(0);
-const CHEST_WORLD_OBJECT_ID = createWorldObjectId(1);
+const LEVER_WORLD_OBJECT_ID = createWorldObjectId(1);
+const CHEST_WORLD_OBJECT_ID = createWorldObjectId(2);
 
 export type EncounterWorldObjects = {
     readonly lever: WorldObject;

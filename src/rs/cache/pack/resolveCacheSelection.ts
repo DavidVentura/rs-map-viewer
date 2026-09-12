@@ -341,6 +341,7 @@ class CacheSelectionWalk {
         roots.locTypeIds.forEach((id) => this.addLoc(id));
         roots.seqIds.forEach((id) => this.addSeq(id));
         roots.spotAnimIds.forEach((id) => this.addSpotAnim(id));
+        roots.spriteIds.forEach((id) => this.addSprite(id));
         return this.selection.build();
     }
 
@@ -563,6 +564,10 @@ export class CacheSelectionResolver {
             if (unknownId !== undefined) {
                 return `The cache has no ${kind} ${unknownId}`;
             }
+        }
+        const unknownSpriteId = roots.spriteIds.find((id) => !this.graph.spriteExists(id));
+        if (unknownSpriteId !== undefined) {
+            return `The cache has no sprite ${unknownSpriteId}`;
         }
         return undefined;
     }

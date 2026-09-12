@@ -1,11 +1,21 @@
 import { clamp } from "../../util/MathUtil";
 import { WeaponStyle } from "../game/Ability";
 import { Faction } from "../game/Combatant";
+import { CrossSprites } from "./ClickCross";
+import {
+    MenuEntry,
+    MenuTextRunRole,
+    Point,
+    Size,
+    computeMenuLayout,
+    computeTooltipLayout,
+    menuEntryTextRuns,
+} from "./contextMenu";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
     BossHudInfo,
-    GroundItemHudInfo,
+    ClickCrossHudInfo,
     PhaseHudInfo,
     PhaseStatus,
     PlayerHudInfo,
@@ -809,58 +819,181 @@ export function drawUpgradeOverlay(
     }
 }
 
-const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
-const GROUND_ITEM_LABEL_TAG_COLOR = "#8fe88f";
-const GROUND_ITEM_LABEL_BG_COLOR = "rgba(6, 6, 10, 0.78)";
-const GROUND_ITEM_LABEL_PADDING_X = 10;
-const GROUND_ITEM_LABEL_LINE_HEIGHT = 16;
+// Colours lifted from the deleted React OsrsMenu.css (see git history, a3acd2f^).
+export const MENU_FONT =
+    '16px "OSRS Bold", ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace';
+const MENU_TITLE_TEXT_COLOR = "#5d5447";
+const MENU_TITLE_BG_COLOR = "#000000";
+const MENU_BORDER_COLOR = "#5d5447";
+const MENU_OPTIONS_BG_COLOR = "#5d5447";
+const MENU_TOOLTIP_BG_COLOR = "rgba(93, 84, 71, 0.7)";
+const MENU_VERB_COLOR = "#ffffff";
+const MENU_VERB_HOVER_COLOR = "#ffff00";
+const MENU_OBJECT_NAME_COLOR = "#00ffff";
+const MENU_NPC_NAME_COLOR = "#ffff00";
+const MENU_NPC_LEVEL_COLOR = "#c0ff00";
+const MENU_ITEM_NAME_COLOR = "#ff9040";
+const MENU_TEXT_LEFT_PADDING_PX = 2;
 
-// A Diablo-style floor label: item name on top, "Upgrade (<path>)" tag below, always visible (no
-// hover needed) above the item's projected screen point.
-export function drawGroundItemLabel(
+// A measurer for the renderer's own hit-testing/layout (see WebGLMapViewerRenderer's menuState
+// handling): an offscreen canvas rather than the HUD's own drawing context, since the renderer
+// builds input from real mouse coordinates every frame regardless of whether the HUD canvas has
+// drawn yet.
+export function createMenuTextMeasurer(): (text: string) => number {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        throw new Error("Failed to create a 2D context for menu text measurement");
+    }
+    ctx.font = MENU_FONT;
+    return (text: string) => ctx.measureText(text).width;
+}
+
+function menuRunColor(role: MenuTextRunRole, hovered: boolean): string {
+    switch (role) {
+        case "verb":
+        case "cancel":
+            return hovered ? MENU_VERB_HOVER_COLOR : MENU_VERB_COLOR;
+        case "objectName":
+            return MENU_OBJECT_NAME_COLOR;
+        case "npcName":
+            return MENU_NPC_NAME_COLOR;
+        case "npcLevel":
+            return MENU_NPC_LEVEL_COLOR;
+        case "itemName":
+            return MENU_ITEM_NAME_COLOR;
+        case "suffix":
+            return MENU_VERB_COLOR;
+    }
+}
+
+// A 1px black text shadow, matching the old CSS's `text-shadow: 1px 1px 0 black`.
+function drawMenuText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): void {
+    ctx.fillStyle = "black";
+    ctx.fillText(text, x + 1, y + 1);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+}
+
+function drawMenuEntryRuns(
     ctx: CanvasRenderingContext2D,
-    screen: { x: number; y: number },
-    item: GroundItemHudInfo,
+    entry: MenuEntry,
+    x: number,
+    y: number,
+    hovered: boolean,
+    measureText: (text: string) => number,
+): void {
+    let cursorX = x;
+    for (const run of menuEntryTextRuns(entry)) {
+        drawMenuText(ctx, run.text, cursorX, y, menuRunColor(run.role, hovered && run.role !== "suffix"));
+        cursorX += measureText(run.text);
+    }
+}
+
+// The standard OSRS right-click "Choose Option" menu - see git history (a3acd2f^) for the deleted
+// React version this recreates on the HUD canvas.
+export function drawContextMenu(
+    ctx: CanvasRenderingContext2D,
+    entries: readonly MenuEntry[],
+    anchor: Point,
+    viewport: Size,
+    hoveredIndex: number | undefined,
 ): void {
     ctx.save();
-    ctx.font = "700 13px sans-serif";
-    const nameWidth = ctx.measureText(item.name).width;
-    const tagText = `Upgrade (${item.pathLabel})`;
-    ctx.font = "600 11px sans-serif";
-    const tagWidth = ctx.measureText(tagText).width;
-    const boxWidth = Math.max(nameWidth, tagWidth) + GROUND_ITEM_LABEL_PADDING_X * 2;
-    const boxHeight = GROUND_ITEM_LABEL_LINE_HEIGHT * 2 + 6;
-    const boxX = screen.x - boxWidth / 2;
-    const boxY = screen.y - boxHeight - 14;
-
-    ctx.fillStyle = GROUND_ITEM_LABEL_BG_COLOR;
-    ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
-    ctx.strokeRect(boxX + 0.5, boxY + 0.5, boxWidth - 1, boxHeight - 1);
-
-    ctx.textAlign = "center";
+    ctx.font = MENU_FONT;
+    ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.font = "700 13px sans-serif";
-    ctx.fillStyle = GROUND_ITEM_LABEL_NAME_COLOR;
-    ctx.fillText(item.name, screen.x, boxY + 4);
-    ctx.font = "600 11px sans-serif";
-    ctx.fillStyle = GROUND_ITEM_LABEL_TAG_COLOR;
-    ctx.fillText(tagText, screen.x, boxY + 4 + GROUND_ITEM_LABEL_LINE_HEIGHT);
+    const measureText = (text: string) => ctx.measureText(text).width;
+    const layout = computeMenuLayout(entries, anchor, viewport, measureText);
+    const { box } = layout;
+
+    ctx.fillStyle = MENU_TITLE_BG_COLOR;
+    ctx.fillRect(box.x, box.y, box.width, layout.titleHeight);
+    ctx.fillStyle = MENU_OPTIONS_BG_COLOR;
+    ctx.fillRect(
+        box.x,
+        box.y + layout.titleHeight,
+        box.width,
+        box.height - layout.titleHeight,
+    );
+
+    ctx.strokeStyle = MENU_BORDER_COLOR;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.width - 1, box.height - 1);
+    ctx.beginPath();
+    ctx.moveTo(box.x, box.y + layout.titleHeight + 0.5);
+    ctx.lineTo(box.x + box.width, box.y + layout.titleHeight + 0.5);
+    ctx.stroke();
+
+    drawMenuText(
+        ctx,
+        "Choose Option",
+        box.x + MENU_TEXT_LEFT_PADDING_PX,
+        box.y + 1,
+        MENU_TITLE_TEXT_COLOR,
+    );
+
+    entries.forEach((entry, index) => {
+        const rect = layout.entryRects[index];
+        drawMenuEntryRuns(
+            ctx,
+            entry,
+            rect.x + MENU_TEXT_LEFT_PADDING_PX,
+            rect.y + 1,
+            index === hoveredIndex,
+            measureText,
+        );
+    });
     ctx.restore();
 }
 
-export function drawInteractionActionText(ctx: CanvasRenderingContext2D, text: string): void {
+// The hover tooltip shown while the menu is closed: "Pull Lever / 2 more options", offset below
+// the cursor with a translucent background (see the old CSS's `.tooltip .options`).
+export function drawContextMenuTooltip(
+    ctx: CanvasRenderingContext2D,
+    entries: readonly MenuEntry[],
+    anchor: Point,
+    viewport: Size,
+): void {
     ctx.save();
-    ctx.font = "700 14px sans-serif";
+    ctx.font = MENU_FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillStyle = "#ffd24d";
-    ctx.strokeText(text, 12, 12);
-    ctx.fillText(text, 12, 12);
+    const measureText = (text: string) => ctx.measureText(text).width;
+    const layout = computeTooltipLayout(entries, anchor, viewport, measureText);
+    if (!layout) {
+        ctx.restore();
+        return;
+    }
+
+    ctx.fillStyle = MENU_TOOLTIP_BG_COLOR;
+    ctx.fillRect(layout.box.x, layout.box.y, layout.box.width, layout.box.height);
+
+    let cursorX = layout.box.x + MENU_TEXT_LEFT_PADDING_PX;
+    const y = layout.box.y + 1;
+    for (const run of layout.runs) {
+        drawMenuText(ctx, run.text, cursorX, y, menuRunColor(run.role, false));
+        cursorX += measureText(run.text);
+    }
     ctx.restore();
+}
+
+// The sprite's own native size (see assets/HudAssets.ts) - drawn 1:1, like OSRS.
+const CLICK_CROSS_SIZE_PX = 16;
+
+export function drawClickCross(
+    ctx: CanvasRenderingContext2D,
+    sprites: CrossSprites,
+    cross: ClickCrossHudInfo,
+): void {
+    const frame = sprites[cross.kind][cross.frameIndex];
+    ctx.drawImage(
+        frame,
+        cross.screenX - CLICK_CROSS_SIZE_PX / 2,
+        cross.screenY - CLICK_CROSS_SIZE_PX / 2,
+        CLICK_CROSS_SIZE_PX,
+        CLICK_CROSS_SIZE_PX,
+    );
 }
 
 const PICKUP_FLASH_MARGIN_TOP = 90;

@@ -5,12 +5,13 @@ import {
     drawAbilityBar,
     drawBossBar,
     drawBottomPanel,
+    drawClickCross,
+    drawContextMenu,
+    drawContextMenuTooltip,
     drawDamageSplat,
     drawGodModeLabel,
-    drawGroundItemLabel,
     drawHealSplat,
     drawHealthGlobe,
-    drawInteractionActionText,
     drawLevelProgress,
     drawManaGlobe,
     drawPhaseCounter,
@@ -42,11 +43,6 @@ export class Hud {
         const { ctx } = this;
         const { width, height } = frame.screenSize;
         ctx.clearRect(0, 0, width, height);
-
-        this.drawGroundItemLabels(frame);
-        if (frame.interactionActionText) {
-            drawInteractionActionText(ctx, frame.interactionActionText);
-        }
 
         const layout = computeHudLayout(
             width,
@@ -84,6 +80,25 @@ export class Hud {
         if (frame.previewSeqId !== undefined) {
             drawPreviewSeqLabel(ctx, width, frame.previewSeqId);
         }
+        if (frame.clickCross) {
+            drawClickCross(ctx, frame.crossSprites, frame.clickCross);
+        }
+        if (frame.contextMenu) {
+            drawContextMenu(
+                ctx,
+                frame.contextMenu.entries,
+                frame.contextMenu.anchor,
+                frame.screenSize,
+                frame.contextMenu.hoveredIndex,
+            );
+        } else if (frame.contextMenuTooltip) {
+            drawContextMenuTooltip(
+                ctx,
+                frame.contextMenuTooltip.entries,
+                frame.contextMenuTooltip.anchor,
+                frame.screenSize,
+            );
+        }
     }
 
     private spawnSplats(events: SplatEvent[]): void {
@@ -118,12 +133,6 @@ export class Hud {
                 flash.text,
                 flash.ageSeconds / PICKUP_FLASH_LIFETIME_SECONDS,
             );
-        }
-    }
-
-    private drawGroundItemLabels(frame: HudFrame): void {
-        for (const item of frame.groundItems) {
-            drawGroundItemLabel(this.ctx, { x: item.screenX, y: item.screenY }, item);
         }
     }
 

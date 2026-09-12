@@ -26,6 +26,7 @@ import { ResidencyPolicyKind, WholeWorldResidency } from "../MapManager";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
+import { WORLD_OBJECT_BAKES } from "../assets/ActorAssets";
 import { AbilityTargetKind, AimMode, Delivery, WeaponStyle, aimModeFor } from "../game/Ability";
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
 import {
@@ -39,14 +40,21 @@ import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour, resolveEnemyType } from "../game/EnemyType";
-import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
-import { AbilitySlotInput, CombatInput, GameWorld, PickupTarget } from "../game/GameWorld";
+import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
+import {
+    AbilitySlotInput,
+    CombatInput,
+    GameWorld,
+    InteractionIntent,
+    PickupTarget,
+} from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
 import {
     Interaction,
     InteractionId,
     WorldObject,
     WorldObjectId,
+    WorldObjectVariant,
     WorldObjectVisual,
     worldObjectRotationUnits,
 } from "../game/Interaction";
@@ -54,17 +62,49 @@ import { Player, PlayerInput } from "../game/Player";
 import { createCharacterLevel, experienceForLevel } from "../game/Progression";
 import { Projectile } from "../game/Projectile";
 import { loadSeqCatalog } from "../game/SeqCatalog";
-import { Terrain } from "../game/Terrain";
+import { TILE_SIZE, Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
 import { CAST_ITEM_OVERRIDES_BY_SEQ_ID } from "../game/abilities";
-import { EnemyScreenCandidate, ScreenPoint, ScreenRect, pickEnemyNear } from "../game/enemyPicking";
+import {
+    EnemyScreenCandidate,
+    ScreenPoint,
+    ScreenRect,
+    distanceToRect,
+    pickEnemyNear,
+} from "../game/enemyPicking";
 import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
 import { summarizeModifiers } from "../game/upgrades";
+import {
+    ClickCrossKind,
+    ClickCrossPlaybackState,
+    IDLE_CLICK_CROSS_STATE,
+    advanceClickCross,
+    classifyPressCross,
+    currentClickCrossFrame,
+    requestClickCross,
+} from "../hud/ClickCross";
+import {
+    CLOSED_MENU_STATE,
+    MenuAction,
+    MenuActionKind,
+    MenuState,
+    MenuStateKind,
+    MenuTarget,
+    MenuTargetKind,
+    OpenMenuState,
+    Point,
+    buildMenuEntries,
+    clickMenuAt,
+    computeMenuLayout,
+    openMenuAt,
+    updateMenuHover,
+} from "../hud/contextMenu";
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
     BossHudInfo,
-    GroundItemHudInfo,
+    ClickCrossHudInfo,
+    ContextMenuTooltipHudInfo,
     HudFrame,
     PhaseStatus,
     PickupFlashEvent,
@@ -72,7 +112,7 @@ import {
     SplatKind,
     UpgradeCardHudInfo,
 } from "../hud/HudFrame";
-import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
+import { HudRegionKind, computeHudLayout, createMenuTextMeasurer, hitTestHud } from "../hud/hudDraw";
 import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextureRing";
 import { NULL_DRAW_RANGE } from "./DrawRange";
 import { InteractType } from "./InteractType";
@@ -137,11 +177,12 @@ const PREVIEW_LABEL_MONITOR = { graph: false, interval: 200 };
 // through without the pack and bake growing to the whole cache.
 const PREVIEW_GFX_RELOAD_RANGE_SIZE = 21;
 
-// Generous click target for a ground item: covers its floor label above the point, plus a radius
-// around the item's own projected screen point.
-const GROUND_ITEM_LABEL_HALF_WIDTH_PX = 90;
-const GROUND_ITEM_LABEL_HEIGHT_PX = 44;
-const GROUND_ITEM_PICK_RADIUS_PX = 32;
+// A ground item's click/hover target: a small box around the item itself, the same
+// projected-footprint approach as a world object's (see projectWorldObjectScreenRect), just sized
+// for a loot drop rather than a lever/chest.
+const GROUND_ITEM_HALF_WIDTH_UNITS = 32;
+const GROUND_ITEM_HEIGHT_UNITS = 40;
+const GROUND_ITEM_HOVER_PICK_RADIUS_PX = 16;
 
 // Projectiles and visual effects share the actor buffer's instance capacity with the player and
 // every enemy spawn.
@@ -295,10 +336,30 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     highlightedEnemy?: Enemy;
     highlightedWorldObject?: WorldObjectVisual;
-    // Set by a click on a ground item's label/mesh (see buildPickupInput); cleared by a later click
+    highlightedGroundItem?: GroundItem;
+    // Set by a click on a ground item's mesh (see buildPickupInput); cleared by a later click
     // elsewhere, by the item being picked up or expiring, or by resolving to nothing on load.
     private pickupTargetItemId?: number;
     private selectedInteractionId?: InteractionId;
+
+    // The right-click "Choose Option" menu (see hud/contextMenu.ts). menuState is the pure state
+    // machine; pendingMenuAction is the one-shot action an entry selection queues, consumed by the
+    // matching input builder (buildInteractionInput/buildPickupInput/buildCombatInput) on the next
+    // frame - the same route a left-click already uses, just triggered a frame later than a real
+    // click since inputCapturedByMenu suppresses every mouse-driven builder for the whole frame the
+    // menu was open at the start of.
+    private menuState: MenuState = CLOSED_MENU_STATE;
+    private pendingMenuAction?: MenuAction;
+    // Where to show the click cross once pendingMenuAction reaches the sim (see updateClickCross) -
+    // the anchor of the menu that queued it, i.e. where the user originally right-clicked, not
+    // where the entry itself sits.
+    private pendingMenuActionAnchor?: Point;
+    private inputCapturedByMenu = false;
+    private readonly menuTextMeasurer = createMenuTextMeasurer();
+
+    // The click cross's playback state (see hud/ClickCross.ts) - rate-limited so a click while one
+    // is already playing queues rather than restarting it.
+    private clickCrossState: ClickCrossPlaybackState = IDLE_CLICK_CROSS_STATE;
 
     npcRenderCount: number = 0;
     npcRenderData: Uint32Array = new Uint32Array(16 * 4 * NPC_INSTANCE_TEXELS);
@@ -1388,13 +1449,22 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const camera = this.mapViewer.camera;
 
         this.handleInput(deltaTime);
+        this.updateContextMenu();
+        const menuActionWasPending = this.pendingMenuAction !== undefined;
+        const movement = this.buildMovementInput();
+        const combat = this.buildCombatInput();
+        const styleSwitch = this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput();
+        const chooseUpgrade = this.buildUpgradeChoiceInput();
+        const pickupTarget = this.buildPickupInput();
+        const interaction = this.buildInteractionInput();
+        this.updateClickCross(menuActionWasPending, movement, combat, pickupTarget, interaction);
         this.mapViewer.world.advance(deltaTime / 1000, {
-            movement: this.buildMovementInput(),
-            combat: this.buildCombatInput(),
-            styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
-            chooseUpgrade: this.buildUpgradeChoiceInput(),
-            pickupTarget: this.buildPickupInput(),
-            interaction: this.buildInteractionInput(),
+            movement,
+            combat,
+            styleSwitch,
+            chooseUpgrade,
+            pickupTarget,
+            interaction,
         });
         this.advancePreviewGfx(deltaTime / 1000);
         this.updateRoofHiding();
@@ -1429,6 +1499,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         this.highlightedEnemy = this.getHoveredEnemy();
         this.highlightedWorldObject = this.getHoveredWorldObject();
+        this.highlightedGroundItem = this.getHoveredGroundItem();
         this.hudFrame = this.buildHudFrame();
 
         if (this.cullBackFace) {
@@ -1571,7 +1642,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private buildStyleSwitchInput(): WeaponStyle | undefined {
         const frame = this.hudFrame;
         const inputManager = this.mapViewer.inputManager;
-        if (!frame || !inputManager.isPressEvent()) {
+        if (this.inputCapturedByMenu || !frame || !inputManager.isPressEvent()) {
             return undefined;
         }
         const layout = computeHudLayout(
@@ -1594,6 +1665,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const stationary: PlayerInput = { x: 0, y: 0, running };
 
         if (
+            this.inputCapturedByMenu ||
             !player ||
             this.selectedInteractionId !== undefined ||
             this.isPointerOverHud() ||
@@ -1630,7 +1702,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 return index;
             }
         }
-        if (!input.isPressEvent()) {
+        if (this.inputCapturedByMenu || !input.isPressEvent()) {
             return undefined;
         }
         const layout = computeHudLayout(
@@ -1662,11 +1734,25 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (!player) {
             return { basicAttack: { held: false }, skills: [] };
         }
+        if (this.inputCapturedByMenu) {
+            return { basicAttack: { held: false }, skills: player.skills.map(() => ({ held: false })) };
+        }
 
         const inputManager = this.mapViewer.inputManager;
         const pointerOverHud = this.isPointerOverHud();
-        const hoveredEnemy = pointerOverHud ? undefined : this.getHoveredEnemy();
-        const isDragging = !pointerOverHud && inputManager.isDragging();
+
+        // A menu-selected "Attack" behaves like a single left-click on that enemy: force the
+        // hover/drag state for this one frame rather than opening a second route into the sim.
+        let menuAttackTarget: Enemy | undefined;
+        const pendingAction = this.pendingMenuAction;
+        if (pendingAction?.kind === MenuActionKind.ATTACK_ENEMY) {
+            this.pendingMenuAction = undefined;
+            menuAttackTarget = this.mapViewer.world.findEnemy(pendingAction.enemyId);
+        }
+
+        const hoveredEnemy = menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredEnemy());
+        const isDragging =
+            menuAttackTarget !== undefined || (!pointerOverHud && inputManager.isDragging());
 
         const inputFor = (held: boolean, delivery: Delivery): AbilitySlotInput => {
             if (!held) {
@@ -1784,12 +1870,243 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
     }
 
+    private getHoveredGroundItem(): GroundItem | undefined {
+        const inputManager = this.mapViewer.inputManager;
+        if (inputManager.mouseX === -1 || inputManager.mouseY === -1 || this.isPointerOverHud()) {
+            return undefined;
+        }
+        const pickedId = pickEnemyNear(
+            { x: inputManager.mouseX, y: inputManager.mouseY },
+            this.buildGroundItemScreenCandidates(),
+            GROUND_ITEM_HOVER_PICK_RADIUS_PX,
+        );
+        return pickedId !== undefined ? this.mapViewer.world.findGroundItem(pickedId) : undefined;
+    }
+
+    // Everything under a screen point that the right-click menu (or its hover tooltip) can act on,
+    // nearest first: at most one of each kind, since each picker already resolves the nearest
+    // candidate of its own kind (see getHoveredEnemy/getHoveredWorldObject/buildPickupInput).
+    private buildMenuTargetsUnderCursor(x: number, y: number): MenuTarget[] {
+        const cursor = { x, y };
+        const candidates: { target: MenuTarget; distance: number }[] = [];
+
+        const enemyId = pickEnemyNear(
+            cursor,
+            this.buildEnemyScreenCandidates(),
+            ENEMY_HOVER_PICK_RADIUS_PX,
+        );
+        const enemy = enemyId !== undefined ? this.mapViewer.world.findEnemy(enemyId) : undefined;
+        if (enemy) {
+            const npcType = this.resolveEnemyNpcType(enemy);
+            const rect = this.projectEnemyScreenRect(enemy);
+            candidates.push({
+                target: {
+                    kind: MenuTargetKind.ENEMY,
+                    enemyId: enemy.id,
+                    name: npcType.name,
+                    combatLevel: npcType.combatLevel,
+                },
+                distance: rect ? distanceToRect(cursor, rect) : 0,
+            });
+        }
+
+        const objectId = pickEnemyNear(
+            cursor,
+            this.buildWorldObjectScreenCandidates(),
+            WORLD_OBJECT_HOVER_PICK_RADIUS_PX,
+        );
+        const worldObjectVisual =
+            objectId !== undefined
+                ? this.mapViewer.world.worldObjectVisuals.find(
+                      (visual) => visual.object.id === objectId,
+                  )
+                : undefined;
+        const interaction =
+            worldObjectVisual && this.activeInteractionForObject(worldObjectVisual.object.id);
+        if (worldObjectVisual && interaction) {
+            const bake = WORLD_OBJECT_BAKES[worldObjectVisual.object.kind];
+            const locId =
+                worldObjectVisual.variant === WorldObjectVariant.ACTIVATED
+                    ? bake.activatedLocId
+                    : bake.restLocId;
+            const locType = this.mapViewer.locTypeLoader.load(locId);
+            const verb = locType.actions.find((action) => !!action) ?? "";
+            const rect = this.projectWorldObjectScreenRect(worldObjectVisual.object);
+            candidates.push({
+                target: {
+                    kind: MenuTargetKind.WORLD_OBJECT,
+                    objectId: worldObjectVisual.object.id,
+                    interactionId: interaction.id,
+                    verb,
+                    name: locType.name,
+                },
+                distance: rect ? distanceToRect(cursor, rect) : 0,
+            });
+        }
+
+        const groundItemId = pickEnemyNear(
+            cursor,
+            this.buildGroundItemScreenCandidates(),
+            GROUND_ITEM_HOVER_PICK_RADIUS_PX,
+        );
+        const groundItem =
+            groundItemId !== undefined
+                ? this.mapViewer.world.findGroundItem(groundItemId)
+                : undefined;
+        if (groundItem) {
+            const itemId = itemIdForTier(groundItem.path, groundItem.tierIndex);
+            const rect = this.projectGroundItemScreenRect(groundItem);
+            candidates.push({
+                target: {
+                    kind: MenuTargetKind.GROUND_ITEM,
+                    groundItemId: groundItem.id,
+                    name: this.mapViewer.objTypeLoader.load(itemId).name,
+                },
+                distance: rect ? distanceToRect(cursor, rect) : 0,
+            });
+        }
+
+        return candidates.sort((a, b) => a.distance - b.distance).map((candidate) => candidate.target);
+    }
+
+    private currentViewportSize() {
+        return { width: this.canvas.clientWidth, height: this.canvas.clientHeight };
+    }
+
+    private computeMenuLayoutFor(state: OpenMenuState) {
+        return computeMenuLayout(
+            state.entries,
+            state.anchor,
+            this.currentViewportSize(),
+            this.menuTextMeasurer,
+        );
+    }
+
+    // Drives menuState/pendingMenuAction from real input events, once per frame before the game's
+    // own input builders run. inputCapturedByMenu reflects whether the menu was open at the start
+    // of this call - the whole frame a click selects/cancels an entry is suppressed for every other
+    // mouse-driven builder, so the frame after is when a queued pendingMenuAction actually reaches
+    // the sim.
+    private updateContextMenu(): void {
+        const inputManager = this.mapViewer.inputManager;
+        this.inputCapturedByMenu = this.menuState.kind === MenuStateKind.OPEN;
+
+        if (this.menuState.kind === MenuStateKind.OPEN) {
+            const layout = this.computeMenuLayoutFor(this.menuState);
+            this.menuState = updateMenuHover(this.menuState, layout, {
+                x: inputManager.mouseX,
+                y: inputManager.mouseY,
+            });
+        }
+
+        if (this.menuState.kind === MenuStateKind.OPEN && inputManager.isPressEvent()) {
+            const layout = this.computeMenuLayoutFor(this.menuState);
+            const anchor = this.menuState.anchor;
+            const { state, action } = clickMenuAt(
+                this.menuState,
+                layout,
+                inputManager.pressEventX,
+                inputManager.pressEventY,
+            );
+            this.menuState = state;
+            if (action !== undefined && action.kind !== MenuActionKind.CANCEL) {
+                this.pendingMenuAction = action;
+                this.pendingMenuActionAnchor = anchor;
+            }
+        } else if (
+            this.menuState.kind === MenuStateKind.CLOSED &&
+            inputManager.isPickEvent() &&
+            !this.isPointerOverHud()
+        ) {
+            const anchor = { x: inputManager.pickX, y: inputManager.pickY };
+            this.menuState = openMenuAt(anchor, this.buildMenuTargetsUnderCursor(anchor.x, anchor.y));
+        }
+    }
+
+    // Spawns the click cross from the same results this tick's input builders already computed -
+    // no second hit test (see hud/ClickCross.classifyPressCross). Must run after those builders,
+    // since it needs to see whether one of them just consumed pendingMenuAction.
+    private updateClickCross(
+        menuActionWasPending: boolean,
+        movement: PlayerInput,
+        combat: CombatInput,
+        pickupTarget: PickupTarget | undefined,
+        interaction: InteractionIntent | undefined,
+    ): void {
+        const menuActionConsumed = menuActionWasPending && this.pendingMenuAction === undefined;
+        if (menuActionConsumed) {
+            const anchor = this.pendingMenuActionAnchor;
+            this.pendingMenuActionAnchor = undefined;
+            if (anchor) {
+                this.spawnClickCross(ClickCrossKind.ACTION, anchor.x, anchor.y);
+            }
+            return;
+        }
+
+        const inputManager = this.mapViewer.inputManager;
+        if (!inputManager.isPressEvent()) {
+            return;
+        }
+        const kind = classifyPressCross({
+            capturedByMenu: this.inputCapturedByMenu,
+            interactionStarted: interaction?.kind === "START",
+            attackingEnemy: combat.basicAttack.held,
+            pickingUpItem: pickupTarget !== undefined,
+            moving: movement.x !== 0 || movement.y !== 0,
+        });
+        if (!kind) {
+            return;
+        }
+        this.spawnClickCross(kind, inputManager.pressEventX, inputManager.pressEventY);
+    }
+
+    // Both call sites feed the same single transition (see hud/ClickCross.requestClickCross) - a
+    // click while one is already playing is remembered as the one pending cross rather than
+    // restarting the animation in place.
+    private spawnClickCross(kind: ClickCrossKind, screenX: number, screenY: number): void {
+        this.clickCrossState = requestClickCross(
+            this.clickCrossState,
+            { kind, screenX, screenY },
+            this.mapViewer.world.timeSeconds,
+        );
+    }
+
+    // The hover tooltip shown while the menu is closed (see hud/contextMenu.tooltipTextRuns) -
+    // undefined whenever there's nothing under the cursor to act on.
+    private buildContextMenuTooltipInfo(): ContextMenuTooltipHudInfo | undefined {
+        const inputManager = this.mapViewer.inputManager;
+        if (!inputManager.isFocused() || this.isPointerOverHud()) {
+            return undefined;
+        }
+        const targets = this.buildMenuTargetsUnderCursor(inputManager.mouseX, inputManager.mouseY);
+        if (targets.length === 0) {
+            return undefined;
+        }
+        return {
+            anchor: { x: inputManager.mouseX, y: inputManager.mouseY },
+            entries: buildMenuEntries(targets),
+        };
+    }
+
     private buildInteractionInput() {
         const input = this.mapViewer.inputManager;
         const activeIds = new Set(this.mapViewer.world.activeInteractions.map(({ id }) => id));
         if (this.selectedInteractionId && !activeIds.has(this.selectedInteractionId)) {
             this.selectedInteractionId = undefined;
         }
+
+        if (this.inputCapturedByMenu) {
+            return undefined;
+        }
+
+        const pendingAction = this.pendingMenuAction;
+        if (pendingAction?.kind === MenuActionKind.START_INTERACTION) {
+            this.pendingMenuAction = undefined;
+            this.selectedInteractionId = pendingAction.interactionId;
+            this.pickupTargetItemId = undefined;
+            return { kind: "START" as const, interactionId: pendingAction.interactionId };
+        }
+
         if (!input.isPressEvent()) {
             return undefined;
         }
@@ -1895,13 +2212,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         };
     }
 
-    // A click on a fresh press event either targets a ground item (label or a generous radius
-    // around its projected point, reusing the enemy picker's approach) or clears any pending
-    // pickup, the same way clicking an enemy or plain ground overrides a melee chase. The target
-    // also clears itself once the item is gone (picked up or expired).
+    // A click on a fresh press event either targets a ground item (a generous rect around the item
+    // itself, the same projected-footprint approach as enemy/world-object picking) or clears any
+    // pending pickup, the same way clicking an enemy or plain ground overrides a melee chase. The
+    // target also clears itself once the item is gone (picked up or expired).
     private buildPickupInput(): PickupTarget | undefined {
+        if (this.inputCapturedByMenu) {
+            return undefined;
+        }
+
         const inputManager = this.mapViewer.inputManager;
-        if (!this.isPointerOverHud() && inputManager.isPressEvent()) {
+        const pendingAction = this.pendingMenuAction;
+        if (pendingAction?.kind === MenuActionKind.PICK_UP_GROUND_ITEM) {
+            this.pendingMenuAction = undefined;
+            this.pickupTargetItemId = pendingAction.groundItemId;
+        } else if (!this.isPointerOverHud() && inputManager.isPressEvent()) {
             this.pickupTargetItemId = pickEnemyNear(
                 { x: inputManager.pressEventX, y: inputManager.pressEventY },
                 this.buildGroundItemScreenCandidates(),
@@ -1929,26 +2254,46 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return candidates;
     }
 
-    // Covers both the label (drawn above the item) and a generous radius around the item's own
-    // projected point, so clicking either the floor label or near the item mesh picks it up.
+    // A box around the item's own mesh (see GROUND_ITEM_HALF_WIDTH_UNITS/HEIGHT_UNITS), projected
+    // the same foot+head-corners way as an enemy's or world object's hover rect - the item itself is
+    // the hover/pickup target now that there is no floor label to click instead.
     private projectGroundItemScreenRect(item: GroundItem): ScreenRect | undefined {
-        const groundHeight = this.terrain.getHeight(item.level, item.x, item.y);
-        const screen = worldToScreen(
-            this.mapViewer.camera.viewProjMatrix,
-            item.x,
-            item.y,
-            groundHeight,
-            this.canvas.clientWidth,
-            this.canvas.clientHeight,
-        );
-        if (!screen) {
+        const viewProjMatrix = this.mapViewer.camera.viewProjMatrix;
+        const width = this.canvas.clientWidth;
+        const height = this.canvas.clientHeight;
+        const groundHeight = this.groundItemTileHeight(item.level, item.x, item.y);
+        if (groundHeight === undefined) {
             return undefined;
         }
+        const corners = [
+            [item.x - GROUND_ITEM_HALF_WIDTH_UNITS, item.y - GROUND_ITEM_HALF_WIDTH_UNITS],
+            [item.x + GROUND_ITEM_HALF_WIDTH_UNITS, item.y - GROUND_ITEM_HALF_WIDTH_UNITS],
+            [item.x - GROUND_ITEM_HALF_WIDTH_UNITS, item.y + GROUND_ITEM_HALF_WIDTH_UNITS],
+            [item.x + GROUND_ITEM_HALF_WIDTH_UNITS, item.y + GROUND_ITEM_HALF_WIDTH_UNITS],
+        ];
+        const points: ScreenPoint[] = [];
+        for (const [x, y] of corners) {
+            const foot = worldToScreen(viewProjMatrix, x, y, groundHeight, width, height);
+            const head = worldToScreen(
+                viewProjMatrix,
+                x,
+                y,
+                groundHeight + GROUND_ITEM_HEIGHT_UNITS,
+                width,
+                height,
+            );
+            if (!foot || !head) {
+                return undefined;
+            }
+            points.push(foot, head);
+        }
+        const xs = points.map((point) => point.x);
+        const ys = points.map((point) => point.y);
         return {
-            left: screen.x - GROUND_ITEM_LABEL_HALF_WIDTH_PX,
-            right: screen.x + GROUND_ITEM_LABEL_HALF_WIDTH_PX,
-            top: screen.y - GROUND_ITEM_LABEL_HEIGHT_PX - GROUND_ITEM_PICK_RADIUS_PX,
-            bottom: screen.y + GROUND_ITEM_PICK_RADIUS_PX,
+            left: Math.min(...xs),
+            right: Math.max(...xs),
+            top: Math.min(...ys),
+            bottom: Math.max(...ys),
         };
     }
 
@@ -2038,34 +2383,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
         }
 
-        const groundItems: GroundItemHudInfo[] = [];
-        for (const item of world.groundItems) {
-            const groundHeight = this.terrain.getHeight(item.level, item.x, item.y);
-            const screen = worldToScreen(
-                camera.viewProjMatrix,
-                item.x,
-                item.y,
-                groundHeight,
-                this.canvas.clientWidth,
-                this.canvas.clientHeight,
-            );
-            if (!screen) {
-                continue;
-            }
-            const itemId = itemIdForTier(item.path, item.tierIndex);
-            groundItems.push({
-                groundItemId: item.id,
-                screenX: screen.x,
-                screenY: screen.y,
-                name: this.mapViewer.objTypeLoader.load(itemId).name,
-                pathLabel: EQUIPMENT_PATH_LABELS[item.path],
-            });
-        }
-
         const phaseProgress = world.getPhaseProgress();
-        const hoveredWorldObject = this.getHoveredWorldObject();
-        const hoveredInteraction =
-            hoveredWorldObject && this.activeInteractionForObject(hoveredWorldObject.object.id);
 
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
@@ -2109,8 +2427,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             activeStyle: player?.style,
             godMode: world.godMode,
             splatEvents,
-            groundItems,
-            interactionActionText: hoveredInteraction?.label,
+            contextMenu: this.menuState.kind === MenuStateKind.OPEN ? this.menuState : undefined,
+            contextMenuTooltip:
+                this.menuState.kind === MenuStateKind.CLOSED
+                    ? this.buildContextMenuTooltipInfo()
+                    : undefined,
             upgradeOffer: world.pendingUpgradeOffer && {
                 cards: world.pendingUpgradeOffer.map(
                     (upgrade, index): UpgradeCardHudInfo => ({
@@ -2132,7 +2453,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 ? world.enemies[0]?.previewSeq?.seqId
                 : undefined,
             boss,
+            crossSprites: this.mapViewer.hudAssets.crossSprites,
+            clickCross: this.buildClickCrossHudInfo(),
         };
+    }
+
+    // The active cross's resolved frame for this instant, or undefined (clearing the state) once
+    // its animation has finished.
+    private buildClickCrossHudInfo(): ClickCrossHudInfo | undefined {
+        const now = this.mapViewer.world.timeSeconds;
+        this.clickCrossState = advanceClickCross(this.clickCrossState, now);
+        return currentClickCrossFrame(this.clickCrossState, now);
     }
 
     private pinCameraToPlayer(): void {
@@ -2390,6 +2721,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
+    // OSRS draws ground items at the tile's own (flat) height rather than the exact bilinear height
+    // under the drop's precise sub-tile position (see Scene.getCenterHeight, used by the real
+    // client's obj placement) - sampling at the tile's exact centre reduces terrain.getHeight's
+    // bilinear interpolation to that same corner average. A moving enemy's feet legitimately track
+    // the finer per-point height, which is why only ground items need this: an item dropped near a
+    // lower corner of a sloped/uneven tile otherwise renders visibly sunk relative to the tile as a
+    // whole, even though its own model already sits flush with whatever height it's given (its base
+    // is at model-local y=0).
+    private groundItemTileHeight(level: number, x: number, y: number): number | undefined {
+        const tileCenterX = Math.floor(x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        const tileCenterY = Math.floor(y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        return this.tryGetHeight(level, tileCenterX, tileCenterY);
+    }
+
     buildActorInstanceData(): void {
         this.activeActorMeshes.length = 0;
         this.actorInstanceCount = 0;
@@ -2568,7 +2913,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         for (const item of world.groundItems) {
-            const groundHeight = this.tryGetHeight(item.level, item.x, item.y);
+            const groundHeight = this.groundItemTileHeight(item.level, item.x, item.y);
             if (groundHeight === undefined) {
                 continue;
             }
@@ -2580,8 +2925,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     groundHeight,
                     rotation: 0,
                     level: this.terrain.getRenderLevel(item.level, item.x, item.y),
-                    interactType: InteractType.NONE,
-                    interactId: 0,
+                    interactType: InteractType.OBJ,
+                    interactId: item.id,
                     pitch: 0,
                 },
             );
@@ -2803,6 +3148,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         drawCall.texture("u_actorDataTexture", actorDataTexture);
         drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
         drawCall.uniform("u_highlightLocId", this.highlightedWorldObject?.object.id ?? 0);
+        drawCall.uniform("u_highlightItemId", this.highlightedGroundItem?.id ?? 0);
 
         for (let i = 0; i < this.activeActorMeshes.length; i++) {
             const mesh = this.activeActorMeshes[i];

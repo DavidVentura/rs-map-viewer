@@ -43,14 +43,12 @@ export function resolveEncounterAnimations(
     assets: ActorAssets,
     catalog: SeqCatalog,
 ): EncounterAnimations {
-    const stanceSeqs = (style: WeaponStyle): StanceSeqs => {
-        const ids = assets.player.stanceSeqIds[style];
-        return {
+    const stanceSeqsByTier = (style: WeaponStyle): readonly StanceSeqs[] =>
+        assets.player.stancesByTier[style].map((ids) => ({
             idle: catalog.get(ids.idleSeqId),
             walk: catalog.get(ids.walkSeqId),
             run: catalog.get(ids.runSeqId),
-        };
-    };
+        }));
     const enemyTypes = new Map<EnemyTypeId, ResolvedEnemyType>(
         assets.enemyTypes.map(({ enemyTypeId }) => [
             enemyTypeId,
@@ -66,9 +64,9 @@ export function resolveEncounterAnimations(
     return {
         player: {
             stances: {
-                [WeaponStyle.MELEE]: stanceSeqs(WeaponStyle.MELEE),
-                [WeaponStyle.RANGED]: stanceSeqs(WeaponStyle.RANGED),
-                [WeaponStyle.MAGIC]: stanceSeqs(WeaponStyle.MAGIC),
+                [WeaponStyle.MELEE]: stanceSeqsByTier(WeaponStyle.MELEE),
+                [WeaponStyle.RANGED]: stanceSeqsByTier(WeaponStyle.RANGED),
+                [WeaponStyle.MAGIC]: stanceSeqsByTier(WeaponStyle.MAGIC),
             },
             death: catalog.get(Player.DEATH_SEQ_ID),
             loadouts: resolvePlayerLoadouts(catalog),

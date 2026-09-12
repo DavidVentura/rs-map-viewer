@@ -13,6 +13,24 @@ export function buildSpotAnimModel(
     if (!modelData) {
         return undefined;
     }
+
+    if (spotAnim.recolorFrom) {
+        const retexture =
+            spotAnim.cacheInfo.game === "runescape" && spotAnim.cacheInfo.revision <= 464;
+        for (let i = 0; i < spotAnim.recolorFrom.length; i++) {
+            modelData.recolor(spotAnim.recolorFrom[i], spotAnim.recolorTo[i]);
+            if (retexture) {
+                modelData.retexture(spotAnim.recolorFrom[i], spotAnim.recolorTo[i]);
+            }
+        }
+    }
+
+    if (spotAnim.retextureFrom) {
+        for (let i = 0; i < spotAnim.retextureFrom.length; i++) {
+            modelData.retexture(spotAnim.retextureFrom[i], spotAnim.retextureTo[i]);
+        }
+    }
+
     const model = ModelData.merge([modelData], 1).light(
         textureLoader,
         spotAnim.ambient + 64,

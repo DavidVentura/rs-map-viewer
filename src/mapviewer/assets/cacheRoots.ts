@@ -11,6 +11,7 @@ import {
     WORLD_OBJECT_BAKES,
     actorAssets,
 } from "./ActorAssets";
+import { HUD_SPRITE_GROUP_IDS } from "./HudAssets";
 
 type RootIds = {
     readonly npcTypeIds: readonly number[];
@@ -18,6 +19,7 @@ type RootIds = {
     readonly locTypeIds: readonly number[];
     readonly seqIds: readonly number[];
     readonly spotAnimIds: readonly number[];
+    readonly spriteIds: readonly number[];
 };
 
 const NO_ROOTS: RootIds = {
@@ -26,6 +28,7 @@ const NO_ROOTS: RootIds = {
     locTypeIds: [],
     seqIds: [],
     spotAnimIds: [],
+    spriteIds: [],
 };
 
 function mergeRoots(parts: readonly RootIds[]): RootIds {
@@ -35,7 +38,13 @@ function mergeRoots(parts: readonly RootIds[]): RootIds {
         locTypeIds: parts.flatMap((part) => part.locTypeIds),
         seqIds: parts.flatMap((part) => part.seqIds),
         spotAnimIds: parts.flatMap((part) => part.spotAnimIds),
+        spriteIds: parts.flatMap((part) => part.spriteIds),
     };
+}
+
+// Every sprite id the HUD reads by id (see assets/HudAssets.ts), needed regardless of encounter.
+function hudRoots(): RootIds {
+    return { ...NO_ROOTS, spriteIds: HUD_SPRITE_GROUP_IDS };
 }
 
 function worldObjectRoots(kind: WorldObjectKind): RootIds {
@@ -88,7 +97,7 @@ function actorRoots(assets: ActorAssets): RootIds {
         previewRoots(assets.preview),
         ...Object.values<ProjectileBake>(assets.projectiles).map(projectileRoots),
         ...Object.values<SpotAnimBake>(assets.effects).map(spotAnimRoots),
-        { ...NO_ROOTS, objTypeIds: assets.groundItemIds },
+        { ...NO_ROOTS, objTypeIds: assets.groundItemDrops.map((drop) => drop.itemId) },
         ...assets.worldObjectKinds.map(worldObjectRoots),
     ]);
 }
@@ -108,7 +117,7 @@ export function cacheRoots(
 ): CacheRoots {
     return canonicalCacheRoots({
         mapSquares: encounter.mapSquares,
-        ...actorRoots(actorAssets(encounter, preview)),
+        ...mergeRoots([actorRoots(actorAssets(encounter, preview)), hudRoots()]),
     });
 }
 

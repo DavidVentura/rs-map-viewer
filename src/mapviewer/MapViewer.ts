@@ -1,5 +1,6 @@
 import { vec3 } from "gl-matrix";
 
+import { IndexType } from "../rs/cache/IndexType";
 import { LoadedCache } from "../rs/cache/LoadedCache";
 import { CacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
 import { BasTypeLoader } from "../rs/config/bastype/BasTypeLoader";
@@ -23,6 +24,7 @@ import { createViewerLoaders } from "./ViewerLoaders";
 import { actorAssets } from "./assets/ActorAssets";
 import { declaredSeqIds } from "./assets/cacheRoots";
 import { resolveEncounterAnimations } from "./assets/encounterAnimations";
+import { HudAssets, loadHudAssets } from "./assets/HudAssets";
 import { AudioFeedback } from "./audio/AudioFeedback";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
@@ -54,6 +56,7 @@ export class MapViewer {
     seqFrameLoader!: SeqFrameLoader;
     seqCatalog!: SeqCatalog;
     encounterAnimations!: EncounterAnimations;
+    hudAssets!: HudAssets;
 
     locTypeLoader!: LocTypeLoader;
     objTypeLoader!: ObjTypeLoader;
@@ -171,6 +174,7 @@ export class MapViewer {
             assets,
             this.seqCatalog,
         );
+        this.hudAssets = loadHudAssets(cache.system.getIndex(IndexType.DAT2.sprites));
 
         this.initWorld();
         this.renderer.initCache();

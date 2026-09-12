@@ -17,6 +17,7 @@ import {
     worldObjectVariant,
 } from "./Interaction";
 import { createPhaseId } from "./Phase";
+import { directionToRotation } from "./projectileMath";
 
 describe("world objects", () => {
     it("faces its approach tile, and the approach pose faces back at it", () => {
@@ -30,13 +31,14 @@ describe("world objects", () => {
         expect(worldObjectRotationUnits(lever)).toBe(512);
         const approach = worldObjectApproachPose(lever);
         expect(approach.position).toEqual({ x: 128, y: 0, level: 0 });
-        expect(approach.facingRadians).toBeCloseTo((1536 / 2048) * Math.PI * 2);
+        // The approach tile is east of the lever, so the player faces west, toward it.
+        expect(approach.facingRotation).toBe(directionToRotation(-1, 0));
     });
 
     it("derives every orientation's approach tile consistently", () => {
         const positions = ([0, 1, 2, 3] as const).map((orientation) => {
             const object = createWorldObject(
-                createWorldObjectId(orientation),
+                createWorldObjectId(orientation + 1),
                 WorldObjectKind.CHEST,
                 createWorldPosition(1000, 1000, 0),
                 orientation,

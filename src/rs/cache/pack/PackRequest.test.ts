@@ -11,6 +11,7 @@ const ROOTS = canonicalCacheRoots({
     locTypeIds: [],
     seqIds: [426],
     spotAnimIds: [],
+    spriteIds: [],
 });
 
 describe("canonicalPackRequest", () => {
@@ -54,6 +55,7 @@ describe("parsePackRequest", () => {
             locTypeIds: [],
             seqIds: [426],
             spotAnimIds: [],
+            spriteIds: [],
         },
         npcSpawnSquares: [],
         objSpawnSquares: [

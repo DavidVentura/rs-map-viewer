@@ -1,7 +1,7 @@
 import { CastItemOverride, WeaponStyle } from "./Ability";
 import { AppearanceSlot, ItemWearInfo, itemWearInfo, resolveAppearance } from "./Appearance";
 import {
-    ABYSSAL_WHIP_ITEM_ID,
+    DRAGON_2H_SWORD_ITEM_ID,
     DRAGON_SCIMITAR_ITEM_ID,
     RUNE_SCIMITAR_ITEM_ID,
     SCYTHE_OF_VITUR_ITEM_ID,
@@ -101,7 +101,7 @@ function sameSlotWearInfo(
 
 // bow: shortbow -> magic shortbow -> Bow of Faerdhinen -> twisted bow.
 // arrows: bronze -> iron -> steel -> mithril -> adamant -> rune.
-// scimitar: rune -> dragon -> abyssal whip -> scythe of vitur.
+// scimitar: rune -> dragon -> dragon 2h sword -> scythe of vitur.
 // defender: bronze -> iron -> steel -> mithril -> adamant -> dragon (black/rune skipped to keep
 // a 6-tier ladder like every other path; dragon kept as the flashier top tier over rune).
 // staff: staff -> warped sceptre -> trident of the swamp -> Tumeken's shadow.
@@ -147,7 +147,8 @@ export const EQUIPMENT_PATHS: Readonly<Record<EquipmentPath, EquipmentPathDef>> 
         wearInfo: [
             itemWearInfo(RUNE_SCIMITAR_ITEM_ID, AppearanceSlot.WEAPON, -1, -1),
             itemWearInfo(DRAGON_SCIMITAR_ITEM_ID, AppearanceSlot.WEAPON, -1, -1),
-            itemWearInfo(ABYSSAL_WHIP_ITEM_ID, AppearanceSlot.WEAPON, -1, -1),
+            // Two-handed, like every other 2h weapon in this project: hides the shield slot.
+            itemWearInfo(DRAGON_2H_SWORD_ITEM_ID, AppearanceSlot.WEAPON, AppearanceSlot.SHIELD, -1),
             itemWearInfo(SCYTHE_OF_VITUR_ITEM_ID, AppearanceSlot.WEAPON, AppearanceSlot.SHIELD, -1),
         ],
     },
@@ -188,7 +189,7 @@ export const EQUIPMENT_PATHS: Readonly<Record<EquipmentPath, EquipmentPathDef>> 
         wearInfo: sameSlotWearInfo([1478, 1731, 1704, 6585, 19553, 29801], AppearanceSlot.AMULET),
     },
     // Starting armour, permanently worn while its style is active (see armourPathsForStyle). Single
-    // tier: never upgraded, never dropped (allDroppableItemIds only lists tiers above 0).
+    // tier: never upgraded, never dropped (allDroppableItemDrops only lists tiers above 0).
     [EquipmentPath.MELEE_HELM]: {
         path: EquipmentPath.MELEE_HELM,
         slot: EquipmentSlot.HEAD,
@@ -267,25 +268,6 @@ export const EQUIPMENT_PATHS: Readonly<Record<EquipmentPath, EquipmentPathDef>> 
 };
 
 export const ALL_EQUIPMENT_PATHS: readonly EquipmentPath[] = Object.values(EquipmentPath);
-
-// Short human-readable path names for the ground item floor label (see hud/hudDraw.drawGroundItemLabel).
-export const EQUIPMENT_PATH_LABELS: Readonly<Record<EquipmentPath, string>> = {
-    [EquipmentPath.BOW]: "Bow",
-    [EquipmentPath.ARROWS]: "Arrows",
-    [EquipmentPath.SCIMITAR]: "Scimitar",
-    [EquipmentPath.DEFENDER]: "Defender",
-    [EquipmentPath.STAFF]: "Staff",
-    [EquipmentPath.OFFHAND]: "Offhand",
-    [EquipmentPath.AMULET]: "Amulet",
-    [EquipmentPath.MELEE_HELM]: "Helm",
-    [EquipmentPath.MELEE_BODY]: "Body",
-    [EquipmentPath.MELEE_LEGS]: "Legs",
-    [EquipmentPath.RANGED_BODY]: "Body",
-    [EquipmentPath.RANGED_LEGS]: "Legs",
-    [EquipmentPath.MAGIC_HELM]: "Hat",
-    [EquipmentPath.MAGIC_BODY]: "Robe top",
-    [EquipmentPath.MAGIC_LEGS]: "Robe bottom",
-};
 
 export type EquipmentState = Readonly<Record<EquipmentPath, number>>;
 
@@ -634,15 +616,35 @@ export function parseGearOverride(searchParams: URLSearchParams): readonly Equip
     });
 }
 
+// How many of a path's item its ground model should visually stack, purely presentational (see
+// ObjModelLoader.getModel's count param, which picks a path's ObjType countObj/countCo pile model
+// for a large enough count) - a drop always grants exactly one tier of the path regardless of how
+// many the ground model appears to show. Only ammo piles into a big stack, as OSRS does past 100
+// arrows; every other path always shows as a single item. The count is deliberately far past any
+// real countCo threshold so it always resolves to a path's largest stack model, whatever the
+// cache's own thresholds happen to be.
+const GROUND_ITEM_AMMO_STACK_DISPLAY_COUNT = 1_000_000;
+
+export function groundItemDisplayCount(path: EquipmentPath): number {
+    return path === EquipmentPath.ARROWS ? GROUND_ITEM_AMMO_STACK_DISPLAY_COUNT : 1;
+}
+
+export type DroppableItemDisplay = {
+    readonly itemId: number;
+    readonly displayCount: number;
+};
+
 // Every item id that can ever appear as a ground drop (every tier above tier 0, since tier 0 is
-// always already worn and equipAtTier never drops below the player's current tier).
-export function allDroppableItemIds(): readonly number[] {
-    const ids: number[] = [];
+// always already worn and equipAtTier never drops below the player's current tier), paired with
+// how many of it the ground model should show (see groundItemDisplayCount).
+export function allDroppableItemDrops(): readonly DroppableItemDisplay[] {
+    const drops: DroppableItemDisplay[] = [];
     for (const path of ALL_EQUIPMENT_PATHS) {
         const { itemIds } = EQUIPMENT_PATHS[path];
+        const displayCount = groundItemDisplayCount(path);
         for (let tier = 1; tier < itemIds.length; tier++) {
-            ids.push(itemIds[tier]);
+            drops.push({ itemId: itemIds[tier], displayCount });
         }
     }
-    return ids;
+    return drops;
 }

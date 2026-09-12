@@ -46,6 +46,7 @@ function request(
             locTypeIds: [],
             seqIds: [],
             spotAnimIds: [],
+            spriteIds: [],
         }),
         npcSpawnSquares: [],
         objSpawnSquares: spawns === "OBJ_SPAWNS" ? [SQUARE] : [],

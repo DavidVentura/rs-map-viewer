@@ -16,6 +16,7 @@ import { Affects, PayloadKind, damagePayload } from "./Effect";
 import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
+import { EquipmentPath } from "./Equipment";
 import {
     DropTier,
     EnemyBehaviour,
@@ -48,6 +49,7 @@ import { VisualEffectKind } from "./VisualEffect";
 import {
     BOW_SHOT,
     CLEAVE,
+    DRAGON_2H_SWORD_SLASH,
     GOBLIN_MELEE,
     HEALING_POTION,
     ICE_BARRAGE,
@@ -117,6 +119,34 @@ function makeEnemyType(
             walkSpeed: 288 * 1.6,
             behaviour: EnemyBehaviour.RUSHER,
             abilities,
+            dropTier: DropTier.NONE,
+        },
+        seqCatalog,
+    );
+}
+
+// A RUSHER never closing the gap itself, so a test isolates the player's own chase-to-reach
+// movement instead of measuring two combatants converging on each other.
+function makeStationaryEnemyType(
+    idleSeqId: number,
+    walkSeqId: number,
+    deathSeqId: number,
+): ResolvedEnemyType {
+    return resolveEnemyType(
+        {
+            id: EnemyTypeId.GOBLIN,
+            npcTypeId: 0,
+            idleSeqId,
+            walkSeqId,
+            deathSeqId,
+            attackSeqId: -1,
+            hitRadius: 64,
+            projectileLaunchHeight: 40,
+            maxHealth: 20,
+            experienceReward: createExperience(0),
+            walkSpeed: 0,
+            behaviour: EnemyBehaviour.RUSHER,
+            abilities: [GOBLIN_MELEE],
             dropTier: DropTier.NONE,
         },
         seqCatalog,
@@ -343,7 +373,7 @@ describe("Melee style", () => {
 
         advanceSeconds(world, holdBasicAttack(at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
 
-        expect(enemy.health).toBe(enemy.maxHealth - minDamage(SCIMITAR_SLASH) * 2);
+        expect(enemy.health).toBe(enemy.maxHealth - minDamage(SCIMITAR_SLASH));
     });
 
     it("Cleave hits an enemy in front of the player for double the basic slash damage", () => {
@@ -371,6 +401,54 @@ describe("Melee style", () => {
         advanceSeconds(world, holdSkill(0, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth);
+    });
+});
+
+describe("Melee cone basic attack", () => {
+    const DRAGON_2H_SWORD_TIER = 2;
+
+    it("chases to the cone delivery's own reach rather than one fixed melee tile", () => {
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
+        world.spawnEnemy(0, 1000, 0, makeStationaryEnemyType(1, 2, 3));
+        const player = world.player!;
+        player.style = WeaponStyle.MELEE;
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, DRAGON_2H_SWORD_TIER);
+        const enemy = world.enemies[0];
+        const delivery = DRAGON_2H_SWORD_SLASH.effect.delivery;
+        if (delivery.kind !== DeliveryKind.CONE) {
+            throw new Error("expected a CONE delivery");
+        }
+        const reach = delivery.reach + player.hitRadius + enemy.hitRadius;
+
+        advanceSeconds(world, holdBasicAttack(at(enemy)), 3);
+
+        const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        expect(distance).toBeLessThanOrEqual(reach);
+        expect(distance).toBeGreaterThan(reach - 20);
+    });
+
+    it("hits every enemy inside the swung arc and none outside it", () => {
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
+        const player = world.player!;
+        player.style = WeaponStyle.MELEE;
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, DRAGON_2H_SWORD_TIER);
+
+        world.spawnEnemy(0, 200, 0, makeStationaryEnemyType(1, 2, 3)); // aimed, dead ahead
+        world.spawnEnemy(50, 150, 0, makeStationaryEnemyType(1, 2, 3)); // ahead, inside the arc
+        world.spawnEnemy(250, 0, 0, makeStationaryEnemyType(1, 2, 3)); // beside, outside the arc
+        world.spawnEnemy(0, -200, 0, makeStationaryEnemyType(1, 2, 3)); // behind the player
+        world.spawnEnemy(0, 500, 0, makeStationaryEnemyType(1, 2, 3)); // dead ahead, beyond reach
+        const [aimed, insideArc, outsideArc, behind, beyondReach] = world.enemies;
+
+        advanceSeconds(world, holdBasicAttack(at(aimed)), impactOf(DRAGON_2H_SWORD_SLASH) + 0.05);
+
+        expect(aimed.health).toBeLessThan(aimed.maxHealth);
+        expect(insideArc.health).toBeLessThan(insideArc.maxHealth);
+        expect(outsideArc.health).toBe(outsideArc.maxHealth);
+        expect(behind.health).toBe(behind.maxHealth);
+        expect(beyondReach.health).toBe(beyondReach.maxHealth);
     });
 });
 
@@ -493,6 +571,26 @@ describe("Maul Smash ground dust", () => {
         expect(world.visualEffects[0].kind).toBe(CLEAVE.effect.casterEffect!.kind);
         expect(world.visualEffects[0].x).toBe(world.player!.x);
         expect(world.visualEffects[0].y).toBe(world.player!.y);
+    });
+
+    it("Cleave's weapon trail starts with the cast, not at impact, and plays at castSpeed", () => {
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
+        world.player!.style = WeaponStyle.MELEE;
+
+        advanceSeconds(world, holdSkill(0, point(0, 200)), 0.02);
+        expect(world.visualEffects.length).toBe(1);
+        expect(world.visualEffects[0].kind).toBe(CLEAVE.effect.casterEffect!.kind);
+        expect(impactOf(CLEAVE)).toBeGreaterThan(0.02);
+
+        // Natural sequence speed (castSpeed 1) would still be mid-animation at animationSeconds;
+        // it only finishes there if the effect is advancing at CLEAVE's own castSpeed.
+        const animationSeconds = resolve(CLEAVE).timing.animationSeconds;
+        advanceSeconds(world, idleInput(), animationSeconds - 0.02 - 0.1);
+        expect(world.visualEffects.length).toBe(1);
+
+        advanceSeconds(world, idleInput(), 0.2);
+        expect(world.visualEffects.length).toBe(0);
     });
 });
 

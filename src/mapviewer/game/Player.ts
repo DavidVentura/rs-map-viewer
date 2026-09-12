@@ -47,24 +47,18 @@ export type PlayerInput = {
     running: boolean;
 };
 
-export type StanceSeqIds = {
-    readonly idleSeqId: number;
-    readonly walkSeqId: number;
-    readonly runSeqId: number;
-    readonly attackSeqId: number;
-};
-
-export type StanceSeqIdsByStance = Record<WeaponStyle, StanceSeqIds>;
-
 export type StanceSeqs = {
     readonly idle: SeqTiming;
     readonly walk: SeqTiming;
     readonly run: SeqTiming;
 };
 
-// Everything the player plays, resolved once when the encounter loads.
+// Everything the player plays, resolved once when the encounter loads. Each style's stances are
+// indexed by weapon tier (see WEAPON_LADDERS/resolveWeaponStance), the same way loadouts'
+// basicAttackByTier is - a weapon tier with no stance of its own resolves to the style's default,
+// so every tier is always present.
 export type PlayerAnimations = {
-    readonly stances: Readonly<Record<WeaponStyle, StanceSeqs>>;
+    readonly stances: Readonly<Record<WeaponStyle, readonly StanceSeqs[]>>;
     readonly death: SeqTiming;
     readonly loadouts: PlayerLoadoutsByStyle<ResolvedAbility>;
 };
@@ -140,8 +134,12 @@ export class Player implements Combatant, ManaPool {
         this.animation = new AnimationState(this.activeStance.idle);
     }
 
+    // The stance for the currently-equipped tier of the active style's weapon (see
+    // PlayerAnimations.stances) - a plain field read, not a cast, so switching either the style or
+    // the equipped tier picks a different pose the next time it's read (see update()).
     private get activeStance(): StanceSeqs {
-        return this.animations.stances[this.style];
+        const tier = this.equipment[weaponPathForStyle(this.style)];
+        return this.animations.stances[this.style][tier];
     }
 
     private get combinedModifiers(): AbilityModifiers {

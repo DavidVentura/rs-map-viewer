@@ -12,7 +12,14 @@
 #define FOG_CORNER_ROUNDING 8.0
 
 #define INTERACT_TYPE_LOC 1u
+#define INTERACT_TYPE_OBJ 2u
 #define INTERACT_TYPE_ENEMY 4u
+
+// Ground items pulse at a gentle, per-item-desynced rate so a pile of drops doesn't flash in
+// lockstep - see the v_highlight ambient glow below.
+#define GROUND_ITEM_GLOW_SPEED 2.0
+#define GROUND_ITEM_GLOW_BASE 0.15
+#define GROUND_ITEM_GLOW_AMPLITUDE 0.15
 
 precision highp float;
 
@@ -26,6 +33,7 @@ uniform float u_timeLoaded;
 
 uniform int u_highlightId;
 uniform int u_highlightLocId;
+uniform int u_highlightItemId;
 
 uniform highp usampler2D u_actorDataTexture;
 
@@ -137,14 +145,26 @@ void main() {
     vertex.color.a = skinAlpha(vertex.color.a, actorInfo.alphaOffset);
     v_color = vertex.color;
 
-    v_highlight = float(
+    bool isHoveredActor =
         (u_highlightId != 0 &&
             actorInfo.interactType == INTERACT_TYPE_ENEMY &&
             int(actorInfo.interactId) == u_highlightId) ||
         (u_highlightLocId != 0 &&
             actorInfo.interactType == INTERACT_TYPE_LOC &&
-            int(actorInfo.interactId) == u_highlightLocId)
-    );
+            int(actorInfo.interactId) == u_highlightLocId) ||
+        (u_highlightItemId != 0 &&
+            actorInfo.interactType == INTERACT_TYPE_OBJ &&
+            int(actorInfo.interactId) == u_highlightItemId);
+
+    // A subtle constant glow on every ground item so loot reads against a dark floor, desynced per
+    // item via a cheap hash of its world position so a cluster of drops doesn't pulse in lockstep.
+    float itemGlowPhase = fract(sin(dot(actorInfo.worldPos, vec2(12.9898, 78.233))) * 43758.5453);
+    float itemGlow = when_eq(float(actorInfo.interactType), float(INTERACT_TYPE_OBJ)) *
+        (GROUND_ITEM_GLOW_BASE +
+            GROUND_ITEM_GLOW_AMPLITUDE *
+                sin(u_currentTime * GROUND_ITEM_GLOW_SPEED + itemGlowPhase * TAU));
+
+    v_highlight = max(float(isHoveredActor), itemGlow);
 
     vec4 localPos = vec4(vertex.pos, 1.0)
         * rotationX(float(actorInfo.pitch) * RS_TO_RADIANS)

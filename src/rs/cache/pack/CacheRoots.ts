@@ -13,6 +13,7 @@ export type CacheRoots = {
     readonly locTypeIds: readonly number[];
     readonly seqIds: readonly number[];
     readonly spotAnimIds: readonly number[];
+    readonly spriteIds: readonly number[];
     readonly [canonicalBrand]: true;
 };
 
@@ -23,6 +24,7 @@ export type CacheRootIds = {
     readonly locTypeIds: Iterable<number>;
     readonly seqIds: Iterable<number>;
     readonly spotAnimIds: Iterable<number>;
+    readonly spriteIds: Iterable<number>;
 };
 
 // Map archive ids pack a square's coordinates into a byte each.
@@ -70,6 +72,7 @@ export function canonicalCacheRoots(ids: CacheRootIds): CacheRoots {
         locTypeIds: canonicalIds("loc type", ids.locTypeIds),
         seqIds: canonicalIds("seq", ids.seqIds),
         spotAnimIds: canonicalIds("spot anim", ids.spotAnimIds),
+        spriteIds: canonicalIds("sprite", ids.spriteIds),
     } as CacheRoots;
 }
 
@@ -84,6 +87,7 @@ const ROOT_FIELDS: readonly string[] = [
     "locTypeIds",
     "seqIds",
     "spotAnimIds",
+    "spriteIds",
 ];
 
 function parseIdList(field: string, value: unknown): Parsed<number[]> {
@@ -140,6 +144,10 @@ export function parseCacheRoots(json: unknown): ParsedCacheRoots {
     if (spotAnimIds.kind === "INVALID") {
         return spotAnimIds;
     }
+    const spriteIds = parseIdList("spriteIds", json.spriteIds);
+    if (spriteIds.kind === "INVALID") {
+        return spriteIds;
+    }
     return {
         kind: "ROOTS",
         roots: canonicalCacheRoots({
@@ -149,6 +157,7 @@ export function parseCacheRoots(json: unknown): ParsedCacheRoots {
             locTypeIds: locTypeIds.value,
             seqIds: seqIds.value,
             spotAnimIds: spotAnimIds.value,
+            spriteIds: spriteIds.value,
         }),
     };
 }

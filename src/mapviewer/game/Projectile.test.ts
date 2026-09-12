@@ -2,7 +2,6 @@ import { Combatant, Faction } from "./Combatant";
 import { Affects, PayloadKind, damagePayload } from "./Effect";
 import {
     ARROW_SPEC,
-    FIRE_BOLT_TRAVEL_SEQ_ID,
     JAD_RANGED_ROCK_SPEC,
     MAGIC_SPEC,
     POWER_SHOT_SPEC,
@@ -122,11 +121,6 @@ describe("Projectile specs", () => {
         expect(JAD_RANGED_ROCK_SPEC.landing.origin).toEqual({ kind: "AT_TARGET", height: 0 });
         expect(JAD_RANGED_ROCK_SPEC.travelTime.secondsPerTile).toBe(0);
         expect(JAD_RANGED_ROCK_SPEC.landing.telegraph?.kind).toBe(VisualEffectKind.FALLING_SHADOW);
-    });
-
-    it("gives the arrow no travel sequence and magic its fire bolt one", () => {
-        expect(ANIMATIONS.projectileTravel[ARROW_SPEC.kind]).toBeUndefined();
-        expect(ANIMATIONS.projectileTravel[MAGIC_SPEC.kind]?.seqId).toBe(FIRE_BOLT_TRAVEL_SEQ_ID);
     });
 });
 

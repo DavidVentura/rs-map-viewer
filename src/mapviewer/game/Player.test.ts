@@ -17,6 +17,7 @@ import {
     HEALING_POTION,
     HEALING_POTION_CAST_SEQ_ID,
     MAGIC_BOLT,
+    MELEE_WEAPON_LADDER,
     SCIMITAR_SLASH,
 } from "./abilities";
 import { stubEncounterAnimations, stubSeqCatalog } from "./testLoaders";
@@ -82,7 +83,7 @@ describe("Player loadout", () => {
         expect(player.basicAttack.id).toBe("dragon_scimitar_slash");
 
         player.equipItemUpgrade(EquipmentPath.SCIMITAR, 2);
-        expect(player.basicAttack.id).toBe("whip_slash");
+        expect(player.basicAttack.id).toBe("dragon_2h_sword_slash");
 
         player.equipItemUpgrade(EquipmentPath.SCIMITAR, 3);
         expect(player.basicAttack.id).toBe("scythe_sweep");
@@ -107,6 +108,66 @@ describe("Player animations follow the equipped style", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MAGIC;
         expect(playedSeqIds(player)).toEqual([813, 1146, 1210]);
+    });
+});
+
+describe("Player animations follow the equipped weapon tier", () => {
+    function playedSeqIds(player: Player): readonly number[] {
+        player.update({ x: 0, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        const idle = player.animation.seqId;
+        player.update({ x: 1, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        const walk = player.animation.seqId;
+        player.update({ x: 1, y: 0, running: true }, 0.01, 0, OPEN_TERRAIN);
+        return [idle, walk, player.animation.seqId];
+    }
+
+    it("keeps the style's default stance for a weapon tier with no stance of its own", () => {
+        const player = makePlayer();
+        player.style = WeaponStyle.MELEE;
+        const runeScimitarStance = playedSeqIds(player);
+
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 1);
+        expect(playedSeqIds(player)).toEqual(runeScimitarStance);
+    });
+
+    it("plays a weapon tier's own idle/walk/run once it declares one, and switches again as the tier keeps changing", () => {
+        const player = makePlayer();
+        player.style = WeaponStyle.MELEE;
+        const defaultStance = playedSeqIds(player);
+
+        const twoHandedStance = MELEE_WEAPON_LADDER[2].stance;
+        if (!twoHandedStance) {
+            throw new Error("Expected the dragon 2h sword tier to declare its own stance");
+        }
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 2);
+        expect(playedSeqIds(player)).toEqual([
+            twoHandedStance.idleSeqId,
+            twoHandedStance.walkSeqId,
+            twoHandedStance.runSeqId,
+        ]);
+        expect(playedSeqIds(player)).not.toEqual(defaultStance);
+
+        const scytheStance = MELEE_WEAPON_LADDER[3].stance;
+        if (!scytheStance || scytheStance.idleSeqId === undefined) {
+            throw new Error("Expected the scythe of vitur tier to declare its own idle");
+        }
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 3);
+        const [scytheIdle] = playedSeqIds(player);
+        expect(scytheIdle).toBe(scytheStance.idleSeqId);
+        expect(scytheIdle).not.toBe(twoHandedStance.idleSeqId);
+    });
+
+    it("only overrides the idle/walk/run a tier actually declares, defaulting the rest to the style", () => {
+        const player = makePlayer();
+        player.style = WeaponStyle.MELEE;
+        const [, defaultWalk, defaultRun] = playedSeqIds(player);
+
+        // The scythe of vitur declares only its own idle (see WEAPON_LADDERS), so it keeps melee's
+        // default walk/run.
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 3);
+        const [, scytheWalk, scytheRun] = playedSeqIds(player);
+        expect(scytheWalk).toBe(defaultWalk);
+        expect(scytheRun).toBe(defaultRun);
     });
 });
 

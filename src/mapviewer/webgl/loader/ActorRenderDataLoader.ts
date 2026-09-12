@@ -20,6 +20,7 @@ import {
 import { WeaponStyle } from "../../game/Ability";
 import { getEncounter } from "../../game/Encounter";
 import { EnemyTypeId } from "../../game/EnemyType";
+import { DroppableItemDisplay } from "../../game/Equipment";
 import { WorldObjectKind } from "../../game/Interaction";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
@@ -126,7 +127,6 @@ function createPlayerActorData(
         itemEntries.map(([itemId], index) => [itemId, itemMeshes[index]]),
     );
     return {
-        stanceSeqIds: assets.stanceSeqIds,
         bodyMeshesByStyle,
         bodyAnimationsBySeqId: rig.animationsBySeqId,
         itemsByItemId,
@@ -134,15 +134,17 @@ function createPlayerActorData(
 }
 
 // Bakes every OSRS item that can ever appear as a ground drop as a single static ground-lying
-// frame, the same way ProjectileBaker bakes the arrow model.
+// frame, the same way ProjectileBaker bakes the arrow model. Ammo bakes at its stack display count
+// (see Equipment.groundItemDisplayCount) so it resolves to the path's pile model (ObjType.getModel
+// picks the model for the count) instead of a lone single-item model.
 function createGroundItemActorData(
     state: WorkerState,
     skinning: Skinning,
-    groundItemIds: readonly number[],
+    groundItemDrops: readonly DroppableItemDisplay[],
 ): GroundItemActorData {
     const animationsByItemId = new Map<number, SkinAnimation>();
-    for (const itemId of groundItemIds) {
-        const model = state.objModelLoader.getModel(itemId, 1);
+    for (const { itemId, displayCount } of groundItemDrops) {
+        const model = state.objModelLoader.getModel(itemId, displayCount);
         if (!model) {
             throw new Error(`Ground item model is missing from the cache for item ${itemId}`);
         }
@@ -437,7 +439,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 : undefined;
 
         const projectiles = createProjectileActorData(state, skinning, assets);
-        const groundItems = createGroundItemActorData(state, skinning, assets.groundItemIds);
+        const groundItems = createGroundItemActorData(state, skinning, assets.groundItemDrops);
         const worldObjects = createWorldObjectActorData(state, skinning, assets.worldObjectKinds);
 
         const { geometry: skinned, usedTextureIds } = skinning.build();

@@ -9,12 +9,14 @@ describe("canonicalCacheRoots", () => {
             locTypeIds: [375, 378, 375],
             seqIds: [2659, 426, 2659],
             spotAnimIds: [451, 449, 450, 449],
+            spriteIds: [299, 33, 299],
         });
         expect(roots.npcTypeIds).toEqual([2189, 3127]);
         expect(roots.objTypeIds).toEqual([1, 882, 21003]);
         expect(roots.locTypeIds).toEqual([375, 378]);
         expect(roots.seqIds).toEqual([426, 2659]);
         expect(roots.spotAnimIds).toEqual([449, 450, 451]);
+        expect(roots.spriteIds).toEqual([33, 299]);
     });
 
     it("orders map squares by x then y and drops repeats", () => {
@@ -30,6 +32,7 @@ describe("canonicalCacheRoots", () => {
             locTypeIds: [],
             seqIds: [],
             spotAnimIds: [],
+            spriteIds: [],
         });
         expect(roots.mapSquares).toEqual([
             { mapX: 37, mapY: 78 },
@@ -49,6 +52,7 @@ describe("canonicalCacheRoots", () => {
             locTypeIds: [6],
             seqIds: [9, 8, 9],
             spotAnimIds: [7],
+            spriteIds: [10],
         });
         const b = canonicalCacheRoots({
             mapSquares: [
@@ -61,6 +65,7 @@ describe("canonicalCacheRoots", () => {
             locTypeIds: [6, 6],
             seqIds: [8, 9],
             spotAnimIds: [7, 7],
+            spriteIds: [10, 10],
         });
         expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     });
@@ -74,6 +79,7 @@ describe("canonicalCacheRoots", () => {
                 locTypeIds: [],
                 seqIds: [id],
                 spotAnimIds: [],
+                spriteIds: [],
             }),
         ).toThrow();
     });
@@ -90,6 +96,7 @@ describe("parseCacheRoots", () => {
         locTypeIds: [375, 378],
         seqIds: [426],
         spotAnimIds: [451, 449],
+        spriteIds: [299],
     };
 
     it("parses roots in any order into their canonical form", () => {
@@ -116,6 +123,7 @@ describe("parseCacheRoots", () => {
         ["a negative id", { ...valid, objTypeIds: [-1] }, /Invalid objTypeIds cache root -1/],
         ["a negative loc id", { ...valid, locTypeIds: [-1] }, /Invalid locTypeIds cache root -1/],
         ["a fractional id", { ...valid, spotAnimIds: [1.5] }, /Invalid spotAnimIds/],
+        ["a negative sprite id", { ...valid, spriteIds: [-1] }, /Invalid spriteIds cache root -1/],
         ["a square that is not an object", { ...valid, mapSquares: [5] }, /Invalid map square 5/],
         [
             "a square with an extra field",

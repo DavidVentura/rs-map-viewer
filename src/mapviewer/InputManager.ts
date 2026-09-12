@@ -131,6 +131,12 @@ export class InputManager {
         return this.clickX !== -1 && this.clickY !== -1;
     }
 
+    // A right-click (or long-press/Menu-key contextmenu event) this frame, at (pickX, pickY) - see
+    // onContextMenu. Resets to -1/-1 every frame like isPressEvent()'s press coordinates.
+    isPickEvent(): boolean {
+        return this.pickX !== -1 && this.pickY !== -1;
+    }
+
     isPointerLock(): boolean {
         return document.pointerLockElement === this.element;
     }

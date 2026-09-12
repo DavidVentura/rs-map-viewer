@@ -2,6 +2,7 @@ import {
     AbilityDefinition,
     CastItemOverride,
     CircleCenter,
+    ConeAim,
     CooldownGroup,
     DeliveryKind,
     ProjectileDelivery,
@@ -42,7 +43,7 @@ export const HEALING_POTION_CAST_SEQ_ID = 829;
 // checked in).
 export const RUNE_SCIMITAR_ITEM_ID = 1333;
 export const DRAGON_SCIMITAR_ITEM_ID = 4587;
-export const ABYSSAL_WHIP_ITEM_ID = 4151;
+export const DRAGON_2H_SWORD_ITEM_ID = 7158;
 export const SCYTHE_OF_VITUR_ITEM_ID = 22325;
 export const STAFF_ITEM_ID = 1379;
 export const WARPED_SCEPTRE_ITEM_ID = 28585;
@@ -87,6 +88,10 @@ export const BOW_SHOT: AbilityDefinition = {
         delivery: singleShot(ARROW_SPEC),
         affects: Affects.HOSTILE,
         payloads: [damagePayload(ARROW_DAMAGE)],
+        // Every shortbow-family tier draws the same bow (magic shortbow/twisted bow inherit this
+        // effect below), so they all show the same generic bow release; Bow of Faerdhinen overrides
+        // it with its own crystal-arrow launch instead (see BOW_OF_FAERDHINEN_SHOT).
+        casterEffect: { kind: VisualEffectKind.ARROW_LAUNCH, height: 70 },
     },
 };
 
@@ -108,6 +113,7 @@ export const MAGIC_BOLT: AbilityDefinition = {
         affects: Affects.HOSTILE,
         payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
         hitEffect: { kind: VisualEffectKind.MAGIC_HIT, height: 124 },
+        casterEffect: { kind: VisualEffectKind.FIRE_BOLT_CAST, height: 100 },
     },
 };
 
@@ -139,17 +145,30 @@ export const DRAGON_SCIMITAR_SLASH: AbilityDefinition = {
     name: "Dragon Scimitar Slash",
 };
 
-export const WHIP_ATTACK_CAST_SEQ_ID = 1658;
+export const DRAGON_2H_SWORD_CAST_SEQ_ID = 7045;
 
-// The whip's own crack: contact at its longest hold (frame 8, 160ms raw), castSpeed picked so that
-// hold lands at the same wall-clock offset as the plain scimitar's own contact frame (359ms),
-// keeping the melee ladder's basic attack equally snappy regardless of the equipped tier.
-export const WHIP_SLASH: AbilityDefinition = {
-    id: "whip_slash",
-    name: "Abyssal Whip Attack",
-    castSeqId: WHIP_ATTACK_CAST_SEQ_ID,
-    contactFrame: 8,
-    castSpeed: 1.06,
+// The dragon 2h sword's own stance (RuneLite AnimationID DH_SWORD_UPDATE_READY/_WALK/_RUN): OSRS
+// rests a 2h weapon on the shoulder rather than holding it one-handed like the ladder's lower
+// tiers, which otherwise all share the style's default stance (see WEAPON_LADDERS).
+export const DRAGON_2H_SWORD_IDLE_SEQ_ID = 7053;
+export const DRAGON_2H_SWORD_WALK_SEQ_ID = 7052;
+export const DRAGON_2H_SWORD_RUN_SEQ_ID = 7043;
+
+// The current OSRS 2h slash (DH_SWORD_UPDATE_SLASH); the classic HUMAN_DHSWORD_SLASH (407) is the
+// alternative, kept here only as a note since this project targets the current animation set.
+// Uniform 40ms frames with no standout hold (unlike the scythe sweep below), so contact sits ~55%
+// through the swing (frame 10 of 19, the same rule of thumb used for TUMEKENS_SHADOW_BEAM/
+// SWAMP_TRIDENT_BOLT's own uniform frame data), and castSpeed is picked so that frame lands at the
+// same wall-clock offset as the plain scimitar's own contact frame (359ms), keeping the melee
+// ladder's basic attack equally snappy regardless of the equipped tier. A small, close arc rather
+// than a single target: the 2h sword starts the ladder's cleaving tiers, hitting whatever's in
+// front of the swing (see ConeAim.TRACKED_TARGET) instead of just one aimed enemy.
+export const DRAGON_2H_SWORD_SLASH: AbilityDefinition = {
+    id: "dragon_2h_sword_slash",
+    name: "Dragon 2h Sword Attack",
+    castSeqId: DRAGON_2H_SWORD_CAST_SEQ_ID,
+    contactFrame: 10,
+    castSpeed: 1.11,
     channelSeconds: 0,
     manaCost: 0,
     maxCharges: 1,
@@ -157,7 +176,13 @@ export const WHIP_SLASH: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
     effect: {
-        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        delivery: {
+            kind: DeliveryKind.CONE,
+            angleRadians: Math.PI / 2,
+            reach: 1.5 * 128,
+            casterHalfWidth: 0.5 * 128,
+            aim: ConeAim.TRACKED_TARGET,
+        },
         affects: Affects.HOSTILE,
         payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
     },
@@ -165,9 +190,14 @@ export const WHIP_SLASH: AbilityDefinition = {
 
 export const SCYTHE_ATTACK_CAST_SEQ_ID = 8056;
 
+// The scythe's own idle (RuneLite AnimationID SCYTHE_OF_VITUR_READY); RuneLite has no distinct
+// walk/run for it, so it keeps the melee style's default walk/run (see WEAPON_LADDERS).
+export const SCYTHE_OF_VITUR_IDLE_SEQ_ID = 8057;
+
 // Contact at the scythe's biggest single hold (frame 11, 220ms raw), the follow-through as the
-// blade completes its sweep; castSpeed picked the same way as the whip's, to land at the same
-// wall-clock offset as the plain scimitar's contact frame.
+// blade completes its sweep; castSpeed picked the same way as the 2h sword's, to land at the same
+// wall-clock offset as the plain scimitar's contact frame. A wide arc rather than a single target,
+// the ladder's widest reach, like the real scythe of vitur's own hit on every adjacent tile.
 export const SCYTHE_SWEEP: AbilityDefinition = {
     id: "scythe_sweep",
     name: "Scythe of Vitur Attack",
@@ -181,9 +211,18 @@ export const SCYTHE_SWEEP: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
     effect: {
-        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        delivery: {
+            kind: DeliveryKind.CONE,
+            angleRadians: (5 * Math.PI) / 6,
+            reach: 2 * 128,
+            casterHalfWidth: 128,
+            aim: ConeAim.TRACKED_TARGET,
+        },
         affects: Affects.HOSTILE,
         payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
+        // OSRS plays the dragon halberd special's own weapon-trail for the scythe's basic attack
+        // too, in its red livery rather than the crystal halberd's white (see CLEAVE).
+        casterEffect: { kind: VisualEffectKind.DRAGON_HALBERD_SPECIAL_RED, height: 100 },
     },
 };
 
@@ -199,7 +238,13 @@ export const BOW_OF_FAERDHINEN_SHOT: AbilityDefinition = {
     ...BOW_SHOT,
     id: "bow_of_faerdhinen_shot",
     name: "Bow of Faerdhinen Shot",
-    effect: { ...BOW_SHOT.effect, delivery: singleShot(CRYSTAL_ARROW_SPEC) },
+    effect: {
+        ...BOW_SHOT.effect,
+        delivery: singleShot(CRYSTAL_ARROW_SPEC),
+        // Its own crystal-arrow launch in place of the generic bow release the rest of the ladder
+        // inherits from BOW_SHOT.
+        casterEffect: { kind: VisualEffectKind.CRYSTAL_ARROW_LAUNCH, height: 70 },
+    },
 };
 export const TWISTED_BOW_SHOT: AbilityDefinition = {
     ...BOW_SHOT,
@@ -211,6 +256,9 @@ export const WARPED_SCEPTRE_ATTACK_CAST_SEQ_ID = 10501;
 
 // Contact at the cast's peak hold (frame 9), castSpeed picked so the whole sequence lands at the
 // same wall-clock offset as the plain staff's own impact (413ms) - see MAGIC_BOLT.
+// No casterEffect: its own cast graphic (SpotAnimType 2567, VFX_WARPED_SCEPTRE_CAST) plays a
+// skeletal sequence, which the spot anim baker doesn't pose (see webgl/loader/ActorRenderDataLoader
+// ProjectileBaker.bakeSpotAnim), so it can't be baked into an AnimatedSpotAnimBake here.
 export const WARPED_SCEPTRE_BOLT: AbilityDefinition = {
     id: "warped_sceptre_bolt",
     name: "Warped Sceptre Attack",
@@ -259,6 +307,7 @@ export const SWAMP_TRIDENT_BOLT: AbilityDefinition = {
             kind: VisualEffectKind.SWAMP_TRIDENT_IMPACT,
             height: 100,
         },
+        casterEffect: { kind: VisualEffectKind.SWAMP_TRIDENT_CAST, height: 100 },
     },
 };
 
@@ -287,7 +336,17 @@ export const TUMEKENS_SHADOW_BEAM: AbilityDefinition = {
             kind: VisualEffectKind.TUMEKENS_SHADOW_IMPACT,
             height: 100,
         },
+        casterEffect: { kind: VisualEffectKind.TUMEKENS_SHADOW_CAST, height: 50 },
     },
+};
+
+// A weapon tier's own idle/walk/run, overriding whichever of the style's default stance seqs it
+// replaces (see resolveWeaponStance) - e.g. the dragon 2h sword overrides all three to rest on the
+// shoulder, while the scythe of vitur only has its own idle and keeps melee's default walk/run.
+export type WeaponStance = {
+    readonly idleSeqId?: number;
+    readonly walkSeqId?: number;
+    readonly runSeqId?: number;
 };
 
 // One entry per weapon tier: the item shown in hand and that tier's own basic attack. Lengths must
@@ -296,13 +355,28 @@ export const TUMEKENS_SHADOW_BEAM: AbilityDefinition = {
 export type WeaponTier = {
     readonly itemId: number;
     readonly basicAttack: AbilityDefinition;
+    // undefined for a tier that plays the style's default stance unchanged (every ladder tier not
+    // named below - real OSRS reuses the same one-handed/bow/staff stance across those tiers).
+    readonly stance?: WeaponStance;
 };
 
 export const MELEE_WEAPON_LADDER: readonly WeaponTier[] = [
     { itemId: RUNE_SCIMITAR_ITEM_ID, basicAttack: SCIMITAR_SLASH },
     { itemId: DRAGON_SCIMITAR_ITEM_ID, basicAttack: DRAGON_SCIMITAR_SLASH },
-    { itemId: ABYSSAL_WHIP_ITEM_ID, basicAttack: WHIP_SLASH },
-    { itemId: SCYTHE_OF_VITUR_ITEM_ID, basicAttack: SCYTHE_SWEEP },
+    {
+        itemId: DRAGON_2H_SWORD_ITEM_ID,
+        basicAttack: DRAGON_2H_SWORD_SLASH,
+        stance: {
+            idleSeqId: DRAGON_2H_SWORD_IDLE_SEQ_ID,
+            walkSeqId: DRAGON_2H_SWORD_WALK_SEQ_ID,
+            runSeqId: DRAGON_2H_SWORD_RUN_SEQ_ID,
+        },
+    },
+    {
+        itemId: SCYTHE_OF_VITUR_ITEM_ID,
+        basicAttack: SCYTHE_SWEEP,
+        stance: { idleSeqId: SCYTHE_OF_VITUR_IDLE_SEQ_ID },
+    },
 ];
 
 export const RANGED_WEAPON_LADDER: readonly WeaponTier[] = [
@@ -325,6 +399,25 @@ export const WEAPON_LADDERS: Readonly<Record<WeaponStyle, readonly WeaponTier[]>
     [WeaponStyle.MAGIC]: MAGIC_WEAPON_LADDER,
 };
 
+// A tier's own idle/walk/run, falling back field-by-field to the style's default stance (baked in
+// ActorAssets' STANCE_SEQ_CONFIG) for whichever of the three a tier does not override.
+export type WeaponStanceSeqIds = {
+    readonly idleSeqId: number;
+    readonly walkSeqId: number;
+    readonly runSeqId: number;
+};
+
+export function resolveWeaponStance(
+    styleDefault: WeaponStanceSeqIds,
+    tier: WeaponTier,
+): WeaponStanceSeqIds {
+    return {
+        idleSeqId: tier.stance?.idleSeqId ?? styleDefault.idleSeqId,
+        walkSeqId: tier.stance?.walkSeqId ?? styleDefault.walkSeqId,
+        runSeqId: tier.stance?.runSeqId ?? styleDefault.runSeqId,
+    };
+}
+
 const SPECIAL_RECHARGE_SECONDS = 6;
 
 // Both melee specials hit for twice the basic slash.
@@ -338,6 +431,9 @@ const MELEE_SWEEP_DELIVERY = {
     angleRadians: (2 * Math.PI) / 3,
     reach: 3 * 128,
     casterHalfWidth: 1.5 * 128,
+    // Both specials aim at the ground point under the cursor, not whatever's hovered (see
+    // ConeAim.POINT / aimModeFor) - a wide swing read wrong snapped onto a hovered body.
+    aim: ConeAim.POINT,
 } as const;
 
 // The wide sweep's most-held frame reads as contact across the arc. Swaps the equipped weapon for

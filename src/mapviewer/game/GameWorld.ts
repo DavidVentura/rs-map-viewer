@@ -10,11 +10,12 @@ import {
     abilityTargetPoint,
     aimedCombatant,
     liveAbilityTarget,
+    trackedDeliveryReach,
 } from "./Ability";
 import { AnimationPlayback, SeqTiming, sequenceDurationSeconds } from "./Animation";
 import { CombatEvent, CombatEventKind } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import { HitEffect, Payload, PayloadKind, applyPayloads, hitEffectHoldSeconds } from "./Effect";
+import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { EncounterAnimations } from "./EncounterAnimations";
@@ -71,7 +72,7 @@ import {
     resetRangedHits,
 } from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
-import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
+import { VisualEffect, VisualEffectAnchor, casterEffectTiming } from "./VisualEffect";
 import {
     WaveDirectorState,
     WaveSpawn,
@@ -518,7 +519,7 @@ export class GameWorld {
         if (state.kind === "EXECUTING") {
             player.x = state.pose.position.x;
             player.y = state.pose.position.y;
-            player.rotation = this.interactionFacingRotation(state.pose.facingRadians);
+            player.rotation = state.pose.facingRotation;
             if (this.timeSeconds >= state.completesAtSeconds) {
                 const completed = completeInteraction(state, this.timeSeconds);
                 this.interactionState = completed.state;
@@ -538,7 +539,7 @@ export class GameWorld {
         if (distance <= speed * dtSeconds) {
             player.x = state.pose.position.x;
             player.y = state.pose.position.y;
-            player.rotation = this.interactionFacingRotation(state.pose.facingRadians);
+            player.rotation = state.pose.facingRotation;
             const seq = this.animations.interactionSeq(state.interaction.id);
             this.interactionState = beginExecution(
                 state,
@@ -556,10 +557,6 @@ export class GameWorld {
             this.terrain,
         );
         return true;
-    }
-
-    private interactionFacingRotation(facingRadians: number): number {
-        return Math.round((facingRadians / (Math.PI * 2)) * 2048) & 2047;
     }
 
     private dispatchWorldAction(action: WorldAction): void {
@@ -1006,13 +1003,14 @@ export class GameWorld {
             return undefined;
         }
         const attack = player.basicAttack;
-        if (attack.effect.delivery.kind !== DeliveryKind.TARGET) {
+        const deliveryReach = trackedDeliveryReach(attack.effect.delivery);
+        if (deliveryReach === undefined) {
             return undefined;
         }
         const deltaX = enemy.x - player.x;
         const deltaY = enemy.y - player.y;
         const distance = Math.hypot(deltaX, deltaY);
-        const reach = attack.effect.delivery.reach + player.hitRadius + enemy.hitRadius;
+        const reach = deliveryReach + player.hitRadius + enemy.hitRadius;
         if (distance <= reach) {
             return undefined;
         }
@@ -1052,22 +1050,6 @@ export class GameWorld {
         ) {
             return;
         }
-        if (player.style === WeaponStyle.MELEE) {
-            const payloads = basicAttack.effect.payloads.reduce<Payload[]>(
-                (result, payload) => [
-                    ...result,
-                    payload,
-                    ...(payload.kind === PayloadKind.DAMAGE ? [payload] : []),
-                ],
-                [],
-            );
-            player.beginCast(
-                { ...basicAttack, effect: { ...basicAttack.effect, payloads } },
-                abilityInput.target,
-                time,
-            );
-            return;
-        }
         if (
             player.style === WeaponStyle.RANGED &&
             basicAttack.effect.delivery.kind === DeliveryKind.PROJECTILE
@@ -1077,14 +1059,15 @@ export class GameWorld {
             const delivery = consumed.firesDouble
                 ? { ...basicAttack.effect.delivery, count: 2 }
                 : basicAttack.effect.delivery;
-            player.beginCast(
+            this.beginPlayerCast(
+                player,
                 { ...basicAttack, effect: { ...basicAttack.effect, delivery } },
                 abilityInput.target,
                 time,
             );
             return;
         }
-        player.beginCast(basicAttack, abilityInput.target, time);
+        this.beginPlayerCast(player, basicAttack, abilityInput.target, time);
     }
 
     private tryBeginCast(
@@ -1100,7 +1083,34 @@ export class GameWorld {
         if (!canUse || !this.canUseAbility(player, ability, abilityInput.target)) {
             return;
         }
-        player.beginCast(ability, abilityInput.target, time);
+        this.beginPlayerCast(player, ability, abilityInput.target, time);
+    }
+
+    // The one path a player's cast begins through, whichever slot triggered it: starts the cast
+    // itself, then - if the ability has one - its caster-anchored graphic (a weapon-special trail,
+    // a launch flash at the bow/staff), so that graphic starts with the swing and keeps pace with
+    // it at the ability's own castSpeed, rather than lagging to the point of impact at natural
+    // speed (see AbilityEffect.casterEffect).
+    private beginPlayerCast(
+        player: Player,
+        ability: ResolvedAbility,
+        target: AbilityTarget,
+        time: number,
+    ): void {
+        player.beginCast(ability, target, time);
+        const casterEffect = ability.effect.casterEffect;
+        if (casterEffect) {
+            this.pushVisualEffect(
+                new VisualEffect(
+                    casterEffect.kind,
+                    { kind: "COMBATANT", combatant: player },
+                    casterEffect.height,
+                    casterEffectTiming(this.animations.effects[casterEffect.kind], ability.castSeq),
+                    undefined,
+                    ability.castSpeed,
+                ),
+            );
+        }
     }
 
     private canUseAbility(
@@ -1108,8 +1118,8 @@ export class GameWorld {
         ability: ResolvedAbility,
         target: AbilityTarget,
     ): boolean {
-        const delivery = ability.effect.delivery;
-        if (delivery.kind !== DeliveryKind.TARGET) {
+        const reach = trackedDeliveryReach(ability.effect.delivery);
+        if (reach === undefined) {
             return true;
         }
         const enemy = aimedCombatant(target, player.level);
@@ -1117,7 +1127,7 @@ export class GameWorld {
             return false;
         }
         const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
-        return isWithinMeleeReach(distance, delivery.reach, player.hitRadius, enemy.hitRadius);
+        return isWithinMeleeReach(distance, reach, player.hitRadius, enemy.hitRadius);
     }
 
     private resolveReadyCast(caster: Player | Enemy): void {
@@ -1131,16 +1141,15 @@ export class GameWorld {
     // The one resolution path for every cast, player or enemy: the delivery picks who is affected
     // (or spawns projectiles, picked later on arrival), the payloads land on each of them, and the
     // hit graphic is anchored per combatant for combatant deliveries or at the landing point for
-    // point deliveries (see AbilityEffect.hitEffect).
+    // point deliveries (see AbilityEffect.hitEffect). casterEffect is not spawned here - it starts
+    // with the cast itself (see beginPlayerCast) so it plays in step with the swing rather than
+    // lagging behind to the point of impact.
     private resolveEffect(
         caster: Combatant,
         ability: ResolvedAbility,
         target: AbilityTarget,
     ): void {
         const effect = ability.effect;
-        if (effect.casterEffect) {
-            this.spawnVisualEffect(effect.casterEffect, { kind: "COMBATANT", combatant: caster });
-        }
         const aim = liveAbilityTarget(target, caster.level);
         const delivery = effect.delivery;
         switch (delivery.kind) {
@@ -1386,11 +1395,7 @@ export class GameWorld {
         anchor: VisualEffectAnchor,
         holdSeconds?: number,
     ): void {
-        const inUse = this.visualEffects.length + this.pendingVisualEffects.length;
-        if (inUse >= GameWorld.MAX_VISUAL_EFFECTS) {
-            return;
-        }
-        this.visualEffects.push(
+        this.pushVisualEffect(
             new VisualEffect(
                 hitEffect.kind,
                 anchor,
@@ -1399,5 +1404,13 @@ export class GameWorld {
                 holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
             ),
         );
+    }
+
+    private pushVisualEffect(effect: VisualEffect): void {
+        const inUse = this.visualEffects.length + this.pendingVisualEffects.length;
+        if (inUse >= GameWorld.MAX_VISUAL_EFFECTS) {
+            return;
+        }
+        this.visualEffects.push(effect);
     }
 }
