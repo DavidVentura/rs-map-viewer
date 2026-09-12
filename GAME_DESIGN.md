@@ -49,6 +49,43 @@ The stances do not need equal value at every moment. A movement-heavy boss phase
 
 Cross-stance combinations can be a build archetype without becoming the mandatory baseline. Examples include shattering frozen enemies in melee, empowering the first ranged shot after switching, restoring mana through melee kills, or gaining an entry effect when adopting a stance.
 
+### Candidate stance upgrades
+
+These are options to prototype rather than a final upgrade pool. They should compound what a stance is already good at instead of repairing all of its weaknesses.
+
+Melee upgrades can make entering a crowd increasingly rewarding:
+
+- Enemies killed by melee attacks explode.
+- Cleave and other swings gain substantially more area.
+- A melee attack hits twice or returns for a second swing.
+- Taking damage charges the next attack.
+- Consecutive melee kills extend a short berserk effect.
+- Entering melee grants temporary damage reduction.
+
+Ranged upgrades can reward establishing a safe firing position and maintaining focus on a priority target:
+
+- After landing a sequence of attacks without moving, the next shot fires twice like a dark bow.
+- Further upgrades reduce the required stationary sequence, for example from five attacks to four.
+- Repeated hits against one target progressively increase damage.
+- Every fixed number of attacks fires twice, independently of the stationary-sequence version.
+- Attacking after a substantial reposition empowers the next shot.
+- Excess damage carries into another nearby target.
+- A particular heavy shot gains knockback, while general knockback remains an open option.
+
+The stationary sequence creates a deliberate bargain: the ranged player must first find a viable position, then earns exceptional single-target output by holding it. Strong general knockback may weaken that positioning requirement and give ranged too much crowd control, so both versions should be tested rather than assumed equivalent.
+
+Magic upgrades can scale with the number of threats successfully caught in a cast:
+
+- Each enemy hit refunds mana.
+- Hitting several enemies grants an additional mana bonus.
+- Area and freeze coverage increase.
+- Frozen enemies spread freeze or explode when killed.
+- Spells leave a weaker delayed echo or persistent ground effect.
+- A cast may consume additional mana for greater area and damage.
+- Successful casts may enable protection during a later cast.
+
+Mana refunded per enemy reinforces magic as a crowd-efficient stance while leaving it deliberately less efficient against a lone boss. Boss encounters can still give magic value through burst windows and interactions with projectiles, floor hazards, shockwaves, or other encounter mechanics.
+
 ## Progression cadences
 
 Progression operates on three distinct timescales.
@@ -57,17 +94,25 @@ Progression operates on three distinct timescales.
 
 Attacks, movement, stance changes, ability use, targeting, and pickups create immediate decisions.
 
-### Minutes: character levels and build choices
+### Minutes: character levels
 
 Character level is shared by all stances. Per-stance levels would reward staying in the already strongest stance and make switching increasingly expensive.
 
-Ordinary levels grant modest universal power so every stance remains viable. Milestone levels grant transformative choices that define the run. Numerical improvements can establish the required power curve, while choices should preferably change behaviour: piercing arrows, wider melee attacks, frozen-enemy explosions, altered spell zones, and stance-switch interactions.
+Ordinary levels grant automatic universal numerical power so every stance remains viable. Candidate benefits include base damage, maximum health, a small heal, maximum mana, mana regeneration, and predetermined attack-speed or movement breakpoints. Levels establish the power curve and should have strong audiovisual feedback without interrupting combat for a choice.
 
-Choice timing belongs to the encounter. Fight Caves can present choices during safe breaks; a Wardens encounter can award them at phase transitions. A mechanically intense final phase should not be interrupted by upgrade popups.
+Mechanical changes such as bounces, explosions, shields, and altered spell zones belong to deliberate phase choices rather than automatic level unlocks. This keeps the level system responsible for vertical power and leaves authorship of the build with the player.
 
 ### Major encounter beats: equipment and recovery
 
 Equipment, large rewards, and recovery happen at authored checkpoints. Their value is controlled by phase completion rather than indirectly by the number of enemies in the phase.
+
+Phase completion is also the preferred time for transformative stance choices. Fight Caves can present smaller choices after selected rounds, while a Warden can grant a larger choice at a phase transition. A mechanically intense final phase should not be interrupted by upgrade popups.
+
+The current working ownership of progression is:
+
+- Kills grant experience, and levels grant automatic universal stats.
+- Enemies, elites, and bosses physically drop equipment and sustain.
+- Phase completion grants a deliberate transformative stance choice and can guarantee appropriate equipment drops.
 
 ## Waves, rounds, and phases
 
@@ -106,6 +151,8 @@ Random enemy drops and guaranteed phase rewards serve different purposes:
 
 Phase rewards can still burst onto the floor rather than appearing in a menu or chest.
 
+Item flood should be tested before being designed away. Floor litter can provide excitement and communicate the aftermath of a difficult phase, while excessive mandatory pickup work can turn it into maintenance. The absence of inventory management means this game may support less floor density than Diablo even if it uses the same visual language.
+
 ## Equipment scope
 
 The current OSRS-style bronze-to-iron progression creates many small upgrades across several stance-specific slots. A short action run may benefit from fewer and more substantial tiers.
@@ -120,7 +167,18 @@ These are starting points rather than fixed ladders. Each tier should ideally al
 
 Primary weapons can carry the required stance progression. Ammunition, defenders, tomes, and other offhands can become less frequent modifier drops instead of parallel mandatory tier ladders. Shared slots such as an amulet remain suitable for universal bonuses.
 
-Upgrading every stance as one equipment parcel remains an available option, but it risks making item acquisition feel automatic and cheap. The phase structure should first be tested with meaningful floor drops and guaranteed phase rewards before introducing whole-arsenal upgrades.
+Equipment bundles provide another way to reduce floor and reward-interface volume without removing visible equipment progression. A single drop represents a named set and equips every visual component of that set. For example, an `Ancestral robes` drop grants the ancestral hat, robe top, and robe bottom together. Equivalent melee and ranged outfits can use the same rule.
+
+Bundles preserve the visual impact of a complete stance transformation while reducing three mandatory pickups and three drop rolls to one meaningful event. They can apply to armour sets while weapons and distinctive secondary items remain individual drops.
+
+The following equipment models remain open for playtesting:
+
+- Individual items litter the floor in the Diablo tradition.
+- Complete armour sets drop as one bundle, while weapons remain individual.
+- Major enemies drop curated packages containing several related items.
+- Every stance advances together as an arsenal parcel.
+
+Advancing the whole arsenal at once risks making equipment feel automatic and cheap. The phase structure should first test individual loot and armour-set bundles, with enough safe cleanup time to discover whether floor clutter is actually a problem.
 
 ## Encounter archetypes
 
@@ -144,8 +202,9 @@ The next useful prototype should test a short slice of each encounter type:
 2. Keep click-to-move and the existing padded target acquisition.
 3. Group Fight Caves spawn waves into a few player-started reward phases.
 4. Leave equipment on the floor during combat and provide safe cleanup time after a phase.
-5. Reduce equipment to fewer, more mechanically distinct tiers.
-6. Add shared character levels with automatic baseline power and less frequent transformative choices.
-7. Build a short Wardens sequence whose phase transitions can grant arbitrary authored rewards.
+5. Test individual equipment drops against bundled armour-set drops before committing to a floor-density solution.
+6. Reduce equipment to fewer, more mechanically distinct tiers.
+7. Add shared character levels with automatic baseline power and reserve transformative choices for phase completion.
+8. Build a short Wardens sequence whose phase transitions can grant arbitrary authored rewards.
 
 This creates enough structure to tune player power, enemy pressure, and reward frequency independently without prematurely balancing the full encounter.
