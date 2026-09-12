@@ -2,7 +2,6 @@ import { mat4 } from "gl-matrix";
 
 import { WeaponStyle } from "../game/Ability";
 import { Faction } from "../game/Combatant";
-import { InteractionId } from "../game/Interaction";
 
 export type ScreenSize = {
     width: number;
@@ -95,15 +94,6 @@ export type UpgradeOfferHudInfo = {
     readonly cards: readonly UpgradeCardHudInfo[];
 };
 
-export type InteractionHudInfo = {
-    readonly interactionId: InteractionId;
-    readonly label: string;
-    readonly screenX: number;
-    readonly screenY: number;
-    readonly hovered: boolean;
-    readonly selected: boolean;
-};
-
 export type BossHudInfo = {
     readonly name: string;
     readonly health: number;
@@ -140,7 +130,6 @@ export type HudFrame = {
     previewSeqId?: number;
     boss?: BossHudInfo;
     groundItems: GroundItemHudInfo[];
-    interactions: InteractionHudInfo[];
     interactionActionText?: string;
     upgradeOffer?: UpgradeOfferHudInfo;
     pickupFlashEvents: PickupFlashEvent[];

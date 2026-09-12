@@ -9,7 +9,7 @@ import path from "path";
 import { ViewerLoaders, createViewerLoaders } from "../../src/mapviewer/ViewerLoaders";
 import { packRequest } from "../../src/mapviewer/assets/cacheRoots";
 import { AnimPreviewParams } from "../../src/mapviewer/game/AnimPreview";
-import { sequenceDurationSeconds } from "../../src/mapviewer/game/Animation";
+import { loadSeqTiming } from "../../src/mapviewer/game/Animation";
 import {
     EncounterId,
     buildPreviewEncounter,
@@ -209,9 +209,7 @@ class HeadlessViewer {
         return {
             npcTypes: roots.npcTypeIds.map((id) => npcTypeLoader.load(id)),
             objTypes: roots.objTypeIds.map((id) => objTypeLoader.load(id)),
-            seqDurations: roots.seqIds.map((id) =>
-                sequenceDurationSeconds(id, seqTypeLoader, seqFrameLoader),
-            ),
+            seqTimings: roots.seqIds.map((id) => loadSeqTiming(id, seqTypeLoader, seqFrameLoader)),
         };
     }
 }

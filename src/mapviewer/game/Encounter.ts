@@ -4,11 +4,12 @@ import { EnemyTypeId } from "./EnemyType";
 import { EquipmentGrant, styleSetGrant } from "./Equipment";
 import {
     Interaction,
-    InteractionPose,
-    createAuthoredLocationTarget,
+    WorldObject,
+    WorldObjectKind,
     createInteraction,
     createInteractionId,
-    createInteractionPose,
+    createWorldObject,
+    createWorldObjectId,
     createWorldPosition,
 } from "./Interaction";
 import { Phase, createPhase, createPhaseId } from "./Phase";
@@ -42,12 +43,14 @@ export type WaveGroup = {
     readonly count: number;
 };
 
-// A wave starts once the previous wave has died down to at most maxPreviousAliveFraction of its
+// A wave is due once the previous wave has died down to at most maxPreviousAliveFraction of its
 // spawned size, or maxElapsedSeconds have passed since the previous wave started, whichever comes
-// first. This lets later waves overlap the tail of earlier ones instead of waiting for a clear.
+// first. This lets later waves overlap the tail of earlier ones instead of waiting for a clear. It
+// then starts delaySeconds after becoming due, so even a fast clear leaves a breather.
 export type WaveStartCondition = {
     readonly maxPreviousAliveFraction: number;
     readonly maxElapsedSeconds: number;
+    readonly delaySeconds: number;
 };
 
 export type WaveModifiers = {
@@ -73,7 +76,7 @@ export enum EncounterSpawnMode {
     // do not respawn, and the encounter ends once every wave is spawned and cleared.
     WAVES = "waves",
     // The animation viewer's debug mode: no waves and no static roster. The NPC_SEQS preview's one
-    // enemy is spawned directly by the renderer with a previewSeqId set; the SPOT_ANIMS preview
+    // enemy is spawned directly by the renderer with a previewSeq set; the SPOT_ANIMS preview
     // spawns no enemy at all, only a hovering gfx at enemySpawns[0] (see AnimPreview.ts).
     PREVIEW = "preview",
 }
@@ -92,18 +95,21 @@ type EncounterCommon = {
 export type WaveEncounter = EncounterCommon & {
     readonly spawnMode: EncounterSpawnMode.WAVES;
     readonly phases: readonly [Phase, ...Phase[]];
+    readonly worldObjects: readonly WorldObject[];
     readonly interactions: readonly Interaction[];
 };
 
 export type StaticRespawnEncounter = EncounterCommon & {
     readonly spawnMode: EncounterSpawnMode.STATIC_RESPAWN;
     readonly phases: readonly [];
+    readonly worldObjects: readonly [];
     readonly interactions: readonly [];
 };
 
 export type PreviewEncounter = EncounterCommon & {
     readonly spawnMode: EncounterSpawnMode.PREVIEW;
     readonly phases: readonly [];
+    readonly worldObjects: readonly [];
     readonly interactions: readonly [];
 };
 
@@ -115,26 +121,48 @@ function assertUnique(values: readonly string[], description: string): void {
     }
 }
 
-function poseKey(pose: InteractionPose): string {
-    return `${pose.position.x},${pose.position.y},${pose.position.level}`;
-}
-
+// One shared lever starts every phase and one shared chest hands out every phase's rewards, so
+// several interactions (one per phase) legitimately target the same object - what must stay unique
+// is each interaction's own id (checked in validateEncounter) and each declared object's id.
 function validatePhaseInteractions(encounter: WaveEncounter): void {
     const phaseIds = new Set(encounter.phases.map((phase) => phase.id));
     const actionCounts = new Map<string, { start: number; rewards: number }>();
-    const interactionPositions: string[] = [];
-
     for (const phase of encounter.phases) {
         actionCounts.set(phase.id, { start: 0, rewards: 0 });
     }
+
+    const objectsById = new Map(encounter.worldObjects.map((object) => [object.id, object]));
+    const leverCount = encounter.worldObjects.filter(
+        (object) => object.kind === WorldObjectKind.LEVER,
+    ).length;
+    const chestCount = encounter.worldObjects.filter(
+        (object) => object.kind === WorldObjectKind.CHEST,
+    ).length;
+    if (leverCount !== 1) {
+        throw new RangeError("An encounter with phases requires exactly one lever");
+    }
+    if (chestCount !== 1) {
+        throw new RangeError("An encounter with phases requires exactly one chest");
+    }
+
     for (const interaction of encounter.interactions) {
-        for (const pose of interaction.target.poses) {
-            interactionPositions.push(poseKey(pose));
+        const object = objectsById.get(interaction.objectId);
+        if (!object) {
+            throw new RangeError(
+                `Interaction ${interaction.id} references an undeclared world object`,
+            );
         }
         if (!phaseIds.has(interaction.action.phaseId)) {
             throw new RangeError(
                 `Interaction ${interaction.id} references an unknown phase ${interaction.action.phaseId}`,
             );
+        }
+        const expectedKind =
+            interaction.action.kind === "START_PHASE"
+                ? WorldObjectKind.LEVER
+                : WorldObjectKind.CHEST;
+        if (object.kind !== expectedKind) {
+            throw new RangeError(`Interaction ${interaction.id} must target a ${expectedKind}`);
         }
         const counts = actionCounts.get(interaction.action.phaseId);
         if (!counts) {
@@ -146,7 +174,6 @@ function validatePhaseInteractions(encounter: WaveEncounter): void {
             counts.rewards++;
         }
     }
-    assertUnique(interactionPositions, "interaction poses");
 
     for (const phase of encounter.phases) {
         const counts = actionCounts.get(phase.id);
@@ -185,6 +212,10 @@ export function validateEncounter(encounter: Encounter): void {
     assertUnique(
         encounter.phases.map((phase) => phase.id),
         "phase ids",
+    );
+    assertUnique(
+        encounter.worldObjects.map((object) => String(object.id)),
+        "world object ids",
     );
     assertUnique(
         encounter.interactions.map((interaction) => interaction.id),
@@ -249,13 +280,14 @@ const LUMBRIDGE: StaticRespawnEncounter = {
     ambientNpcs: true,
     musicFile: "audio/harmony.opus",
     phases: [],
+    worldObjects: [],
     interactions: [],
     waves: [
         {
             groups: [
                 { enemyTypeId: EnemyTypeId.GOBLIN, count: LUMBRIDGE_GOBLIN_TILE_OFFSETS.length },
             ],
-            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 },
         },
     ],
 };
@@ -280,17 +312,19 @@ const FIGHT_CAVES_ENEMY_TILE_OFFSETS = [
 const FIGHT_CAVES_EARLY_START: WaveStartCondition = {
     maxPreviousAliveFraction: 0.4,
     maxElapsedSeconds: 9,
+    delaySeconds: 5,
 };
 const FIGHT_CAVES_LATE_START: WaveStartCondition = {
     maxPreviousAliveFraction: 0.25,
     maxElapsedSeconds: 7,
+    delaySeconds: 5,
 };
 
 // TzTok-Jad, the finale: only starts once every earlier wave is fully dead (see Wave.boss), so its
 // own startCondition numbers are never actually consulted.
 const JAD_BOSS_WAVE: Wave = {
     groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
-    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
+    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity, delaySeconds: 0 },
     boss: true,
 };
 
@@ -299,8 +333,13 @@ const AUTHORED_UPGRADE_CHOICES = [
     UpgradeId.SWIFT_STRIKES,
     UpgradeId.QUICK_HANDS,
 ];
-const INTERACTION_ANIMATION_SEQ_ID = 829;
-const INTERACTION_DURATION_SECONDS = 0.6;
+
+// HUMAN_LEVERDOWN: a generic humanoid lever-pull animation. The lever loc itself has no animation
+// of its own in this cache, so it swaps between its up/down locs instead (see WORLD_OBJECT_BAKES
+// in assets/ActorAssets.ts).
+const LEVER_INTERACTION_ANIMATION_SEQ_ID = 834;
+// HUMAN_OPENCHEST. Likewise, the chest swaps between its closed/open locs.
+const CHEST_INTERACTION_ANIMATION_SEQ_ID = 536;
 
 type PhaseDraft = {
     readonly id: string;
@@ -343,38 +382,50 @@ function createEncounterPhases(
     return [phases[0], ...phases.slice(1)];
 }
 
-function interactionPose(
-    playerSpawn: PlayerSpawn,
-    phaseIndex: number,
-    yOffsetTiles: number,
-    facingRadians: number,
-): InteractionPose {
-    return createInteractionPose(
-        createWorldPosition(
-            playerSpawn.x + (phaseIndex + 2) * 128,
-            playerSpawn.y + yOffsetTiles * 128,
-            playerSpawn.level,
+const LEVER_WORLD_OBJECT_ID = createWorldObjectId(0);
+const CHEST_WORLD_OBJECT_ID = createWorldObjectId(1);
+
+export type EncounterWorldObjects = {
+    readonly lever: WorldObject;
+    readonly chest: WorldObject;
+};
+
+// One lever and one chest per encounter, a few tiles either side of the player spawn on the same
+// row (flat cave floor, clear of every enemy spawn offset). The lever faces east so a player
+// walking up from the spawn approaches from directly in front of it; the chest mirrors that facing
+// west. See WorldObject.orientation/worldObjectApproachPose for how orientation drives both the
+// object's own facing and the player's approach tile.
+function createEncounterWorldObjects(playerSpawn: PlayerSpawn): EncounterWorldObjects {
+    return {
+        lever: createWorldObject(
+            LEVER_WORLD_OBJECT_ID,
+            WorldObjectKind.LEVER,
+            createWorldPosition(playerSpawn.x - 5 * 128, playerSpawn.y, playerSpawn.level),
+            1,
         ),
-        facingRadians,
-    );
+        chest: createWorldObject(
+            CHEST_WORLD_OBJECT_ID,
+            WorldObjectKind.CHEST,
+            createWorldPosition(playerSpawn.x + 5 * 128, playerSpawn.y, playerSpawn.level),
+            3,
+        ),
+    };
 }
 
 function createPhaseInteractions(
     encounterPrefix: string,
     phases: readonly [Phase, ...Phase[]],
-    playerSpawn: PlayerSpawn,
+    worldObjects: EncounterWorldObjects,
 ): readonly Interaction[] {
     const interactions: Interaction[] = [];
-    for (const [phaseIndex, phase] of phases.entries()) {
+    for (const phase of phases) {
         interactions.push(
             createInteraction(
                 createInteractionId(`${encounterPrefix}_${phase.id}_start`),
-                createAuthoredLocationTarget(`Start ${phase.label}`, [
-                    interactionPose(playerSpawn, phaseIndex, 2, Math.PI),
-                ]),
+                worldObjects.lever.id,
+                "Pull Lever",
                 { kind: "START_PHASE", phaseId: phase.id },
-                INTERACTION_ANIMATION_SEQ_ID,
-                INTERACTION_DURATION_SECONDS,
+                LEVER_INTERACTION_ANIMATION_SEQ_ID,
             ),
         );
         if (phase.rewards.length === 0) {
@@ -383,12 +434,10 @@ function createPhaseInteractions(
         interactions.push(
             createInteraction(
                 createInteractionId(`${encounterPrefix}_${phase.id}_rewards`),
-                createAuthoredLocationTarget(`Claim ${phase.label} reward`, [
-                    interactionPose(playerSpawn, phaseIndex, -2, 0),
-                ]),
+                worldObjects.chest.id,
+                "Open Chest",
                 { kind: "ACTIVATE_PHASE_REWARDS", phaseId: phase.id },
-                INTERACTION_ANIMATION_SEQ_ID,
-                INTERACTION_DURATION_SECONDS,
+                CHEST_INTERACTION_ANIMATION_SEQ_ID,
             ),
         );
     }
@@ -398,7 +447,7 @@ function createPhaseInteractions(
 const FIGHT_CAVES_WAVES: readonly Wave[] = [
     {
         groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 4 }],
-        startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+        startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 },
     },
     {
         groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 6 }],
@@ -502,6 +551,12 @@ const FIGHT_CAVES_PHASES = createEncounterPhases("fight_caves", [
     { id: "finale", label: "TzTok-Jad", waves: FIGHT_CAVES_WAVES.slice(9), grantsUpgrade: false },
 ]);
 
+const FIGHT_CAVES_WORLD_OBJECTS = createEncounterWorldObjects({
+    x: fightCavesPlayerX,
+    y: fightCavesPlayerY,
+    level: 0,
+});
+
 const FIGHT_CAVES: WaveEncounter = {
     id: EncounterId.FIGHT_CAVES,
     mapSquares: [
@@ -537,11 +592,12 @@ const FIGHT_CAVES: WaveEncounter = {
     musicFile: "audio/tzhaar.opus",
     waves: FIGHT_CAVES_WAVES,
     phases: FIGHT_CAVES_PHASES,
-    interactions: createPhaseInteractions("fight_caves", FIGHT_CAVES_PHASES, {
-        x: fightCavesPlayerX,
-        y: fightCavesPlayerY,
-        level: 0,
-    }),
+    worldObjects: [FIGHT_CAVES_WORLD_OBJECTS.lever, FIGHT_CAVES_WORLD_OBJECTS.chest],
+    interactions: createPhaseInteractions(
+        "fight_caves",
+        FIGHT_CAVES_PHASES,
+        FIGHT_CAVES_WORLD_OBJECTS,
+    ),
 };
 
 const QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS = [
@@ -558,7 +614,7 @@ const QUICK_CAVE_ENEMY_TYPE_IDS = [
 const QUICK_CAVE_WAVES: readonly Wave[] = [
     ...QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
         groups: [{ enemyTypeId, count: 1 }],
-        startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
+        startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600, delaySeconds: 0 },
     })),
     JAD_BOSS_WAVE,
 ];
@@ -586,7 +642,11 @@ const QUICK_CAVE: WaveEncounter = {
     enemyTypeIds: QUICK_CAVE_ENEMY_TYPE_IDS,
     waves: QUICK_CAVE_WAVES,
     phases: QUICK_CAVE_PHASES,
-    interactions: createPhaseInteractions("quick_cave", QUICK_CAVE_PHASES, FIGHT_CAVES.playerSpawn),
+    interactions: createPhaseInteractions(
+        "quick_cave",
+        QUICK_CAVE_PHASES,
+        FIGHT_CAVES_WORLD_OBJECTS,
+    ),
 };
 
 // The ranged, mage and boss roster at once, in a single wave with no gating: a sandbox for tuning
@@ -604,7 +664,7 @@ const SANDBOX_WAVE_ENEMY_TYPE_IDS = [
 // above are never consulted.
 const SANDBOX_WAVE: Wave = {
     groups: SANDBOX_WAVE_ENEMY_TYPE_IDS.map((enemyTypeId) => ({ enemyTypeId, count: 1 })),
-    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 0 },
+    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 0, delaySeconds: 0 },
 };
 
 const SANDBOX_PHASES = createEncounterPhases("sandbox", [
@@ -617,7 +677,7 @@ const SANDBOX: WaveEncounter = {
     enemyTypeIds: [...SANDBOX_WAVE_ENEMY_TYPE_IDS, EnemyTypeId.YT_HURKOT],
     waves: [SANDBOX_WAVE],
     phases: SANDBOX_PHASES,
-    interactions: createPhaseInteractions("sandbox", SANDBOX_PHASES, FIGHT_CAVES.playerSpawn),
+    interactions: createPhaseInteractions("sandbox", SANDBOX_PHASES, FIGHT_CAVES_WORLD_OBJECTS),
 };
 
 export const ENCOUNTERS: Readonly<Record<EncounterId, Encounter>> = {
@@ -658,6 +718,7 @@ export function buildPreviewEncounter(base: Encounter): PreviewEncounter {
         enemySpawns: [enemySpawn],
         waves: [],
         phases: [],
+        worldObjects: [],
         interactions: [],
     };
 }

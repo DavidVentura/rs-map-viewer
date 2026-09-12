@@ -12,7 +12,36 @@ import { Combatant } from "./Combatant";
 import { Affects, combatantsInCircle, matchesAffects } from "./Effect";
 import { TILE_SIZE } from "./Terrain";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
-import { isPointInCone } from "./projectileMath";
+import { isPointInCone, rotationToDirection } from "./projectileMath";
+
+// The cone's apex sits behind the caster, far enough back that the arc is already
+// casterHalfWidth wide to either side where the caster stands, so enemies pressed up beside the
+// caster are inside it. The part of that cone behind the caster is cut off.
+function isPointInWideCone(
+    originX: number,
+    originY: number,
+    facingRotation: number,
+    delivery: ConeDelivery,
+    reach: number,
+    pointX: number,
+    pointY: number,
+): boolean {
+    const apexSetback = delivery.casterHalfWidth / Math.tan(delivery.angleRadians / 2);
+    const facing = rotationToDirection(facingRotation);
+    const forwardDistance = (pointX - originX) * facing.x + (pointY - originY) * facing.y;
+    if (forwardDistance < 0) {
+        return false;
+    }
+    return isPointInCone(
+        originX - facing.x * apexSetback,
+        originY - facing.y * apexSetback,
+        facingRotation,
+        delivery.angleRadians,
+        reach + apexSetback,
+        pointX,
+        pointY,
+    );
+}
 
 // The deliveries that pick their affected set at cast impact, as opposed to PROJECTILE, which
 // picks its set on arrival.
@@ -47,11 +76,11 @@ export function affectedCombatants<T extends Combatant>(
                 (combatant) =>
                     combatant.level === caster.level &&
                     combatant.health > 0 &&
-                    isPointInCone(
+                    isPointInWideCone(
                         caster.x,
                         caster.y,
                         caster.rotation,
-                        delivery.angleRadians,
+                        delivery,
                         delivery.reach + caster.hitRadius + combatant.hitRadius,
                         combatant.x,
                         combatant.y,
@@ -99,11 +128,11 @@ export function coneTileSpawns(
             }
             const centerX = (tileX + 0.5) * TILE_SIZE;
             const centerY = (tileY + 0.5) * TILE_SIZE;
-            const inCone = isPointInCone(
+            const inCone = isPointInWideCone(
                 originX,
                 originY,
                 facingRotation,
-                delivery.angleRadians,
+                delivery,
                 delivery.reach,
                 centerX,
                 centerY,

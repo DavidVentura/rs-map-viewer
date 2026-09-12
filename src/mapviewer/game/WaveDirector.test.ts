@@ -17,7 +17,9 @@ function wave(count: number, startCondition: WaveStartCondition, count2 = 0): Wa
 
 describe("stepWaveDirector", () => {
     it("starts the first wave immediately and spawns its full group", () => {
-        const table = [wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+        ];
         const state = initialWaveDirectorState(table.length);
 
         const result = stepWaveDirector(state, table, 0, [0], [0]);
@@ -29,8 +31,8 @@ describe("stepWaveDirector", () => {
 
     it("does not start wave 2 until wave 1 drops to the alive threshold or the timer elapses", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
@@ -48,8 +50,8 @@ describe("stepWaveDirector", () => {
 
     it("starts the next wave once its elapsed-time fallback fires, even if the previous wave is still nearly full", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            wave(6, { maxPreviousAliveFraction: 0.1, maxElapsedSeconds: 10 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 0.1, maxElapsedSeconds: 10, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
@@ -62,10 +64,49 @@ describe("stepWaveDirector", () => {
         expect(afterTimeout.nextState.nextWaveIndex).toBe(2);
     });
 
+    it("starts a due wave only after its delay, whether it became due by kills or by the timer", () => {
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10, delaySeconds: 5 }),
+        ];
+        const opened = stepWaveDirector(
+            initialWaveDirectorState(table.length),
+            table,
+            0,
+            [0, 0],
+            [0, 0],
+        ).nextState;
+
+        const dueByKills = stepWaveDirector(opened, table, 3, [2, 0], [2, 0]);
+        expect(dueByKills.spawns.length).toBe(0);
+        expect(dueByKills.nextState.nextWaveStartsAtSeconds).toBe(8);
+        // Once due, the wave stays due even if the kill count would no longer trigger it.
+        const stillDelayed = stepWaveDirector(dueByKills.nextState, table, 7.9, [4, 0], [0, 0]);
+        expect(stillDelayed.spawns.length).toBe(0);
+        const startedByKills = stepWaveDirector(stillDelayed.nextState, table, 8, [4, 0], [0, 0]);
+        expect(startedByKills.spawns.length).toBe(6);
+        expect(startedByKills.nextState.waveStartedAtSeconds[1]).toBe(8);
+        expect(startedByKills.nextState.nextWaveStartsAtSeconds).toBeUndefined();
+
+        const dueByTimer = stepWaveDirector(opened, table, 10, [4, 0], [0, 0]);
+        expect(dueByTimer.spawns.length).toBe(0);
+        expect(
+            stepWaveDirector(dueByTimer.nextState, table, 15, [4, 0], [0, 0]).spawns.length,
+        ).toBe(6);
+    });
+
+    it("never delays the first wave of a phase", () => {
+        const table = [
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 5 }),
+        ];
+        const result = stepWaveDirector(initialWaveDirectorState(1), table, 0, [0], [0]);
+        expect(result.spawns.length).toBe(4);
+    });
+
     it("overlaps waves: the next wave's enemies can be alive at the same time as the previous wave's survivors", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
@@ -80,8 +121,8 @@ describe("stepWaveDirector", () => {
 
     it("reports cleared once every wave has started, fully spawned, and died, and stops emitting spawns", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 10, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
@@ -98,7 +139,9 @@ describe("stepWaveDirector", () => {
 
     it("throttles spawns to MAX_LIVE_WAVE_ENEMIES total live enemies, finishing the rest once room frees up", () => {
         const bigCount = MAX_LIVE_WAVE_ENEMIES + 20;
-        const table = [wave(bigCount, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        const table = [
+            wave(bigCount, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+        ];
         const state = initialWaveDirectorState(table.length);
 
         const first = stepWaveDirector(state, table, 0, [0], [0]);
@@ -121,7 +164,11 @@ describe("stepWaveDirector", () => {
         const table: Wave[] = [
             {
                 groups: [{ enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 }],
-                startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+                startCondition: {
+                    maxPreviousAliveFraction: 1,
+                    maxElapsedSeconds: 0,
+                    delaySeconds: 0,
+                },
                 modifiers: { healthMultiplier: 1.15, speedMultiplier: 1.1 },
             },
         ];
@@ -144,7 +191,9 @@ describe("stepWaveDirector", () => {
     });
 
     it("defaults modifiers to 1 when a wave declares none", () => {
-        const table = [wave(1, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        const table = [
+            wave(1, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+        ];
         const state = initialWaveDirectorState(table.length);
 
         const result = stepWaveDirector(state, table, 0, [0], [0]);
@@ -155,7 +204,11 @@ describe("stepWaveDirector", () => {
 
 describe("boss waves", () => {
     function bossWave(
-        startCondition: WaveStartCondition = { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+        startCondition: WaveStartCondition = {
+            maxPreviousAliveFraction: 1,
+            maxElapsedSeconds: 0,
+            delaySeconds: 0,
+        },
     ): Wave {
         return {
             groups: [{ enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 }],
@@ -166,8 +219,8 @@ describe("boss waves", () => {
 
     it("does not start until every earlier wave (not just the immediately previous one) has died down to nothing", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
             bossWave(),
         ];
         let state = initialWaveDirectorState(table.length);
@@ -194,8 +247,8 @@ describe("boss waves", () => {
 
     it("ignores its own startCondition, using only the all-earlier-waves-dead rule", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
-            bossWave({ maxPreviousAliveFraction: 0, maxElapsedSeconds: 0 }),
+            wave(4, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+            bossWave({ maxPreviousAliveFraction: 0, maxElapsedSeconds: 0, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
@@ -210,7 +263,10 @@ describe("boss waves", () => {
     });
 
     it("blocks the next wave from starting while the boss wave is active, even though its own start condition would normally allow it immediately", () => {
-        const table = [bossWave(), wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        const table = [
+            bossWave(),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+        ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
         expect(state.nextWaveIndex).toBe(1);
@@ -221,7 +277,10 @@ describe("boss waves", () => {
     });
 
     it("lets the next wave start once the boss wave is fully cleared", () => {
-        const table = [bossWave(), wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 })];
+        const table = [
+            bossWave(),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
+        ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0], [0, 0]).nextState;
 
@@ -232,9 +291,9 @@ describe("boss waves", () => {
 
     it("never overlaps with the waves before or after it", () => {
         const table = [
-            wave(4, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 12 }),
+            wave(4, { maxPreviousAliveFraction: 0.5, maxElapsedSeconds: 12, delaySeconds: 0 }),
             bossWave(),
-            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 }),
+            wave(6, { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 }),
         ];
         let state = initialWaveDirectorState(table.length);
         state = stepWaveDirector(state, table, 0, [0, 0, 0], [0, 0, 0]).nextState;

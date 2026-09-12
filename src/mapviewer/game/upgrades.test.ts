@@ -16,7 +16,7 @@ import {
     SCIMITAR_SLASH,
     VOLLEY,
 } from "./abilities";
-import { stubSequenceLoaders } from "./testLoaders";
+import { stubSeqCatalog } from "./testLoaders";
 import {
     DAMAGE_UP,
     DEFAULT_ABILITY_MODIFIERS,
@@ -30,10 +30,10 @@ import {
     drawUpgradeOffer,
 } from "./upgrades";
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+const seqCatalog = stubSeqCatalog();
 
 function resolve(definition: AbilityDefinition): ResolvedAbility {
-    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+    return resolveAbility(definition, seqCatalog);
 }
 
 function damageRoll(effect: AbilityEffect): DamageRoll {

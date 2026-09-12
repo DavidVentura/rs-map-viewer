@@ -14,17 +14,23 @@ import { Pathfinder } from "../rs/pathfinder/Pathfinder";
 import { TextureLoader } from "../rs/texture/TextureLoader";
 import { isWallpaperEngine } from "../util/DeviceUtil";
 import { CacheList } from "./Caches";
-import { Camera, CameraView, ProjectionType } from "./Camera";
+import { Camera, CameraView } from "./Camera";
 import { InputManager } from "./InputManager";
 import { MapManager } from "./MapManager";
 import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { createViewerLoaders } from "./ViewerLoaders";
+import { actorAssets } from "./assets/ActorAssets";
+import { declaredSeqIds } from "./assets/cacheRoots";
+import { resolveEncounterAnimations } from "./assets/encounterAnimations";
 import { AudioFeedback } from "./audio/AudioFeedback";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
 import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
+import { EncounterAnimations } from "./game/EncounterAnimations";
+import { EquipmentChange } from "./game/Equipment";
 import { GameWorld } from "./game/GameWorld";
+import { SeqCatalog, loadSeqCatalog } from "./game/SeqCatalog";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
 const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 64;
@@ -46,6 +52,8 @@ export class MapViewer {
     textureLoader!: TextureLoader;
     seqTypeLoader!: SeqTypeLoader;
     seqFrameLoader!: SeqFrameLoader;
+    seqCatalog!: SeqCatalog;
+    encounterAnimations!: EncounterAnimations;
 
     locTypeLoader!: LocTypeLoader;
     objTypeLoader!: ObjTypeLoader;
@@ -64,10 +72,6 @@ export class MapViewer {
     // Map square distance
     unloadDistance: number = 2;
 
-    // State
-    needsSearchParamUpdate: boolean = false;
-    lastTimeSearchParamsUpdated: number = 0;
-
     debugText?: string;
 
     minimapImageUrls: Map<number, string> = new Map();
@@ -85,6 +89,7 @@ export class MapViewer {
         cache: LoadedCache,
         readonly animPreview?: AnimPreviewParams,
         readonly godMode: boolean = false,
+        readonly gearOverride: readonly EquipmentChange[] = [],
     ) {
         this.audioFeedback = new AudioFeedback(new AudioContext());
         // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
@@ -101,108 +106,24 @@ export class MapViewer {
         if (this.animPreview?.kind !== "SPOT_ANIMS") {
             throw new Error("Spot anim preview range set outside the spot anim viewer");
         }
-        this.reloadWithSearchParams({
-            ...this.getSearchParams(),
-            gfx: `${range.from}-${range.to}`,
-        });
+        this.reloadWithSearchParam("gfx", `${range.from}-${range.to}`);
     }
 
     // A cache other than the loaded one is a different pack, so the page reloads on its url.
     reloadWithCache(cacheName: string): void {
-        this.reloadWithSearchParams({ ...this.getSearchParams(), cache: cacheName });
+        this.reloadWithSearchParam("cache", cacheName);
     }
 
-    private reloadWithSearchParams(params: Record<string, string>): void {
-        window.location.search = new URLSearchParams(params).toString();
+    // The url only ever holds what the user typed; a reload keeps all of it and changes one key.
+    private reloadWithSearchParam(key: string, value: string): void {
+        const params = new URLSearchParams(window.location.search);
+        params.set(key, value);
+        window.location.search = params.toString();
     }
 
     get encounter(): Encounter {
         const encounter = getEncounter(this.encounterId);
         return this.animPreview ? buildPreviewEncounter(encounter) : encounter;
-    }
-
-    getSearchParams(): Record<string, string> {
-        const cx = this.camera.getPosX().toFixed(2).toString();
-        const cy = (-this.camera.getPosY()).toFixed(2);
-        const cz = this.camera.getPosZ().toFixed(2).toString();
-
-        const yaw = this.camera.yaw & 2047;
-
-        const p = (this.camera.pitch | 0).toString();
-        const y = yaw.toString();
-
-        const params: Record<string, string> = {
-            cx,
-            cy,
-            cz,
-            p,
-            y,
-        };
-
-        if (this.camera.projectionType === ProjectionType.ORTHO) {
-            params["pt"] = "o";
-            params["z"] = this.camera.orthoZoom.toString();
-        } else {
-            params["pt"] = "p";
-        }
-
-        if (this.loadedCache.info.name !== this.cacheList.latest.name) {
-            params["cache"] = this.loadedCache.info.name;
-        }
-
-        if (this.encounterId !== EncounterId.LUMBRIDGE) {
-            params["enc"] = this.encounterId;
-        }
-
-        if (this.animPreview?.kind === "NPC_SEQS") {
-            params["anim"] = this.animPreview.npcTypeId.toString();
-            params["seqs"] = `${this.animPreview.seqRange.from}-${this.animPreview.seqRange.to}`;
-        } else if (this.animPreview?.kind === "SPOT_ANIMS") {
-            params["gfx"] = `${this.animPreview.range.from}-${this.animPreview.range.to}`;
-        }
-
-        params["v"] = "1";
-
-        return params;
-    }
-
-    applySearchParams(searchParams: URLSearchParams) {
-        const cx = searchParams.get("cx");
-        const cy = searchParams.get("cy");
-        const cz = searchParams.get("cz");
-
-        const pitch = searchParams.get("p");
-        const yaw = searchParams.get("y");
-
-        const v = searchParams.get("v");
-
-        if (searchParams.get("pt") === "o") {
-            this.camera.projectionType = ProjectionType.ORTHO;
-        } else if (searchParams.get("pt") === "p") {
-            this.camera.projectionType = ProjectionType.PERSPECTIVE;
-        }
-
-        const zoom = searchParams.get("z");
-        if (zoom) {
-            this.camera.orthoZoom = parseInt(zoom);
-        }
-
-        if (cx && cy && cz) {
-            const pos = vec3.fromValues(parseFloat(cx), -parseFloat(cy), parseFloat(cz));
-            this.camera.pos = pos;
-        }
-        if (pitch) {
-            this.camera.pitch = parseInt(pitch);
-            if (!v) {
-                this.camera.pitch = -this.camera.pitch;
-            }
-        }
-        if (yaw) {
-            this.camera.yaw = parseInt(yaw);
-            if (!v) {
-                this.camera.yaw = 2048 - this.camera.yaw;
-            }
-        }
     }
 
     init(): void {
@@ -214,6 +135,11 @@ export class MapViewer {
     // runtime encounter switch would pick up its music without any extra wiring.
     syncMusicTrack(): void {
         this.musicPlayer.setTrack(this.encounter.musicFile);
+    }
+
+    dispose(): void {
+        this.musicPlayer.dispose();
+        void this.audioFeedback.close();
     }
 
     private initCache(cache: LoadedCache): void {
@@ -232,10 +158,22 @@ export class MapViewer {
 
         this.isNewTextureAnim = cache.info.game === "runescape" && cache.info.revision >= 681;
 
+        // The pack was declared from the base encounter even in the animation viewer (see
+        // packRequest), so its seq roots come from the same assets.
+        const assets = actorAssets(getEncounter(this.encounterId), this.animPreview);
+        this.seqCatalog = loadSeqCatalog(
+            declaredSeqIds(assets),
+            loaders.seqTypeLoader,
+            loaders.seqFrameLoader,
+        );
+        this.encounterAnimations = resolveEncounterAnimations(
+            this.encounter,
+            assets,
+            this.seqCatalog,
+        );
+
         this.initWorld();
         this.renderer.initCache();
-
-        this.updateSearchParams();
     }
 
     setRenderer(renderer: MapViewerRenderer): void {
@@ -245,12 +183,9 @@ export class MapViewer {
     }
 
     private initWorld(): void {
-        this.world = new GameWorld(
-            this.renderer.createTerrain(),
-            this.seqTypeLoader,
-            this.seqFrameLoader,
-        );
+        this.world = new GameWorld(this.renderer.createTerrain(), this.encounterAnimations);
         this.world.setGodMode(this.godMode);
+        this.world.setGearOverride(this.gearOverride);
     }
 
     /**
@@ -274,11 +209,6 @@ export class MapViewer {
             this.camera.orthoZoom = newView.orthoZoom;
         }
         this.camera.updated = true;
-    }
-
-    updateSearchParams(): void {
-        this.needsSearchParamUpdate = true;
-        this.lastTimeSearchParamsUpdated = performance.now();
     }
 
     updateVars(): void {

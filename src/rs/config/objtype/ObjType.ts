@@ -345,6 +345,8 @@ export class ObjType extends Type {
             this.placeholderTemplate = buffer.readUnsignedShort();
         } else if (opcode >= 150 && opcode < 155) {
             buffer.readUnsignedShort();
+        } else if (opcode === 160) {
+            this.stackability = ObjStackability.ALWAYS;
         } else if (opcode === 200) {
             // subop
             buffer.readUnsignedByte();

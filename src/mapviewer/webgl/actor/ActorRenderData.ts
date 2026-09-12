@@ -1,4 +1,6 @@
+import { WeaponStyle } from "../../game/Ability";
 import { EnemyTypeId } from "../../game/EnemyType";
+import { WorldObjectKind, WorldObjectVariant } from "../../game/Interaction";
 import { StanceSeqIdsByStance } from "../../game/Player";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
@@ -7,12 +9,23 @@ import { SkinnedMesh } from "../skin/SkinnedMeshBuilder";
 
 export interface PlayerActorData {
     readonly stanceSeqIds: StanceSeqIdsByStance;
-    readonly body: SkinAnimationSet;
+    // One body mesh per style (its permanently-worn armour hides different body-kit parts - see
+    // ActorAssets.bodyModelIdsForStyle), sharing one set of posed frames (armour never changes the
+    // skeleton, only which body-kit faces are included in each style's mesh).
+    readonly bodyMeshesByStyle: Readonly<Record<WeaponStyle, SkinnedMesh>>;
+    readonly bodyAnimationsBySeqId: ReadonlyMap<number, readonly SkinFrame[]>;
     readonly itemsByItemId: ReadonlyMap<number, SkinnedMesh>;
 }
 
-export function getPlayerBodyAnimation(data: PlayerActorData, seqId: number): SkinAnimation {
-    return { mesh: data.body.mesh, frames: requiredFrames(data.body, seqId) };
+export function getPlayerBodyAnimation(
+    data: PlayerActorData,
+    style: WeaponStyle,
+    seqId: number,
+): SkinAnimation {
+    return {
+        mesh: data.bodyMeshesByStyle[style],
+        frames: requiredFramesFrom(data.bodyAnimationsBySeqId, seqId),
+    };
 }
 
 export function getPlayerItemAnimation(
@@ -24,7 +37,7 @@ export function getPlayerItemAnimation(
     if (!mesh) {
         throw new Error(`No player attachment mesh for item ${itemId}`);
     }
-    return { mesh, frames: requiredFrames(data.body, seqId) };
+    return { mesh, frames: requiredFramesFrom(data.bodyAnimationsBySeqId, seqId) };
 }
 
 export type EnemyTypeAnimationSet = SkinAnimationSet;
@@ -34,7 +47,14 @@ export function getEnemyAnimation(data: EnemyTypeAnimationSet, seqId: number): S
 }
 
 function requiredFrames(data: SkinAnimationSet, seqId: number): readonly SkinFrame[] {
-    const frames = data.animationsBySeqId.get(seqId);
+    return requiredFramesFrom(data.animationsBySeqId, seqId);
+}
+
+function requiredFramesFrom(
+    animationsBySeqId: ReadonlyMap<number, readonly SkinFrame[]>,
+    seqId: number,
+): readonly SkinFrame[] {
+    const frames = animationsBySeqId.get(seqId);
     if (!frames) {
         throw new Error(`Actor sequence ${seqId} was not loaded`);
     }
@@ -67,10 +87,32 @@ export function getGroundItemAnimation(
     return data.animationsByItemId.get(itemId);
 }
 
+export type WorldObjectMeshes = {
+    readonly rest: SkinAnimation;
+    readonly activated: SkinAnimation;
+};
+
+export interface WorldObjectActorData {
+    readonly meshesByKind: ReadonlyMap<WorldObjectKind, WorldObjectMeshes>;
+}
+
+export function getWorldObjectAnimation(
+    data: WorldObjectActorData,
+    kind: WorldObjectKind,
+    variant: WorldObjectVariant,
+): SkinAnimation {
+    const meshes = data.meshesByKind.get(kind);
+    if (!meshes) {
+        throw new Error(`No world object meshes loaded for ${kind}`);
+    }
+    return variant === WorldObjectVariant.ACTIVATED ? meshes.activated : meshes.rest;
+}
+
 export interface ActorRenderData {
     readonly player: PlayerActorData;
     readonly enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>>;
     readonly projectiles: ProjectileActorData;
     readonly groundItems: GroundItemActorData;
+    readonly worldObjects: WorldObjectActorData;
     readonly previewGfx?: PreviewGfxAnimationSet;
 }

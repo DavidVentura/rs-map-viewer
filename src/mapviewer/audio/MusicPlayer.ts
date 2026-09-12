@@ -61,6 +61,14 @@ export class MusicPlayer {
         }
     }
 
+    // Dropping the source, not just pausing, keeps a late unlock() from restarting a player whose
+    // viewer is already gone.
+    dispose(): void {
+        this.audio.pause();
+        this.audio.removeAttribute("src");
+        this.audio.load();
+    }
+
     private play(): void {
         if (!this.enabled) {
             return;

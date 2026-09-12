@@ -1,16 +1,13 @@
 import { DropTier } from "./EnemyType";
-import {
-    ALL_EQUIPMENT_PATHS,
-    EquipmentGrant,
-    EquipmentPath,
-    EquipmentState,
-    isAtMaxTier,
-} from "./Equipment";
+import { ALL_EQUIPMENT_PATHS, EquipmentPath, EquipmentState, isAtMaxTier } from "./Equipment";
 import { RandomSource } from "./abilityRules";
 
+// A single real OSRS item lying on the ground: one equipment path at one tier, rendered with its
+// own model (see itemIdForTier) and picked up like any other drop.
 export type GroundItem = {
     readonly id: number;
-    readonly grant: EquipmentGrant;
+    readonly path: EquipmentPath;
+    readonly tierIndex: number;
     readonly x: number;
     readonly y: number;
     readonly level: number;
@@ -19,8 +16,8 @@ export type GroundItem = {
 // Diablo-style drop odds by enemy dropTier (see EnemyType.DropTier).
 const DROP_CHANCE: Readonly<Record<DropTier, number>> = {
     [DropTier.NONE]: 0,
-    [DropTier.CHAFF]: 0.01,
-    [DropTier.ELITE]: 0.12,
+    [DropTier.CHAFF]: 0.05,
+    [DropTier.ELITE]: 0.6,
     [DropTier.BOSS]: 1,
 };
 
@@ -50,7 +47,7 @@ export function rollDropPath(
 export function pendingGroundItemPaths(
     groundItems: readonly GroundItem[],
 ): ReadonlySet<EquipmentPath> {
-    return new Set(groundItems.flatMap((item) => item.grant.changes.map(({ path }) => path)));
+    return new Set(groundItems.map((item) => item.path));
 }
 
 export function distanceToGroundItem(item: GroundItem, x: number, y: number): number {

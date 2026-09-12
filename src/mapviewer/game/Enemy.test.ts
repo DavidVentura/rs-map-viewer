@@ -30,7 +30,7 @@ import {
     YT_MEJKOT_MELEE,
 } from "./abilities";
 import { directionToRotation } from "./projectileMath";
-import { stubSequenceLoaders } from "./testLoaders";
+import { stubSeqCatalog, stubSeqTiming } from "./testLoaders";
 
 const ARROW_SHOT: AbilityEffect = {
     delivery: { kind: DeliveryKind.PROJECTILE, spec: ARROW_SPEC, count: 1, spreadAngleRadians: 0 },
@@ -239,10 +239,10 @@ describe("directionToRotation for facing", () => {
     });
 });
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+const seqCatalog = stubSeqCatalog();
 
 function resolveType(type: EnemyType): ResolvedEnemyType {
-    return resolveEnemyType(type, seqTypeLoader, seqFrameLoader);
+    return resolveEnemyType(type, seqCatalog);
 }
 const terrain: Terrain = {
     isLoaded: () => true,
@@ -337,7 +337,7 @@ describe("Enemy cast sequence", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.animation.seqId).toBe(GOBLIN_MELEE.castSeqId);
@@ -345,12 +345,12 @@ describe("Enemy cast sequence", () => {
 });
 
 describe("Enemy preview mode", () => {
-    it("plays the pinned previewSeqId instead of running the AI state machine", () => {
+    it("plays the pinned previewSeq instead of running the AI state machine", () => {
         const enemy = makeEnemy();
-        enemy.previewSeqId = 2639;
+        enemy.previewSeq = stubSeqTiming(2639);
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 1, 1, terrain);
 
         expect(enemy.animation.seqId).toBe(2639);
         expect(enemy.state).toBe(EnemyState.IDLE);
@@ -360,10 +360,10 @@ describe("Enemy preview mode", () => {
 
     it("never enters the DEAD state even at zero health", () => {
         const enemy = makeEnemy();
-        enemy.previewSeqId = 2639;
+        enemy.previewSeq = stubSeqTiming(2639);
         enemy.health = 0;
 
-        enemy.update(undefined, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(undefined, [], 1, 1, terrain);
 
         expect(enemy.state).not.toBe(EnemyState.DEAD);
     });
@@ -392,7 +392,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 10;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 1, 1, terrain);
 
         expect(enemy.state).toBe(EnemyState.IDLE);
         expect(enemy.x).toBe(0);
@@ -404,7 +404,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 1;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 1, 2, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 1, 2, terrain);
 
         expect(enemy.state).toBe(EnemyState.CHASE);
     });
@@ -414,7 +414,7 @@ describe("Enemy freezing", () => {
         enemy.frozenUntil = 10;
         enemy.health = 0;
 
-        enemy.update(undefined, [], 1, 1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(undefined, [], 1, 1, terrain);
 
         expect(enemy.state).toBe(EnemyState.DEAD);
     });
@@ -430,7 +430,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.x).toBe(0);
@@ -444,40 +444,24 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         const player = new FakePlayer(100, 0, 0);
 
         let time = 10;
-        enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, time, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
         const impactSeconds = TEST_MELEE.timing.impactSeconds;
         time += impactSeconds - 0.001;
-        enemy.update(
-            player,
-            [],
-            impactSeconds - 0.001,
-            time,
-            seqTypeLoader,
-            seqFrameLoader,
-            terrain,
-        );
+        enemy.update(player, [], impactSeconds - 0.001, time, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.x).toBe(0);
 
         time += 0.002;
-        enemy.update(player, [], 0.002, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.002, time, terrain);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
 
         const recoverySeconds = TEST_MELEE.locks.find(
             (lock) => lock.group === CooldownGroup.ATTACK,
         )!.seconds;
         time += recoverySeconds + 0.01;
-        enemy.update(
-            player,
-            [],
-            recoverySeconds + 0.01,
-            time,
-            seqTypeLoader,
-            seqFrameLoader,
-            terrain,
-        );
+        enemy.update(player, [], recoverySeconds + 0.01, time, terrain);
         expect(enemy.state).toBe(EnemyState.CHASE);
     });
 
@@ -487,7 +471,7 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         const player = new FakePlayer(100, 0, 0);
 
         let time = 10;
-        enemy.update(player, [], 0.016, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, time, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.animation.seqId).toBe(TEST_MELEE.castSeqId);
 
@@ -498,29 +482,13 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         expect(played).toBeLessThan(totalCommit);
 
         const justBeforeAnimationEnds = 10 + played - 0.01;
-        enemy.update(
-            player,
-            [],
-            justBeforeAnimationEnds - time,
-            justBeforeAnimationEnds,
-            seqTypeLoader,
-            seqFrameLoader,
-            terrain,
-        );
+        enemy.update(player, [], justBeforeAnimationEnds - time, justBeforeAnimationEnds, terrain);
         time = justBeforeAnimationEnds;
         expect(enemy.state).toBe(EnemyState.RECOVERY);
         expect(enemy.animation.seqId).toBe(TEST_MELEE.castSeqId);
 
         const justAfterAnimationEnds = 10 + played + 0.01;
-        enemy.update(
-            player,
-            [],
-            justAfterAnimationEnds - time,
-            justAfterAnimationEnds,
-            seqTypeLoader,
-            seqFrameLoader,
-            terrain,
-        );
+        enemy.update(player, [], justAfterAnimationEnds - time, justAfterAnimationEnds, terrain);
         expect(enemy.state).toBe(EnemyState.RECOVERY);
         expect(enemy.animation.seqId).toBe(TEST_ENEMY_TYPE.idleSeqId);
     });
@@ -530,11 +498,11 @@ describe("Enemy attack cycle (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
         enemy.frozenUntil = 20;
-        enemy.update(player, [], 0.016, 10.1, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10.1, terrain);
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.abilityRuntime.canUse(TEST_MELEE, 0, 10.1)).toBe(true);
     });
@@ -550,7 +518,7 @@ describe("KITER behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(100, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.x).toBeLessThan(0);
@@ -561,7 +529,7 @@ describe("KITER behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(2000, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.x).toBeGreaterThan(0);
@@ -572,7 +540,7 @@ describe("KITER behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(600, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.x).toBe(0);
@@ -585,7 +553,7 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(10000, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_HEAL_PULSE.id);
@@ -598,20 +566,20 @@ describe("TANK behaviour (integration through Enemy.update)", () => {
         const frame = 0.05;
         let time = 10;
 
-        enemy.update(farPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(farPlayer, [], frame, time, terrain);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_HEAL_PULSE.id);
 
         let guard = 0;
         while (enemy.state !== EnemyState.CHASE && guard < 1000) {
             time += frame;
-            enemy.update(farPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+            enemy.update(farPlayer, [], frame, time, terrain);
             guard++;
         }
         expect(enemy.state).toBe(EnemyState.CHASE);
 
         const nearPlayer = new FakePlayer(100, 0, 0);
         time += frame;
-        enemy.update(nearPlayer, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(nearPlayer, [], frame, time, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(YT_MEJKOT_MELEE.id);
@@ -690,7 +658,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(1000, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_RANGED.id);
@@ -701,7 +669,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(50, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_MELEE.id);
@@ -714,19 +682,19 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         const frame = 0.05;
         let time = 10;
 
-        enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], frame, time, terrain);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_MELEE.id);
 
         let guard = 0;
         while (enemy.state !== EnemyState.CHASE && guard < 1000) {
             time += frame;
-            enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+            enemy.update(player, [], frame, time, terrain);
             guard++;
         }
         expect(enemy.state).toBe(EnemyState.CHASE);
 
         time += frame;
-        enemy.update(player, [], frame, time, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], frame, time, terrain);
 
         expect(enemy.state).toBe(EnemyState.WINDUP);
         expect(enemy.abilityRuntime.pendingDefinition()?.id).toBe(TEST_BOSS_RANGED.id);
@@ -737,7 +705,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(500, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.x).toBe(0);
         expect(enemy.y).toBe(0);
@@ -748,7 +716,7 @@ describe("BOSS behaviour (integration through Enemy.update)", () => {
         enemy.state = EnemyState.CHASE;
         const player = new FakePlayer(ARROW_SPEC.range + 1000, 0, 0);
 
-        enemy.update(player, [], 0.016, 10, seqTypeLoader, seqFrameLoader, terrain);
+        enemy.update(player, [], 0.016, 10, terrain);
 
         expect(enemy.state).toBe(EnemyState.CHASE);
         expect(enemy.x).toBeGreaterThan(0);

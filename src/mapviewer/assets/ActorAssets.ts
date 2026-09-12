@@ -1,15 +1,18 @@
 import { WeaponStyle } from "../game/Ability";
 import { AnimPreviewParams, SeqRange } from "../game/AnimPreview";
+import { AppearanceSlot, BodyKitPart, resolveAppearance } from "../game/Appearance";
 import { Encounter } from "../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import {
-    ELDER_MAUL_ITEM_ID,
     EquipmentPath,
     allDroppableItemIds,
+    armourItemIdsForStyle,
+    armourWearInfoForStyle,
     secondaryPathForStyle,
     visualGroupItemIds,
     weaponVisualItemIds,
 } from "../game/Equipment";
+import { WorldObjectKind } from "../game/Interaction";
 import { Player, StanceSeqIds, StanceSeqIdsByStance } from "../game/Player";
 import {
     FIRE_BOLT_HIT_SEQ_ID,
@@ -18,23 +21,28 @@ import {
     JAD_RANGED_ROCK_SEQ_ID,
     KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     ProjectileKind,
+    SWAMP_TRIDENT_TRAVEL_SEQ_ID,
+    TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
+    WARPED_SCEPTRE_TRAVEL_SEQ_ID,
 } from "../game/Projectile";
 import {
+    CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
     DUST_WAVE_SEQ_ID,
     FALLING_SHADOW_SEQ_ID,
     ICE_BARRAGE_HIT_SEQ_ID,
     MAUL_IMPACT_SPARK_SEQ_ID,
+    SWAMP_TRIDENT_IMPACT_SEQ_ID,
+    TUMEKENS_SHADOW_IMPACT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
+    WARPED_SCEPTRE_IMPACT_SEQ_ID,
 } from "../game/VisualEffect";
 import {
     BOW_SHOT_CAST_SEQ_ID,
-    CLEAVE_CAST_SEQ_ID,
     HEALING_POTION_CAST_SEQ_ID,
-    ICE_BARRAGE_CAST_SEQ_ID,
     MAGIC_BOLT_CAST_SEQ_ID,
-    MAUL_SMASH_CAST_SEQ_ID,
     SCIMITAR_SLASH_CAST_SEQ_ID,
+    allPlayerAbilities,
 } from "../game/abilities";
 
 const PLAYER_BASE_NPC_TYPE_ID = 3105;
@@ -52,36 +60,37 @@ const COMMON_EXTRA_SEQ_IDS: readonly number[] = [
     Player.DEATH_SEQ_ID,
 ];
 
-type StanceSeqConfig = StanceSeqIds & { readonly extraSeqIds: readonly number[] };
+type StanceSeqConfig = StanceSeqIds;
 
-// bow: unarmed idle/walk/run, bow attack
-// staff: standard spellcast idle/walk/run/attack, plus the ice barrage cast
+// bow: unarmed idle/walk/run, bow attack (shared by every ranged tier)
+// staff: standard spellcast idle/walk/run/attack
 // scimitar: unarmed idle/walk/run, slash attack
-// Seq ids are fixed per style regardless of equipped tier; which item ids are actually worn for a
-// given style/equipment/seq now comes from Equipment.equippedVisualItemIds, resolved separately
-// per attachment instance rather than folded into one PlayerAppearance here (see
-// ActorRenderDataLoader's createPlayerActorData).
+// Seq ids are fixed per style; which item ids are actually worn for a given style/equipment/cast
+// now comes from Equipment.equippedVisualItemIds, resolved separately per attachment instance
+// rather than folded into one PlayerAppearance here (see ActorRenderDataLoader's
+// createPlayerActorData). attackSeqId is StanceSeqIds' single representative seq (unused at
+// runtime - Player reads the basic attack's own castSeqId instead - kept as tier 0's for the type).
+// Every ability's own cast seq (every weapon tier's basic attack, every skill) is baked generically
+// via allPlayerAbilities() in playerAssets() below, so this config only needs the seqs that aren't
+// tied to an ability at all: the style idle/walk/run and COMMON_EXTRA_SEQ_IDS' switch/death seqs.
 const STANCE_SEQ_CONFIG: Record<WeaponStyle, StanceSeqConfig> = {
     [WeaponStyle.RANGED]: {
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: BOW_SHOT_CAST_SEQ_ID,
-        extraSeqIds: COMMON_EXTRA_SEQ_IDS,
     },
     [WeaponStyle.MAGIC]: {
         idleSeqId: 813,
         walkSeqId: 1146,
         runSeqId: 1210,
         attackSeqId: MAGIC_BOLT_CAST_SEQ_ID,
-        extraSeqIds: [...COMMON_EXTRA_SEQ_IDS, ICE_BARRAGE_CAST_SEQ_ID],
     },
     [WeaponStyle.MELEE]: {
         idleSeqId: 808,
         walkSeqId: 819,
         runSeqId: 824,
         attackSeqId: SCIMITAR_SLASH_CAST_SEQ_ID,
-        extraSeqIds: [...COMMON_EXTRA_SEQ_IDS, CLEAVE_CAST_SEQ_ID, MAUL_SMASH_CAST_SEQ_ID],
     },
 };
 
@@ -112,7 +121,15 @@ export type ArrowObjBake = {
 
 export type ProjectileBake = SpotAnimBake | ArrowObjBake;
 
-function animatedSpotAnim(spotAnimId: number, seqId: number, modelScale?: number): SpotAnimBake {
+export type AnimatedSpotAnimBake = SpotAnimBake & {
+    readonly seq: Extract<SpotAnimSeq, { kind: "ANIMATED" }>;
+};
+
+function animatedSpotAnim(
+    spotAnimId: number,
+    seqId: number,
+    modelScale?: number,
+): AnimatedSpotAnimBake {
     return { kind: "SPOT_ANIM", spotAnimId, seq: { kind: "ANIMATED", seqId }, modelScale };
 }
 
@@ -163,6 +180,26 @@ const ARROW_LIGHTNESS_BOOST = 45;
 // slow-moving projectile reads as a bigger, boss-scale attack.
 const JAD_MAGE_BLAST_MODEL_SCALE = 128 * 3;
 
+// Bow of Faerdhinen's crystal arrow (SpotAnimType id): 1887, SP_ATTACK_ARROW_TRAVEL_FAERDHINEN, a
+// static model without a sequence.
+const CRYSTAL_ARROW_SPOTANIM_ID = 1887;
+
+// Warped sceptre projectile (SpotAnimType ids): 2569 travels, 2568 hits.
+const WARPED_SCEPTRE_PROJECTILE_SPOTANIM_ID = 2569;
+const WARPED_SCEPTRE_IMPACT_SPOTANIM_ID = 2568;
+
+// Trident of the swamp projectile (SpotAnimType ids, TOXIC_TOTS_*): 1040 travels, 1042 hits.
+const SWAMP_TRIDENT_PROJECTILE_SPOTANIM_ID = 1040;
+const SWAMP_TRIDENT_IMPACT_SPOTANIM_ID = 1042;
+
+// Tumeken's shadow projectile (SpotAnimType ids): 2126 travels, 2127 hits.
+const TUMEKENS_SHADOW_PROJECTILE_SPOTANIM_ID = 2126;
+const TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID = 2127;
+
+// Crystal halberd special weapon-trail (SpotAnimType id): 1232, DRAGON_HALBERD_SPECIAL_SOUTH_WHITE
+// (see VisualEffect.CRYSTAL_HALBERD_SPECIAL_SEQ_ID for why only the SOUTH bake is kept).
+const CRYSTAL_HALBERD_SPECIAL_SPOTANIM_ID = 1232;
+
 export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> = {
     [ProjectileKind.ARROW]: {
         kind: "ARROW_OBJ",
@@ -182,6 +219,11 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
         lengthScale: POWER_SHOT_MODEL_SCALE,
         lightnessBoost: ARROW_LIGHTNESS_BOOST,
     },
+    [ProjectileKind.CRYSTAL_ARROW]: {
+        kind: "SPOT_ANIM",
+        spotAnimId: CRYSTAL_ARROW_SPOTANIM_ID,
+        seq: { kind: "STATIC" },
+    },
     [ProjectileKind.JAD_MAGE_BLAST]: animatedSpotAnim(
         JAD_FIRE_PROJECTILE_SPOTANIM_ID,
         JAD_FIRE_SEQ_ID,
@@ -200,9 +242,21 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
         KET_ZEK_FIRE_BLAST_TRAVEL_SPOTANIM_ID,
         KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     ),
+    [ProjectileKind.WARPED_SCEPTRE]: animatedSpotAnim(
+        WARPED_SCEPTRE_PROJECTILE_SPOTANIM_ID,
+        WARPED_SCEPTRE_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.SWAMP_TRIDENT]: animatedSpotAnim(
+        SWAMP_TRIDENT_PROJECTILE_SPOTANIM_ID,
+        SWAMP_TRIDENT_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.TUMEKENS_SHADOW]: animatedSpotAnim(
+        TUMEKENS_SHADOW_PROJECTILE_SPOTANIM_ID,
+        TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
+    ),
 };
 
-export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, SpotAnimBake>> = {
+export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>> = {
     [VisualEffectKind.MAGIC_HIT]: animatedSpotAnim(FIRE_BOLT_HIT_SPOTANIM_ID, FIRE_BOLT_HIT_SEQ_ID),
     [VisualEffectKind.ICE_BARRAGE_HIT]: animatedSpotAnim(
         ICE_BARRAGE_HIT_SPOTANIM_ID,
@@ -219,7 +273,65 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, SpotAnimBake>> = {
         FALLING_SHADOW_SPOTANIM_ID,
         FALLING_SHADOW_SEQ_ID,
     ),
+    [VisualEffectKind.CRYSTAL_HALBERD_SPECIAL]: animatedSpotAnim(
+        CRYSTAL_HALBERD_SPECIAL_SPOTANIM_ID,
+        CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
+    ),
+    [VisualEffectKind.WARPED_SCEPTRE_IMPACT]: animatedSpotAnim(
+        WARPED_SCEPTRE_IMPACT_SPOTANIM_ID,
+        WARPED_SCEPTRE_IMPACT_SEQ_ID,
+    ),
+    [VisualEffectKind.SWAMP_TRIDENT_IMPACT]: animatedSpotAnim(
+        SWAMP_TRIDENT_IMPACT_SPOTANIM_ID,
+        SWAMP_TRIDENT_IMPACT_SEQ_ID,
+    ),
+    [VisualEffectKind.TUMEKENS_SHADOW_IMPACT]: animatedSpotAnim(
+        TUMEKENS_SHADOW_IMPACT_SPOTANIM_ID,
+        TUMEKENS_SHADOW_IMPACT_SEQ_ID,
+    ),
 };
+
+// A world object (lever/chest) has no animation of its own in this cache - see the comment on
+// LEVER_INTERACTION_ANIMATION_SEQ_ID/CHEST_INTERACTION_ANIMATION_SEQ_ID in game/Encounter.ts - so
+// it renders as one of two static locs, swapped by kind and WorldObjectVariant (see
+// webgl/loader/ActorRenderDataLoader.ts's createWorldObjectActorData).
+export type WorldObjectBake = {
+    readonly restLocId: number;
+    readonly activatedLocId: number;
+};
+
+// Lever: UPASS_LEVER_UP (3241, "Pull") swaps to UPASS_LEVER_DOWN (3242) once pulled.
+// Chest: CHESTCLOSED (375, "Open") swaps to CHESTOPEN (378) once opened.
+export const WORLD_OBJECT_BAKES: Readonly<Record<WorldObjectKind, WorldObjectBake>> = {
+    [WorldObjectKind.LEVER]: { restLocId: 3241, activatedLocId: 3242 },
+    [WorldObjectKind.CHEST]: { restLocId: 375, activatedLocId: 378 },
+};
+
+// Hans's (npc 3105) own body-region models, one per appearance slot they occupy - worked out with
+// a throwaway script (scripts/cache/verify-armour-throwaway.ts, not checked in) by rendering each
+// of npc.modelIds individually (model-raster.ts) and cross-referencing against the identkit
+// archive, since Hans is a fixed NPC body rather than a real player built from identikit parts (no
+// idk model in this cache matches any of npc.modelIds directly). Every one of the 8 raw model ids
+// npc 3105 lists is accounted for here exactly once: 217 head/hair/face (there is no separate bare-
+// face mesh to keep visible once a full helm hides this slot), 246 jaw/chin, 28515+320 torso (a
+// shirt plus its collar, which disappear together), 26630 arms, 176 hands, 28285 legs, 185 boots.
+export const PLAYER_BODY_KIT: readonly BodyKitPart[] = [
+    { slot: AppearanceSlot.HAIR, modelIds: [217] },
+    { slot: AppearanceSlot.JAW, modelIds: [246] },
+    { slot: AppearanceSlot.TORSO, modelIds: [28515, 320] },
+    { slot: AppearanceSlot.ARMS, modelIds: [26630] },
+    { slot: AppearanceSlot.HANDS, modelIds: [176] },
+    { slot: AppearanceSlot.LEGS, modelIds: [28285] },
+    { slot: AppearanceSlot.BOOTS, modelIds: [185] },
+];
+
+// The body-kit model ids actually visible for a style, once its permanently-worn armour (see
+// Equipment.armourWearInfoForStyle) has hidden whatever it covers - baked once per style rather
+// than per equipment combination, since that armour never changes tier (see
+// ActorRenderDataLoader.createPlayerActorData).
+export function bodyModelIdsForStyle(style: WeaponStyle): readonly number[] {
+    return resolveAppearance(PLAYER_BODY_KIT, armourWearInfoForStyle(style)).bodyModelIds;
+}
 
 export type PlayerAssets = {
     readonly baseNpcTypeId: number;
@@ -227,6 +339,9 @@ export type PlayerAssets = {
     // Every seq the body rig is posed with, across all styles.
     readonly seqIds: readonly number[];
     readonly attachmentItemIds: readonly number[];
+    // The body-kit model ids to bake per style (see bodyModelIdsForStyle) - one body mesh per
+    // style, not per equipment combination.
+    readonly bodyModelIdsByStyle: Readonly<Record<WeaponStyle, readonly number[]>>;
 };
 
 export type StaticEnemyTypeId = Exclude<EnemyTypeId, EnemyTypeId.PREVIEW>;
@@ -248,20 +363,27 @@ export type ActorAssets = {
     readonly enemyTypes: readonly EnemyTypeAssets[];
     readonly preview?: PreviewAssets;
     readonly projectiles: Readonly<Record<ProjectileKind, ProjectileBake>>;
-    readonly effects: Readonly<Record<VisualEffectKind, SpotAnimBake>>;
+    readonly effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>;
     // Every OSRS item that can ever appear as a ground drop (see Equipment.allDroppableItemIds).
     readonly groundItemIds: readonly number[];
+    // The kinds of world object (lever, chest) this encounter actually declares, deduplicated -
+    // each is baked once regardless of how many Interactions in the encounter operate it.
+    readonly worldObjectKinds: readonly WorldObjectKind[];
 };
 
-function playerAssets(): PlayerAssets {
+// interactionSeqIds are the encounter's interaction animations, which the player plays too.
+function playerAssets(interactionSeqIds: readonly number[]): PlayerAssets {
     const seqIds = new Set<number>();
     const itemIds = new Set<number>();
     const stanceSeqIds = {} as Record<WeaponStyle, StanceSeqIds>;
+    const bodyModelIdsByStyle = {} as Record<WeaponStyle, readonly number[]>;
+    for (const seqId of [...COMMON_EXTRA_SEQ_IDS, ...interactionSeqIds]) {
+        seqIds.add(seqId);
+    }
     for (const style of ALL_STYLES) {
-        const { idleSeqId, walkSeqId, runSeqId, attackSeqId, extraSeqIds } =
-            STANCE_SEQ_CONFIG[style];
+        const { idleSeqId, walkSeqId, runSeqId, attackSeqId } = STANCE_SEQ_CONFIG[style];
         stanceSeqIds[style] = { idleSeqId, walkSeqId, runSeqId, attackSeqId };
-        for (const seqId of [idleSeqId, walkSeqId, runSeqId, attackSeqId, ...extraSeqIds]) {
+        for (const seqId of [idleSeqId, walkSeqId, runSeqId, attackSeqId]) {
             seqIds.add(seqId);
         }
         for (const itemId of weaponVisualItemIds(style)) {
@@ -273,16 +395,29 @@ function playerAssets(): PlayerAssets {
                 itemIds.add(itemId);
             }
         }
+        for (const itemId of armourItemIdsForStyle(style)) {
+            itemIds.add(itemId);
+        }
+        bodyModelIdsByStyle[style] = bodyModelIdsForStyle(style);
     }
     for (const itemId of visualGroupItemIds(EquipmentPath.AMULET)) {
         itemIds.add(itemId);
     }
-    itemIds.add(ELDER_MAUL_ITEM_ID);
+    // Every cast-item override (elder maul/crystal halberd specials) and its own cast seq, derived
+    // generically from every player ability rather than named one by one here (see
+    // AbilityDefinition.castItemOverride).
+    for (const ability of allPlayerAbilities()) {
+        if (ability.castItemOverride) {
+            itemIds.add(ability.castItemOverride.itemId);
+        }
+        seqIds.add(ability.castSeqId);
+    }
     return {
         baseNpcTypeId: PLAYER_BASE_NPC_TYPE_ID,
         stanceSeqIds,
         seqIds: [...seqIds],
         attachmentItemIds: [...itemIds],
+        bodyModelIdsByStyle,
     };
 }
 
@@ -330,11 +465,14 @@ export function actorAssets(encounter: Encounter, preview?: AnimPreviewParams): 
             };
         });
     return {
-        player: playerAssets(),
+        player: playerAssets(
+            encounter.interactions.map((interaction) => interaction.animationSeqId),
+        ),
         enemyTypes,
         preview: preview ? previewAssets(preview) : undefined,
         projectiles: PROJECTILE_BAKES,
         effects: EFFECT_BAKES,
         groundItemIds: [...new Set(allDroppableItemIds())],
+        worldObjectKinds: [...new Set(encounter.worldObjects.map((object) => object.kind))],
     };
 }

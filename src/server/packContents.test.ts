@@ -23,6 +23,7 @@ function request(npcSpawnSquares: readonly MapSquareCoord[]) {
             mapSquares: LUMBRIDGE_SQUARES,
             npcTypeIds: [ACTOR_NPC_TYPE_ID],
             objTypeIds: [ACTOR_OBJ_TYPE_ID],
+            locTypeIds: [],
             seqIds: [426],
             spotAnimIds: [],
         }),

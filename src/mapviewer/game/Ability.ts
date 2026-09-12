@@ -1,9 +1,8 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
+import { SeqTiming, sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
 import { Combatant } from "./Combatant";
 import { Affects, HitEffect, Payload } from "./Effect";
 import { ProjectileSpec } from "./Projectile";
+import { SeqCatalog } from "./SeqCatalog";
 
 export enum CooldownGroup {
     ATTACK = 0,
@@ -44,6 +43,7 @@ export type ConeDelivery = {
     readonly kind: DeliveryKind.CONE;
     readonly angleRadians: number;
     readonly reach: number;
+    readonly casterHalfWidth: number;
 };
 
 // Everything within the radius (plus its hit radius) of the aimed point/combatant or the caster.
@@ -66,11 +66,25 @@ export type Delivery = TargetDelivery | ConeDelivery | CircleDelivery | Projecti
 
 // hitEffect is spawned on each affected combatant for TARGET/CIRCLE deliveries and tracked
 // projectiles, and once at the landing point for CONE deliveries and fixed-point projectiles.
+// casterEffect is spawned once on the caster itself when the ability resolves, regardless of
+// delivery kind - a weapon-special graphic that plays on the wielder (rotated to their facing)
+// rather than at the target or landing point.
 export type AbilityEffect<D extends Delivery = Delivery> = {
     readonly delivery: D;
     readonly affects: Affects;
     readonly payloads: readonly Payload[];
     readonly hitEffect?: HitEffect;
+    readonly casterEffect?: HitEffect;
+};
+
+// The item shown in the caster's hand for the duration of a cast, in place of whatever they have
+// equipped - e.g. the elder maul special or the crystal halberd special. hidesShield mirrors that
+// item's own wearpos2 (see Appearance.ItemWearInfo): true for a two-handed override item, which
+// hides a worn shield-slot attachment (defender/offhand book) the same way any other two-handed
+// weapon would.
+export type CastItemOverride = {
+    readonly itemId: number;
+    readonly hidesShield: boolean;
 };
 
 export type AbilityDefinition = {
@@ -93,6 +107,7 @@ export type AbilityDefinition = {
     readonly requires: readonly CooldownGroup[];
     readonly locks: readonly CooldownLock[];
     readonly effect: AbilityEffect;
+    readonly castItemOverride?: CastItemOverride;
 };
 
 // Wall-clock cast timing at the ability's castSpeed, derived from the cache's per-frame lengths
@@ -106,34 +121,24 @@ export type CastTiming = {
 };
 
 export type ResolvedAbility = AbilityDefinition & {
+    readonly castSeq: SeqTiming;
     readonly timing: CastTiming;
 };
 
-export function resolveCastTiming(
-    definition: AbilityDefinition,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): CastTiming {
+export function resolveCastTiming(definition: AbilityDefinition, castSeq: SeqTiming): CastTiming {
     return {
         impactSeconds:
-            sequenceTimeToFrameSeconds(
-                definition.castSeqId,
-                definition.contactFrame,
-                seqTypeLoader,
-                seqFrameLoader,
-            ) / definition.castSpeed,
-        animationSeconds:
-            sequenceDurationSeconds(definition.castSeqId, seqTypeLoader, seqFrameLoader) /
-            definition.castSpeed,
+            sequenceTimeToFrameSeconds(castSeq, definition.contactFrame) / definition.castSpeed,
+        animationSeconds: sequenceDurationSeconds(castSeq) / definition.castSpeed,
     };
 }
 
 export function resolveAbility(
     definition: AbilityDefinition,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
+    catalog: SeqCatalog,
 ): ResolvedAbility {
-    return { ...definition, timing: resolveCastTiming(definition, seqTypeLoader, seqFrameLoader) };
+    const castSeq = catalog.get(definition.castSeqId);
+    return { ...definition, castSeq, timing: resolveCastTiming(definition, castSeq) };
 }
 
 // The ATTACK-group lock's own seconds value, i.e. how long the ability keeps its caster from

@@ -1,8 +1,6 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityTarget, ResolvedAbility, WeaponStyle, abilityTargetPoint } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
-import { AnimationPlayback, AnimationState } from "./Animation";
+import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
 import {
     DEFAULT_EQUIPMENT,
@@ -14,6 +12,7 @@ import {
     equipmentAbilityModifiers,
     equipmentDamageTakenMultiplier,
     equipmentMaxHealthBonus,
+    weaponPathForStyle,
 } from "./Equipment";
 import {
     CharacterLevel,
@@ -30,7 +29,7 @@ import {
     applyStanceMechanicUpgrade,
 } from "./StanceMechanics";
 import { Terrain } from "./Terrain";
-import { PlayerLoadout, PlayerLoadoutsByStyle } from "./abilities";
+import { PlayerLoadoutsByStyle } from "./abilities";
 import { AbilitySlotReadiness, CastCosts, computeSlotReadiness } from "./abilityRules";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -56,6 +55,19 @@ export type StanceSeqIds = {
 };
 
 export type StanceSeqIdsByStance = Record<WeaponStyle, StanceSeqIds>;
+
+export type StanceSeqs = {
+    readonly idle: SeqTiming;
+    readonly walk: SeqTiming;
+    readonly run: SeqTiming;
+};
+
+// Everything the player plays, resolved once when the encounter loads.
+export type PlayerAnimations = {
+    readonly stances: Readonly<Record<WeaponStyle, StanceSeqs>>;
+    readonly death: SeqTiming;
+    readonly loadouts: PlayerLoadoutsByStyle<ResolvedAbility>;
+};
 
 export class Player implements Combatant, ManaPool {
     static readonly HIT_RADIUS = 64;
@@ -121,48 +133,33 @@ export class Player implements Combatant, ManaPool {
         public x: number,
         public y: number,
         readonly level: number,
-        readonly styleSeqIds: StanceSeqIdsByStance,
-        private readonly loadouts: PlayerLoadoutsByStyle<ResolvedAbility>,
+        private readonly animations: PlayerAnimations,
     ) {
         this.spawnX = x;
         this.spawnY = y;
-        this.animation = new AnimationState(this.activeSeqIds.idleSeqId);
+        this.animation = new AnimationState(this.activeStance.idle);
     }
 
-    private get activeSeqIds(): StanceSeqIds {
-        return this.styleSeqIds[this.style];
+    private get activeStance(): StanceSeqs {
+        return this.animations.stances[this.style];
     }
 
-    get idleSeqId(): number {
-        return this.activeSeqIds.idleSeqId;
-    }
-
-    get walkSeqId(): number {
-        return this.activeSeqIds.walkSeqId;
-    }
-
-    get runSeqId(): number {
-        return this.activeSeqIds.runSeqId;
-    }
-
-    private get activeLoadout(): PlayerLoadout<ResolvedAbility> {
-        const combined = composeModifiers(
+    private get combinedModifiers(): AbilityModifiers {
+        return composeModifiers(
             composeModifiers(this.modifiers, levelAbilityModifiers(this.progression.level)),
             equipmentAbilityModifiers(this.equipment, this.style),
         );
-        const loadout = this.loadouts[this.style];
-        return {
-            basicAttack: applyModifiers(loadout.basicAttack, combined),
-            skills: loadout.skills.map((ability) => applyModifiers(ability, combined)),
-        };
     }
 
     get basicAttack(): ResolvedAbility {
-        return this.activeLoadout.basicAttack;
+        const loadout = this.animations.loadouts[this.style];
+        const weaponTier = this.equipment[weaponPathForStyle(this.style)];
+        return applyModifiers(loadout.basicAttackByTier[weaponTier], this.combinedModifiers);
     }
 
     get skills(): readonly ResolvedAbility[] {
-        return this.activeLoadout.skills;
+        const loadout = this.animations.loadouts[this.style];
+        return loadout.skills.map((ability) => applyModifiers(ability, this.combinedModifiers));
     }
 
     getModifiers(): AbilityModifiers {
@@ -304,7 +301,7 @@ export class Player implements Combatant, ManaPool {
     die(timeSeconds: number): void {
         this.health = 0;
         this.deadUntil = timeSeconds + Player.DEATH_SECONDS;
-        this.animation.restart(Player.DEATH_SEQ_ID);
+        this.animation.restart(this.animations.death);
     }
 
     respawn(): void {
@@ -315,24 +312,17 @@ export class Player implements Combatant, ManaPool {
         this.deadUntil = undefined;
         this.castAnimationStartedAt = undefined;
         this.abilityRuntime.reset();
-        this.animation.restart(this.idleSeqId);
+        this.animation.restart(this.activeStance.idle);
     }
 
     update(
         input: PlayerInput,
         deltaTimeSeconds: number,
         timeSeconds: number,
-        seqTypeLoader: SeqTypeLoader,
-        seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
         if (this.isDead(timeSeconds)) {
-            this.animation.advance(
-                deltaTimeSeconds,
-                seqTypeLoader,
-                seqFrameLoader,
-                AnimationPlayback.ONCE,
-            );
+            this.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE);
             return;
         }
 
@@ -345,12 +335,10 @@ export class Player implements Combatant, ManaPool {
         if (activeCast) {
             if (this.castAnimationStartedAt !== activeCast.startedAt) {
                 this.castAnimationStartedAt = activeCast.startedAt;
-                this.animation.restart(activeCast.definition.castSeqId);
+                this.animation.restart(activeCast.definition.castSeq);
             }
             this.animation.advance(
                 deltaTimeSeconds,
-                seqTypeLoader,
-                seqFrameLoader,
                 AnimationPlayback.ONCE,
                 activeCast.definition.castSpeed,
             );
@@ -359,8 +347,8 @@ export class Player implements Combatant, ManaPool {
 
         const length = Math.hypot(input.x, input.y);
         if (length === 0) {
-            this.animation.setSequence(this.idleSeqId);
-            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+            this.animation.setSequence(this.activeStance.idle);
+            this.animation.advance(deltaTimeSeconds);
             return;
         }
 
@@ -379,8 +367,8 @@ export class Player implements Combatant, ManaPool {
         this.x = position.x;
         this.y = position.y;
         this.rotation = directionToRotation(input.x, input.y);
-        this.animation.setSequence(input.running ? this.runSeqId : this.walkSeqId);
-        this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+        this.animation.setSequence(input.running ? this.activeStance.run : this.activeStance.walk);
+        this.animation.advance(deltaTimeSeconds);
     }
 
     beginCast(ability: ResolvedAbility, target: AbilityTarget, timeSeconds: number): void {

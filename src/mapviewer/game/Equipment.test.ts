@@ -2,11 +2,12 @@ import { WeaponStyle } from "./Ability";
 import {
     ALL_EQUIPMENT_PATHS,
     DEFAULT_EQUIPMENT,
-    ELDER_MAUL_ITEM_ID,
     EQUIPMENT_PATHS,
     EquipmentGrantId,
     EquipmentPath,
     applyEquipmentGrant,
+    armourItemIdsForStyle,
+    armourPathsForStyle,
     createEquipmentGrant,
     equipAtTier,
     equipmentAbilityModifiers,
@@ -16,6 +17,7 @@ import {
     isAtMaxTier,
     itemIdForTier,
     maxTierIndex,
+    parseGearOverride,
     secondaryPathForStyle,
     styleSetGrant,
     visualGroupItemId,
@@ -23,15 +25,49 @@ import {
     weaponItemId,
     weaponVisualItemIds,
 } from "./Equipment";
-import { MAUL_SMASH_CAST_SEQ_ID } from "./abilities";
+import {
+    CLEAVE,
+    CRYSTAL_HALBERD_ITEM_ID,
+    ELDER_MAUL_ITEM_ID,
+    MAUL_SMASH,
+    WEAPON_LADDERS,
+} from "./abilities";
 import { DEFAULT_ABILITY_MODIFIERS, composeModifiers } from "./upgrades";
 
 describe("equipment tier ladders", () => {
     it("every path has a non-empty ladder with unique item ids", () => {
         for (const path of ALL_EQUIPMENT_PATHS) {
             const { itemIds } = EQUIPMENT_PATHS[path];
-            expect(itemIds.length).toBeGreaterThan(1);
+            expect(itemIds.length).toBeGreaterThan(0);
             expect(new Set(itemIds).size).toBe(itemIds.length);
+        }
+    });
+
+    it("every path's wearInfo is empty or matches its itemIds length", () => {
+        for (const path of ALL_EQUIPMENT_PATHS) {
+            const { itemIds, wearInfo } = EQUIPMENT_PATHS[path];
+            expect(wearInfo.length === 0 || wearInfo.length === itemIds.length).toBe(true);
+        }
+    });
+
+    it("the weapon ladders track abilities.WEAPON_LADDERS exactly (item ids and length)", () => {
+        for (const [style, path] of [
+            [WeaponStyle.RANGED, EquipmentPath.BOW],
+            [WeaponStyle.MELEE, EquipmentPath.SCIMITAR],
+            [WeaponStyle.MAGIC, EquipmentPath.STAFF],
+        ] as const) {
+            expect(EQUIPMENT_PATHS[path].itemIds).toEqual(
+                WEAPON_LADDERS[style].map((tier) => tier.itemId),
+            );
+        }
+    });
+
+    it("armour paths are single-tier and always worn (never a ground drop)", () => {
+        for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
+            for (const path of armourPathsForStyle(style)) {
+                expect(EQUIPMENT_PATHS[path].itemIds).toHaveLength(1);
+                expect(isAtMaxTier(DEFAULT_EQUIPMENT, path)).toBe(true);
+            }
         }
     });
 
@@ -133,7 +169,11 @@ describe("equipmentAbilityModifiers", () => {
 
     it("composes with upgrade modifiers via composeModifiers rather than overwriting them", () => {
         const upgradeModifiers = { ...DEFAULT_ABILITY_MODIFIERS, damageMultiplier: 1.2 };
-        const equipment = equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.BOW, 5);
+        const equipment = equipAtTier(
+            DEFAULT_EQUIPMENT,
+            EquipmentPath.BOW,
+            maxTierIndex(EquipmentPath.BOW),
+        );
         const combined = composeModifiers(
             upgradeModifiers,
             equipmentAbilityModifiers(equipment, WeaponStyle.RANGED),
@@ -186,10 +226,11 @@ describe("visualGroupItemId / visualGroupItemIds", () => {
 });
 
 describe("weaponItemId / weaponVisualItemIds", () => {
-    it("bow and scimitar each weapon tier introduces its own item id", () => {
+    it("every weapon path's tier introduces its own item id", () => {
         const styleAndPath = [
             { style: WeaponStyle.RANGED, path: EquipmentPath.BOW },
             { style: WeaponStyle.MELEE, path: EquipmentPath.SCIMITAR },
+            { style: WeaponStyle.MAGIC, path: EquipmentPath.STAFF },
         ];
         for (const { style, path } of styleAndPath) {
             const ids = new Set<number>();
@@ -212,39 +253,133 @@ describe("weaponItemId / weaponVisualItemIds", () => {
     });
 });
 
-describe("equippedVisualItemIds", () => {
-    it("wears the weapon and amulet, but no secondary, for ranged", () => {
-        expect(secondaryPathForStyle(WeaponStyle.RANGED)).toBeUndefined();
-        const ids = equippedVisualItemIds(WeaponStyle.RANGED, DEFAULT_EQUIPMENT, 808);
-        expect(ids).toEqual([
-            weaponItemId(WeaponStyle.RANGED, DEFAULT_EQUIPMENT),
-            visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.AMULET),
+describe("armourItemIdsForStyle / armourPathsForStyle", () => {
+    it("melee and magic wear a helm, body and legs; ranged wears no helm", () => {
+        expect(armourPathsForStyle(WeaponStyle.MELEE)).toEqual([
+            EquipmentPath.MELEE_HELM,
+            EquipmentPath.MELEE_BODY,
+            EquipmentPath.MELEE_LEGS,
+        ]);
+        expect(armourPathsForStyle(WeaponStyle.MAGIC)).toEqual([
+            EquipmentPath.MAGIC_HELM,
+            EquipmentPath.MAGIC_BODY,
+            EquipmentPath.MAGIC_LEGS,
+        ]);
+        expect(armourPathsForStyle(WeaponStyle.RANGED)).toEqual([
+            EquipmentPath.RANGED_BODY,
+            EquipmentPath.RANGED_LEGS,
         ]);
     });
 
-    it("wears the weapon, secondary offhand and amulet for melee and magic", () => {
+    it("returns the (only) tier-0 item id for each armour path", () => {
+        for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
+            const ids = armourItemIdsForStyle(style);
+            expect(ids).toEqual(armourPathsForStyle(style).map((path) => itemIdForTier(path, 0)));
+        }
+    });
+});
+
+describe("equippedVisualItemIds", () => {
+    it("wears the weapon, amulet and armour, but no secondary, for ranged", () => {
+        expect(secondaryPathForStyle(WeaponStyle.RANGED)).toBeUndefined();
+        const ids = equippedVisualItemIds(WeaponStyle.RANGED, DEFAULT_EQUIPMENT, undefined);
+        expect(ids).toEqual([
+            weaponItemId(WeaponStyle.RANGED, DEFAULT_EQUIPMENT),
+            visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.AMULET),
+            ...armourItemIdsForStyle(WeaponStyle.RANGED),
+        ]);
+    });
+
+    it("wears the weapon, secondary offhand, amulet and armour for melee and magic", () => {
         for (const { style, secondaryPath } of [
             { style: WeaponStyle.MELEE, secondaryPath: EquipmentPath.DEFENDER },
             { style: WeaponStyle.MAGIC, secondaryPath: EquipmentPath.OFFHAND },
         ]) {
             expect(secondaryPathForStyle(style)).toBe(secondaryPath);
-            const ids = equippedVisualItemIds(style, DEFAULT_EQUIPMENT, 808);
+            const ids = equippedVisualItemIds(style, DEFAULT_EQUIPMENT, undefined);
             expect(ids).toEqual([
                 weaponItemId(style, DEFAULT_EQUIPMENT),
                 visualGroupItemId(DEFAULT_EQUIPMENT, secondaryPath),
                 visualGroupItemId(DEFAULT_EQUIPMENT, EquipmentPath.AMULET),
+                ...armourItemIdsForStyle(style),
             ]);
         }
     });
 
-    it("swaps to only the elder maul during the maul-smash special, regardless of equipment", () => {
+    it("a two-handed melee weapon (scythe of vitur) drops the defender but keeps armour and amulet", () => {
+        const equipment = equipAtTier(
+            DEFAULT_EQUIPMENT,
+            EquipmentPath.SCIMITAR,
+            maxTierIndex(EquipmentPath.SCIMITAR),
+        );
+        const ids = equippedVisualItemIds(WeaponStyle.MELEE, equipment, undefined);
+        expect(ids).toEqual([
+            weaponItemId(WeaponStyle.MELEE, equipment),
+            visualGroupItemId(equipment, EquipmentPath.AMULET),
+            ...armourItemIdsForStyle(WeaponStyle.MELEE),
+        ]);
+    });
+
+    it("swaps to only the crystal halberd plus armour/amulet during Cleave, regardless of equipment", () => {
+        const equipment = equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.DEFENDER, 5);
+        expect(CLEAVE.castItemOverride).toEqual({
+            itemId: CRYSTAL_HALBERD_ITEM_ID,
+            hidesShield: true,
+        });
+        const ids = equippedVisualItemIds(WeaponStyle.MELEE, equipment, CLEAVE.castItemOverride);
+        expect(ids).toEqual([
+            CRYSTAL_HALBERD_ITEM_ID,
+            visualGroupItemId(equipment, EquipmentPath.AMULET),
+            ...armourItemIdsForStyle(WeaponStyle.MELEE),
+        ]);
+    });
+
+    it("swaps to only the elder maul plus armour/amulet during the maul-smash special, regardless of equipment", () => {
         const equipment = equipAtTier(
             equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.SCIMITAR, 3),
             EquipmentPath.AMULET,
             5,
         );
-        expect(equippedVisualItemIds(WeaponStyle.MELEE, equipment, MAUL_SMASH_CAST_SEQ_ID)).toEqual(
-            [ELDER_MAUL_ITEM_ID],
+        expect(MAUL_SMASH.castItemOverride).toEqual({
+            itemId: ELDER_MAUL_ITEM_ID,
+            hidesShield: true,
+        });
+        const ids = equippedVisualItemIds(
+            WeaponStyle.MELEE,
+            equipment,
+            MAUL_SMASH.castItemOverride,
         );
+        expect(ids).toEqual([
+            ELDER_MAUL_ITEM_ID,
+            visualGroupItemId(equipment, EquipmentPath.AMULET),
+            ...armourItemIdsForStyle(WeaponStyle.MELEE),
+        ]);
+    });
+});
+
+describe("parseGearOverride", () => {
+    it("is empty when the gear param is absent", () => {
+        expect(parseGearOverride(new URLSearchParams())).toEqual([]);
+    });
+
+    it("parses one or more <path>:<tier> entries", () => {
+        expect(parseGearOverride(new URLSearchParams("gear=scimitar:3,staff:2"))).toEqual([
+            { path: EquipmentPath.SCIMITAR, tierIndex: 3 },
+            { path: EquipmentPath.STAFF, tierIndex: 2 },
+        ]);
+    });
+
+    it("throws for an unknown path", () => {
+        expect(() => parseGearOverride(new URLSearchParams("gear=nunchucks:1"))).toThrow();
+    });
+
+    it("throws for a non-integer or negative tier", () => {
+        expect(() => parseGearOverride(new URLSearchParams("gear=scimitar:x"))).toThrow();
+        expect(() => parseGearOverride(new URLSearchParams("gear=scimitar:-1"))).toThrow();
+    });
+
+    it("throws for a tier past the path's max", () => {
+        const tooHigh = maxTierIndex(EquipmentPath.SCIMITAR) + 1;
+        expect(() => parseGearOverride(new URLSearchParams(`gear=scimitar:${tooHigh}`))).toThrow();
     });
 });

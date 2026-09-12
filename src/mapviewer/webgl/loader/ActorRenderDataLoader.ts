@@ -1,3 +1,6 @@
+import { LocModelLoader } from "../../../rs/config/loctype/LocModelLoader";
+import { LocModelType } from "../../../rs/config/loctype/LocModelType";
+import { LocTypeLoader } from "../../../rs/config/loctype/LocTypeLoader";
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
 import { SpotAnimTypeLoader } from "../../../rs/config/spotanimtype/SpotAnimTypeLoader";
 import { Model } from "../../../rs/model/Model";
@@ -11,10 +14,13 @@ import {
     PreviewAssets,
     ProjectileBake,
     SpotAnimBake,
+    WORLD_OBJECT_BAKES,
     actorAssets,
 } from "../../assets/ActorAssets";
+import { WeaponStyle } from "../../game/Ability";
 import { getEncounter } from "../../game/Encounter";
 import { EnemyTypeId } from "../../game/EnemyType";
+import { WorldObjectKind } from "../../game/Interaction";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
@@ -26,15 +32,23 @@ import {
     PreviewGfxAnimationSet,
     PreviewGfxBake,
     ProjectileActorData,
+    WorldObjectActorData,
+    WorldObjectMeshes,
 } from "../actor/ActorRenderData";
 import { SkinAnimation } from "../skin/SkinAnimation";
 import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
-import { SkinFaceSelection, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
+import { SkinFaceSelection, SkinnedMesh, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
 import { SkinSeqFrames, Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
 import { brightenModel, buildSpotAnimModel } from "./ActorModels";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
+
+const PLAYER_STYLES: readonly WeaponStyle[] = [
+    WeaponStyle.MELEE,
+    WeaponStyle.RANGED,
+    WeaponStyle.MAGIC,
+];
 
 function createPlayerActorData(
     playerModelLoader: PlayerModelLoader,
@@ -43,18 +57,40 @@ function createPlayerActorData(
     assets: PlayerAssets,
 ): PlayerActorData {
     const baseNpc = npcTypeLoader.load(assets.baseNpcTypeId);
-    const bodyOnlyAppearance = new PlayerAppearance(
+
+    // The full, unfiltered body (every one of npc 3105's own model ids) is only used to pose item
+    // attachments below (buildBaseModel merges it with each item so the item's own recolor/label
+    // data lines up the same way it would on the complete body) - it is never itself drawn, so its
+    // face count only matters as the offset item meshes are extracted from.
+    const fullBodyAppearance = new PlayerAppearance(
         baseNpc.modelIds,
         [],
         PlayerGender.MALE,
         baseNpc.ambient,
         baseNpc.contrast,
     );
-    const bodyOnlyModel = playerModelLoader.getModel(bodyOnlyAppearance, -1, -1);
-    if (!bodyOnlyModel) {
+    const fullBodyModel = playerModelLoader.getModel(fullBodyAppearance, -1, -1);
+    if (!fullBodyModel) {
         throw new Error("Player body model is missing from the cache");
     }
-    const bodyFaceCount = bodyOnlyModel.faceCount;
+    const bodyFaceCount = fullBodyModel.faceCount;
+
+    // One body mesh per style, built from only that style's visible body-kit model ids (see
+    // ActorAssets.bodyModelIdsForStyle) - a style's permanently-worn armour hides the rest.
+    const styleBodyEntries = PLAYER_STYLES.map((style): [WeaponStyle, Model] => {
+        const appearance = new PlayerAppearance(
+            assets.bodyModelIdsByStyle[style],
+            [],
+            PlayerGender.MALE,
+            baseNpc.ambient,
+            baseNpc.contrast,
+        );
+        const model = playerModelLoader.getModel(appearance, -1, -1);
+        if (!model) {
+            throw new Error(`Player body model is missing for style ${style}`);
+        }
+        return [style, model];
+    });
 
     const itemEntries = assets.attachmentItemIds.map((itemId): [number, Model] => {
         const appearance = new PlayerAppearance(
@@ -71,9 +107,9 @@ function createPlayerActorData(
         return [itemId, model];
     });
     const rig = skinning.addRig(
-        bodyOnlyModel,
+        fullBodyModel,
         [
-            { model: bodyOnlyModel, selection: SkinFaceSelection.all() },
+            ...styleBodyEntries.map(([, model]) => ({ model, selection: SkinFaceSelection.all() })),
             ...itemEntries.map(([, model]) => ({
                 model,
                 selection: SkinFaceSelection.startingAt(bodyFaceCount),
@@ -82,13 +118,17 @@ function createPlayerActorData(
         requireAllFrames(skinning, assets.seqIds),
         PoseSpace.identity(),
     );
-    const [bodyMesh, ...itemMeshes] = rig.meshes;
+    const bodyMeshesByStyle = Object.fromEntries(
+        styleBodyEntries.map(([style], index) => [style, rig.meshes[index]]),
+    ) as Record<WeaponStyle, SkinnedMesh>;
+    const itemMeshes = rig.meshes.slice(styleBodyEntries.length);
     const itemsByItemId = new Map(
         itemEntries.map(([itemId], index) => [itemId, itemMeshes[index]]),
     );
     return {
         stanceSeqIds: assets.stanceSeqIds,
-        body: { mesh: bodyMesh, animationsBySeqId: rig.animationsBySeqId },
+        bodyMeshesByStyle,
+        bodyAnimationsBySeqId: rig.animationsBySeqId,
         itemsByItemId,
     };
 }
@@ -109,6 +149,53 @@ function createGroundItemActorData(
         animationsByItemId.set(itemId, skinning.addStatic(model));
     }
     return { animationsByItemId };
+}
+
+// Neither the lever nor the chest loc animates itself in this cache (see the WORLD_OBJECT_BAKES
+// comment), so each is baked as two static rest meshes - one per WorldObjectVariant - and the
+// renderer swaps which one it draws.
+function bakeWorldObjectLoc(
+    locTypeLoader: LocTypeLoader,
+    locModelLoader: LocModelLoader,
+    skinning: Skinning,
+    locId: number,
+): SkinAnimation {
+    const locType = locTypeLoader.load(locId);
+    const rest = locModelLoader.getRestModel(locType, LocModelType.NORMAL, 0);
+    if (!rest) {
+        throw new Error(`World object loc model is missing from the cache for loc ${locId}`);
+    }
+    return skinning.addStatic(rest.model);
+}
+
+function createWorldObjectActorData(
+    state: WorkerState,
+    skinning: Skinning,
+    kinds: readonly WorldObjectKind[],
+): WorldObjectActorData {
+    const locTypeLoader = state.cacheLoaderFactory.getLocTypeLoader();
+    const locModelLoader = new LocModelLoader(
+        locTypeLoader,
+        state.cacheLoaderFactory.getModelLoader(),
+        state.textureLoader,
+        state.seqTypeLoader,
+        state.seqFrameLoader,
+        state.cacheLoaderFactory.getSkeletalSeqLoader(),
+    );
+    const meshesByKind = new Map<WorldObjectKind, WorldObjectMeshes>();
+    for (const kind of kinds) {
+        const bake = WORLD_OBJECT_BAKES[kind];
+        meshesByKind.set(kind, {
+            rest: bakeWorldObjectLoc(locTypeLoader, locModelLoader, skinning, bake.restLocId),
+            activated: bakeWorldObjectLoc(
+                locTypeLoader,
+                locModelLoader,
+                skinning,
+                bake.activatedLocId,
+            ),
+        });
+    }
+    return { meshesByKind };
 }
 
 function createEnemyTypeAnimationSet(
@@ -351,6 +438,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
 
         const projectiles = createProjectileActorData(state, skinning, assets);
         const groundItems = createGroundItemActorData(state, skinning, assets.groundItemIds);
+        const worldObjects = createWorldObjectActorData(state, skinning, assets.worldObjectKinds);
 
         const { geometry: skinned, usedTextureIds } = skinning.build();
 
@@ -378,7 +466,14 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
 
                 skinned,
 
-                actorData: { player, enemyTypes, projectiles, groundItems, previewGfx },
+                actorData: {
+                    player,
+                    enemyTypes,
+                    projectiles,
+                    groundItems,
+                    worldObjects,
+                    previewGfx,
+                },
 
                 loadedTextures,
             },

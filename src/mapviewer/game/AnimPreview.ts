@@ -74,7 +74,7 @@ export type PreviewNpcConfig = {
 
 // Builds a synthetic EnemyType for the animation viewer's one preview enemy: idle/walk/death/
 // attack all point at the npc's real idle/walk seqs (death and attack are never played, since the
-// preview enemy always has previewSeqId set and skips the state machine entirely), and its
+// preview enemy always has previewSeq set and skips the state machine entirely), and its
 // abilities are empty since none are ever cast.
 export function buildPreviewEnemyType(npc: PreviewNpcConfig): EnemyType {
     return {

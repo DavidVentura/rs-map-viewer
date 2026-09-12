@@ -46,7 +46,12 @@ function point(x: number, y: number): AbilityTarget {
 }
 
 const TARGET: DirectDelivery = { kind: DeliveryKind.TARGET, reach: 48 };
-const CONE: DirectDelivery = { kind: DeliveryKind.CONE, angleRadians: Math.PI / 2, reach: 300 };
+const CONE: DirectDelivery = {
+    kind: DeliveryKind.CONE,
+    angleRadians: Math.PI / 2,
+    reach: 300,
+    casterHalfWidth: 0,
+};
 const CIRCLE_AT_TARGET: DirectDelivery = {
     kind: DeliveryKind.CIRCLE,
     radiusTiles: 1,
@@ -125,6 +130,32 @@ describe("affectedCombatants: CONE", () => {
             affectedCombatants(caster, CONE, Affects.ALLIED, point(0, 200), [ally, enemy]),
         ).toEqual([ally]);
     });
+
+    it("reaches enemies beside the caster when the cone is wide at the caster", () => {
+        const wide: DirectDelivery = {
+            kind: DeliveryKind.CONE,
+            angleRadians: Math.PI / 2,
+            reach: 300,
+            casterHalfWidth: 150,
+        };
+        const besideEast = makeCombatant(140, 0, Faction.ENEMY);
+        const besideWest = makeCombatant(-140, 0, Faction.ENEMY);
+        const behind = makeCombatant(0, -60, Faction.ENEMY);
+        const pastReach = makeCombatant(0, 300 + 16 + 16 + 1, Faction.ENEMY);
+        const atReach = makeCombatant(0, 300 + 16 + 16, Faction.ENEMY);
+        expect(
+            affectedCombatants(caster, wide, Affects.HOSTILE, point(0, 200), [
+                besideEast,
+                besideWest,
+                behind,
+                pastReach,
+                atReach,
+            ]),
+        ).toEqual([besideEast, besideWest, atReach]);
+        expect(
+            affectedCombatants(caster, CONE, Affects.HOSTILE, point(0, 200), [besideEast]),
+        ).toEqual([]);
+    });
 });
 
 describe("affectedCombatants: CIRCLE", () => {
@@ -197,6 +228,7 @@ describe("coneTileSpawns", () => {
         kind: DeliveryKind.CONE,
         angleRadians: (2 * Math.PI) / 3,
         reach: 3 * TILE_SIZE,
+        casterHalfWidth: 0,
     };
     const casterX = 0.5 * TILE_SIZE;
     const casterY = 0.5 * TILE_SIZE;
@@ -223,6 +255,21 @@ describe("coneTileSpawns", () => {
                 ].map(String),
             ),
         );
+    });
+
+    it("covers the tiles beside the caster but none behind it when wide at the caster", () => {
+        const tiles = coneTileSpawns(
+            casterX,
+            casterY,
+            facingNorth,
+            { ...wideCone, casterHalfWidth: 1.5 * TILE_SIZE },
+            noJitter,
+        ).map(tileOf);
+        expect(tiles).toContainEqual([1, 0]);
+        expect(tiles).toContainEqual([-1, 0]);
+        expect(tiles).toContainEqual([0, 3]);
+        expect(tiles).not.toContainEqual([0, 4]);
+        expect(tiles.filter(([, tileY]) => tileY < 0)).toEqual([]);
     });
 
     it("never includes the caster's own tile", () => {

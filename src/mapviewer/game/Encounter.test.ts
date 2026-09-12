@@ -8,6 +8,7 @@ import {
     validateEncounter,
 } from "./Encounter";
 import { ENEMY_TYPES, EnemyTypeId } from "./EnemyType";
+import { WorldObjectKind } from "./Interaction";
 import { createPhaseId } from "./Phase";
 
 function tileKey(x: number, y: number, level: number): string {
@@ -118,6 +119,59 @@ describe("encounters", () => {
             }
         },
     );
+
+    it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE, EncounterId.SANDBOX])(
+        "%s declares exactly one lever and one chest, shared across every phase's interactions",
+        (id) => {
+            const encounter = getEncounter(id);
+            if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+                throw new Error("expected wave encounter");
+            }
+            const levers = encounter.worldObjects.filter((o) => o.kind === WorldObjectKind.LEVER);
+            const chests = encounter.worldObjects.filter((o) => o.kind === WorldObjectKind.CHEST);
+            expect(levers).toHaveLength(1);
+            expect(chests).toHaveLength(1);
+
+            const startInteractions = encounter.interactions.filter(
+                (interaction) => interaction.action.kind === "START_PHASE",
+            );
+            expect(startInteractions).toHaveLength(encounter.phases.length);
+            expect(startInteractions.every((i) => i.objectId === levers[0].id)).toBe(true);
+
+            const rewardInteractions = encounter.interactions.filter(
+                (interaction) => interaction.action.kind === "ACTIVATE_PHASE_REWARDS",
+            );
+            expect(rewardInteractions).toHaveLength(
+                encounter.phases.filter((phase) => phase.rewards.length > 0).length,
+            );
+            expect(rewardInteractions.every((i) => i.objectId === chests[0].id)).toBe(true);
+        },
+    );
+
+    it("rejects an interaction that targets an undeclared world object", () => {
+        const fightCaves = getEncounter(EncounterId.FIGHT_CAVES);
+        if (fightCaves.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("expected wave encounter");
+        }
+        const invalid: WaveEncounter = { ...fightCaves, worldObjects: [] };
+
+        expect(() => validateEncounter(invalid)).toThrow(RangeError);
+    });
+
+    it("rejects a start interaction that targets the chest instead of the lever", () => {
+        const fightCaves = getEncounter(EncounterId.FIGHT_CAVES);
+        if (fightCaves.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("expected wave encounter");
+        }
+        const chest = fightCaves.worldObjects.find((o) => o.kind === WorldObjectKind.CHEST)!;
+        const [firstInteraction, ...rest] = fightCaves.interactions;
+        const invalid: WaveEncounter = {
+            ...fightCaves,
+            interactions: [{ ...firstInteraction, objectId: chest.id }, ...rest],
+        };
+
+        expect(() => validateEncounter(invalid)).toThrow(RangeError);
+    });
 
     it("requires interaction actions to reference a declared phase", () => {
         const fightCaves = getEncounter(EncounterId.FIGHT_CAVES);

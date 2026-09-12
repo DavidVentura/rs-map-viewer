@@ -11,7 +11,6 @@ import {
     drawHealSplat,
     drawHealthGlobe,
     drawInteractionActionText,
-    drawInteractionMarker,
     drawLevelProgress,
     drawManaGlobe,
     drawPhaseCounter,
@@ -45,9 +44,6 @@ export class Hud {
         ctx.clearRect(0, 0, width, height);
 
         this.drawGroundItemLabels(frame);
-        for (const interaction of frame.interactions) {
-            drawInteractionMarker(ctx, interaction);
-        }
         if (frame.interactionActionText) {
             drawInteractionActionText(ctx, frame.interactionActionText);
         }

@@ -6,11 +6,13 @@ describe("canonicalCacheRoots", () => {
             mapSquares: [],
             npcTypeIds: [3127, 2189, 3127],
             objTypeIds: [882, 21003, 882, 1],
+            locTypeIds: [375, 378, 375],
             seqIds: [2659, 426, 2659],
             spotAnimIds: [451, 449, 450, 449],
         });
         expect(roots.npcTypeIds).toEqual([2189, 3127]);
         expect(roots.objTypeIds).toEqual([1, 882, 21003]);
+        expect(roots.locTypeIds).toEqual([375, 378]);
         expect(roots.seqIds).toEqual([426, 2659]);
         expect(roots.spotAnimIds).toEqual([449, 450, 451]);
     });
@@ -25,6 +27,7 @@ describe("canonicalCacheRoots", () => {
             ],
             npcTypeIds: [],
             objTypeIds: [],
+            locTypeIds: [],
             seqIds: [],
             spotAnimIds: [],
         });
@@ -43,6 +46,7 @@ describe("canonicalCacheRoots", () => {
             ],
             npcTypeIds: new Set([1, 2, 3]),
             objTypeIds: [5, 4],
+            locTypeIds: [6],
             seqIds: [9, 8, 9],
             spotAnimIds: [7],
         });
@@ -54,6 +58,7 @@ describe("canonicalCacheRoots", () => {
             ],
             npcTypeIds: [3, 2, 1, 1],
             objTypeIds: [4, 5],
+            locTypeIds: [6, 6],
             seqIds: [8, 9],
             spotAnimIds: [7, 7],
         });
@@ -66,6 +71,7 @@ describe("canonicalCacheRoots", () => {
                 mapSquares: [],
                 npcTypeIds: [],
                 objTypeIds: [],
+                locTypeIds: [],
                 seqIds: [id],
                 spotAnimIds: [],
             }),
@@ -81,6 +87,7 @@ describe("parseCacheRoots", () => {
         ],
         npcTypeIds: [3127, 2189, 3127],
         objTypeIds: [],
+        locTypeIds: [375, 378],
         seqIds: [426],
         spotAnimIds: [451, 449],
     };
@@ -107,6 +114,7 @@ describe("parseCacheRoots", () => {
         ["a missing list", { ...valid, seqIds: undefined }, /seqIds is not an array/],
         ["a string id", { ...valid, npcTypeIds: ["3127"] }, /Invalid npcTypeIds cache root "3127"/],
         ["a negative id", { ...valid, objTypeIds: [-1] }, /Invalid objTypeIds cache root -1/],
+        ["a negative loc id", { ...valid, locTypeIds: [-1] }, /Invalid locTypeIds cache root -1/],
         ["a fractional id", { ...valid, spotAnimIds: [1.5] }, /Invalid spotAnimIds/],
         ["a square that is not an object", { ...valid, mapSquares: [5] }, /Invalid map square 5/],
         [

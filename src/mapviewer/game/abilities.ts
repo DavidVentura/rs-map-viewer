@@ -1,7 +1,6 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
     AbilityDefinition,
+    CastItemOverride,
     CircleCenter,
     CooldownGroup,
     DeliveryKind,
@@ -13,23 +12,21 @@ import {
 import { Affects, DamageRoll, PayloadKind, damagePayload } from "./Effect";
 import {
     ARROW_SPEC,
-    FIRE_BOLT_HIT_SEQ_ID,
-    JAD_FIRE_SEQ_ID,
+    CRYSTAL_ARROW_SPEC,
     JAD_MAGE_BLAST_SPEC,
     JAD_RANGED_ROCK_SPEC,
     KET_ZEK_FIRE_BLAST_SPEC,
     MAGIC_SPEC,
     POWER_SHOT_SPEC,
     ProjectileSpec,
+    SWAMP_TRIDENT_SPEC,
     TOK_XIL_SHOT_SPEC,
+    TUMEKENS_SHADOW_SPEC,
     VOLLEY_ARROW_SPEC,
+    WARPED_SCEPTRE_SPEC,
 } from "./Projectile";
-import {
-    ICE_BARRAGE_HIT_SEQ_ID,
-    MAUL_IMPACT_SPARK_SEQ_ID,
-    TZHAAR_HEAL_SEQ_ID,
-    VisualEffectKind,
-} from "./VisualEffect";
+import { SeqCatalog } from "./SeqCatalog";
+import { VisualEffectKind } from "./VisualEffect";
 
 // The player's basic-attack sequences are the same ids the renderer preloads per stance (see
 // ActorAssets' STANCE_SEQ_CONFIG).
@@ -39,6 +36,28 @@ export const SCIMITAR_SLASH_CAST_SEQ_ID = 390;
 export const ICE_BARRAGE_CAST_SEQ_ID = 1979;
 export const CLEAVE_CAST_SEQ_ID = 1203;
 export const HEALING_POTION_CAST_SEQ_ID = 829;
+
+// The item shown in hand for each weapon tier and cast-item-override special, verified to exist
+// and render in this cache with a throwaway script (scripts/cache/verify-armour-throwaway.ts, not
+// checked in).
+export const RUNE_SCIMITAR_ITEM_ID = 1333;
+export const DRAGON_SCIMITAR_ITEM_ID = 4587;
+export const ABYSSAL_WHIP_ITEM_ID = 4151;
+export const SCYTHE_OF_VITUR_ITEM_ID = 22325;
+export const STAFF_ITEM_ID = 1379;
+export const WARPED_SCEPTRE_ITEM_ID = 28585;
+export const SWAMP_TRIDENT_ITEM_ID = 12899;
+export const TUMEKENS_SHADOW_ITEM_ID = 27275;
+export const SHORTBOW_ITEM_ID = 841;
+export const MAGIC_SHORTBOW_ITEM_ID = 861;
+export const BOW_OF_FAERDHINEN_ITEM_ID = 25865;
+export const TWISTED_BOW_ITEM_ID = 20997;
+// Elder maul special attack (obj 21003) and crystal halberd special attack (obj 23987): the item
+// shown in the caster's hand for the duration of MAUL_SMASH/CLEAVE, in place of whatever weapon is
+// actually equipped (see AbilityDefinition.castItemOverride). Both are two-handed (op14=5, hiding
+// a worn shield-slot attachment), like every other override/2h weapon in this project.
+export const ELDER_MAUL_ITEM_ID = 21003;
+export const CRYSTAL_HALBERD_ITEM_ID = 23987;
 
 function singleShot(spec: ProjectileSpec): ProjectileDelivery {
     return { kind: DeliveryKind.PROJECTILE, spec, count: 1, spreadAngleRadians: 0 };
@@ -88,7 +107,7 @@ export const MAGIC_BOLT: AbilityDefinition = {
         delivery: singleShot(MAGIC_SPEC),
         affects: Affects.HOSTILE,
         payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
-        hitEffect: { kind: VisualEffectKind.MAGIC_HIT, seqId: FIRE_BOLT_HIT_SEQ_ID, height: 124 },
+        hitEffect: { kind: VisualEffectKind.MAGIC_HIT, height: 124 },
     },
 };
 
@@ -112,6 +131,200 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     },
 };
 
+// Dragon scimitar reuses the plain scimitar's own slash animation and timing (real OSRS scimitars
+// of every tier share one slash animation); only the item shown in hand differs by tier.
+export const DRAGON_SCIMITAR_SLASH: AbilityDefinition = {
+    ...SCIMITAR_SLASH,
+    id: "dragon_scimitar_slash",
+    name: "Dragon Scimitar Slash",
+};
+
+export const WHIP_ATTACK_CAST_SEQ_ID = 1658;
+
+// The whip's own crack: contact at its longest hold (frame 8, 160ms raw), castSpeed picked so that
+// hold lands at the same wall-clock offset as the plain scimitar's own contact frame (359ms),
+// keeping the melee ladder's basic attack equally snappy regardless of the equipped tier.
+export const WHIP_SLASH: AbilityDefinition = {
+    id: "whip_slash",
+    name: "Abyssal Whip Attack",
+    castSeqId: WHIP_ATTACK_CAST_SEQ_ID,
+    contactFrame: 8,
+    castSpeed: 1.06,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
+    },
+};
+
+export const SCYTHE_ATTACK_CAST_SEQ_ID = 8056;
+
+// Contact at the scythe's biggest single hold (frame 11, 220ms raw), the follow-through as the
+// blade completes its sweep; castSpeed picked the same way as the whip's, to land at the same
+// wall-clock offset as the plain scimitar's contact frame.
+export const SCYTHE_SWEEP: AbilityDefinition = {
+    id: "scythe_sweep",
+    name: "Scythe of Vitur Attack",
+    castSeqId: SCYTHE_ATTACK_CAST_SEQ_ID,
+    contactFrame: 11,
+    castSpeed: 1.23,
+    channelSeconds: 0,
+    manaCost: 0,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
+    effect: {
+        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
+    },
+};
+
+// Magic shortbow/Bow of Faerdhinen/twisted bow all share the plain shortbow's own bow-draw
+// animation (real OSRS bows share one basic-attack animation regardless of tier); only the fired
+// projectile's own model differs for Bow of Faerdhinen (see CRYSTAL_ARROW_SPEC).
+export const MAGIC_SHORTBOW_SHOT: AbilityDefinition = {
+    ...BOW_SHOT,
+    id: "magic_shortbow_shot",
+    name: "Magic Shortbow Shot",
+};
+export const BOW_OF_FAERDHINEN_SHOT: AbilityDefinition = {
+    ...BOW_SHOT,
+    id: "bow_of_faerdhinen_shot",
+    name: "Bow of Faerdhinen Shot",
+    effect: { ...BOW_SHOT.effect, delivery: singleShot(CRYSTAL_ARROW_SPEC) },
+};
+export const TWISTED_BOW_SHOT: AbilityDefinition = {
+    ...BOW_SHOT,
+    id: "twisted_bow_shot",
+    name: "Twisted Bow Shot",
+};
+
+export const WARPED_SCEPTRE_ATTACK_CAST_SEQ_ID = 10501;
+
+// Contact at the cast's peak hold (frame 9), castSpeed picked so the whole sequence lands at the
+// same wall-clock offset as the plain staff's own impact (413ms) - see MAGIC_BOLT.
+export const WARPED_SCEPTRE_BOLT: AbilityDefinition = {
+    id: "warped_sceptre_bolt",
+    name: "Warped Sceptre Attack",
+    castSeqId: WARPED_SCEPTRE_ATTACK_CAST_SEQ_ID,
+    contactFrame: 9,
+    castSpeed: 2.52,
+    channelSeconds: 0,
+    manaCost: 10,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.19 }],
+    effect: {
+        delivery: singleShot(WARPED_SCEPTRE_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
+        hitEffect: {
+            kind: VisualEffectKind.WARPED_SCEPTRE_IMPACT,
+            height: 100,
+        },
+    },
+};
+
+export const SWAMP_TRIDENT_ATTACK_CAST_SEQ_ID = 1167;
+
+// Fairly uniform frame lengths (the generic magic "wave" cast several mid/high magic weapons
+// share), so contact sits ~55% through the build-up, the rule of thumb used elsewhere in this file
+// for animations with no standout hold (see JAD_MAGE_BLAST).
+export const SWAMP_TRIDENT_BOLT: AbilityDefinition = {
+    id: "swamp_trident_bolt",
+    name: "Trident of the Swamp Attack",
+    castSeqId: SWAMP_TRIDENT_ATTACK_CAST_SEQ_ID,
+    contactFrame: 8,
+    castSpeed: 1.07,
+    channelSeconds: 0,
+    manaCost: 10,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.19 }],
+    effect: {
+        delivery: singleShot(SWAMP_TRIDENT_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
+        hitEffect: {
+            kind: VisualEffectKind.SWAMP_TRIDENT_IMPACT,
+            height: 100,
+        },
+    },
+};
+
+export const TUMEKENS_SHADOW_ATTACK_CAST_SEQ_ID = 9493;
+
+// Perfectly uniform frame lengths, so contact sits ~55% through the build-up like the trident's
+// above. The slower castSpeed (a longer wall-clock cast than the rest of the magic ladder) reads as
+// a heavier, more deliberate cast for the ladder's top tier.
+export const TUMEKENS_SHADOW_BEAM: AbilityDefinition = {
+    id: "tumekens_shadow_beam",
+    name: "Tumeken's Shadow Attack",
+    castSeqId: TUMEKENS_SHADOW_ATTACK_CAST_SEQ_ID,
+    contactFrame: 9,
+    castSpeed: 2.18,
+    channelSeconds: 0,
+    manaCost: 10,
+    maxCharges: 1,
+    rechargeSeconds: 0,
+    requires: [CooldownGroup.ATTACK],
+    locks: [{ group: CooldownGroup.ATTACK, seconds: 0.19 }],
+    effect: {
+        delivery: singleShot(TUMEKENS_SHADOW_SPEC),
+        affects: Affects.HOSTILE,
+        payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
+        hitEffect: {
+            kind: VisualEffectKind.TUMEKENS_SHADOW_IMPACT,
+            height: 100,
+        },
+    },
+};
+
+// One entry per weapon tier: the item shown in hand and that tier's own basic attack. Lengths must
+// match EQUIPMENT_PATHS' weapon ladders exactly - Equipment.ts derives its weapon itemIds arrays
+// from these instead of duplicating them, so the two cannot drift apart.
+export type WeaponTier = {
+    readonly itemId: number;
+    readonly basicAttack: AbilityDefinition;
+};
+
+export const MELEE_WEAPON_LADDER: readonly WeaponTier[] = [
+    { itemId: RUNE_SCIMITAR_ITEM_ID, basicAttack: SCIMITAR_SLASH },
+    { itemId: DRAGON_SCIMITAR_ITEM_ID, basicAttack: DRAGON_SCIMITAR_SLASH },
+    { itemId: ABYSSAL_WHIP_ITEM_ID, basicAttack: WHIP_SLASH },
+    { itemId: SCYTHE_OF_VITUR_ITEM_ID, basicAttack: SCYTHE_SWEEP },
+];
+
+export const RANGED_WEAPON_LADDER: readonly WeaponTier[] = [
+    { itemId: SHORTBOW_ITEM_ID, basicAttack: BOW_SHOT },
+    { itemId: MAGIC_SHORTBOW_ITEM_ID, basicAttack: MAGIC_SHORTBOW_SHOT },
+    { itemId: BOW_OF_FAERDHINEN_ITEM_ID, basicAttack: BOW_OF_FAERDHINEN_SHOT },
+    { itemId: TWISTED_BOW_ITEM_ID, basicAttack: TWISTED_BOW_SHOT },
+];
+
+export const MAGIC_WEAPON_LADDER: readonly WeaponTier[] = [
+    { itemId: STAFF_ITEM_ID, basicAttack: MAGIC_BOLT },
+    { itemId: WARPED_SCEPTRE_ITEM_ID, basicAttack: WARPED_SCEPTRE_BOLT },
+    { itemId: SWAMP_TRIDENT_ITEM_ID, basicAttack: SWAMP_TRIDENT_BOLT },
+    { itemId: TUMEKENS_SHADOW_ITEM_ID, basicAttack: TUMEKENS_SHADOW_BEAM },
+];
+
+export const WEAPON_LADDERS: Readonly<Record<WeaponStyle, readonly WeaponTier[]>> = {
+    [WeaponStyle.MELEE]: MELEE_WEAPON_LADDER,
+    [WeaponStyle.RANGED]: RANGED_WEAPON_LADDER,
+    [WeaponStyle.MAGIC]: MAGIC_WEAPON_LADDER,
+};
+
 const SPECIAL_RECHARGE_SECONDS = 6;
 
 // Both melee specials hit for twice the basic slash.
@@ -120,7 +333,16 @@ const MELEE_SPECIAL_DAMAGE = damagePayload(
     SCIMITAR_SLASH_DAMAGE.max * 2,
 );
 
-// The wide sweep's most-held frame reads as contact across the arc.
+const MELEE_SWEEP_DELIVERY = {
+    kind: DeliveryKind.CONE,
+    angleRadians: (2 * Math.PI) / 3,
+    reach: 3 * 128,
+    casterHalfWidth: 1.5 * 128,
+} as const;
+
+// The wide sweep's most-held frame reads as contact across the arc. Swaps the equipped weapon for
+// the crystal halberd (see castItemOverride) and plays its own weapon-trail graphic on the caster,
+// rotated to their facing (see VisualEffect.CRYSTAL_HALBERD_SPECIAL_SEQ_ID).
 export const CLEAVE: AbilityDefinition = {
     id: "cleave",
     name: "Cleave",
@@ -133,10 +355,15 @@ export const CLEAVE: AbilityDefinition = {
     rechargeSeconds: SPECIAL_RECHARGE_SECONDS,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.55 }],
+    castItemOverride: { itemId: CRYSTAL_HALBERD_ITEM_ID, hidesShield: true },
     effect: {
-        delivery: { kind: DeliveryKind.CONE, angleRadians: Math.PI / 2, reach: 2.5 * 128 },
+        delivery: MELEE_SWEEP_DELIVERY,
         affects: Affects.HOSTILE,
         payloads: [MELEE_SPECIAL_DAMAGE],
+        casterEffect: {
+            kind: VisualEffectKind.CRYSTAL_HALBERD_SPECIAL,
+            height: 100,
+        },
     },
 };
 
@@ -159,7 +386,6 @@ export const ICE_BARRAGE: AbilityDefinition = {
         payloads: [damagePayload(MAGIC_BOLT_DAMAGE), { kind: PayloadKind.FREEZE, seconds: 3 }],
         hitEffect: {
             kind: VisualEffectKind.ICE_BARRAGE_HIT,
-            seqId: ICE_BARRAGE_HIT_SEQ_ID,
             height: 100,
         },
     },
@@ -368,7 +594,7 @@ export const YT_MEJKOT_HEAL_PULSE: AbilityDefinition = {
         delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 4, center: CircleCenter.CASTER },
         affects: Affects.ALLIED,
         payloads: [{ kind: PayloadKind.HEAL, amount: 15 }],
-        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
+        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, height: 120 },
     },
 };
 
@@ -393,8 +619,9 @@ export const MAUL_SMASH: AbilityDefinition = {
     rechargeSeconds: MAUL_SMASH_RECHARGE_SECONDS,
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 1.6 }],
+    castItemOverride: { itemId: ELDER_MAUL_ITEM_ID, hidesShield: true },
     effect: {
-        delivery: { kind: DeliveryKind.CONE, angleRadians: (2 * Math.PI) / 3, reach: 3 * 128 },
+        delivery: MELEE_SWEEP_DELIVERY,
         affects: Affects.HOSTILE,
         payloads: [MELEE_SPECIAL_DAMAGE],
         // Two impact graphics both read well in the per-tile placement and the owner has not
@@ -402,7 +629,6 @@ export const MAUL_SMASH: AbilityDefinition = {
         // and DUST_WAVE (2184, Zebak's roar dust, swap in with DUST_WAVE_SEQ_ID). Both stay baked.
         hitEffect: {
             kind: VisualEffectKind.MAUL_IMPACT_SPARK,
-            seqId: MAUL_IMPACT_SPARK_SEQ_ID,
             height: 0,
         },
     },
@@ -477,7 +703,7 @@ export const JAD_MAGE_BLAST: AbilityDefinition = {
         delivery: singleShot(JAD_MAGE_BLAST_SPEC),
         affects: Affects.HOSTILE,
         payloads: [damagePayload(25, 40)],
-        hitEffect: { kind: VisualEffectKind.JAD_FIRE_HIT, seqId: JAD_FIRE_SEQ_ID, height: 124 },
+        hitEffect: { kind: VisualEffectKind.JAD_FIRE_HIT, height: 124 },
     },
 };
 
@@ -499,44 +725,70 @@ export const YT_HURKOT_HEAL_PULSE: AbilityDefinition = {
         delivery: { kind: DeliveryKind.CIRCLE, radiusTiles: 4, center: CircleCenter.CASTER },
         affects: Affects.ALLIED,
         payloads: [{ kind: PayloadKind.HEAL, amount: 30 }],
-        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, seqId: TZHAAR_HEAL_SEQ_ID, height: 120 },
+        hitEffect: { kind: VisualEffectKind.TZHAAR_HEAL, height: 120 },
     },
 };
 
 export type PlayerLoadout<TAbility> = {
-    readonly basicAttack: TAbility;
+    // One basic attack per weapon tier (see WEAPON_LADDERS) - which one is active depends on the
+    // player's currently-equipped tier for this style, not just the style itself.
+    readonly basicAttackByTier: readonly TAbility[];
     readonly skills: readonly TAbility[];
 };
 
 export type PlayerLoadoutsByStyle<TAbility> = Record<WeaponStyle, PlayerLoadout<TAbility>>;
 
+const ALL_STYLES: readonly WeaponStyle[] = [
+    WeaponStyle.MELEE,
+    WeaponStyle.RANGED,
+    WeaponStyle.MAGIC,
+];
+
+// Every ability the player can ever cast, across every style - the composition point for the
+// bake-time item/seq enumeration in ActorAssets (cast-item overrides, weapon-ladder attack seqs),
+// so nothing there needs its own separate list of ability ids to stay in sync with this file.
+export function allPlayerAbilities(): readonly AbilityDefinition[] {
+    return ALL_STYLES.flatMap((style) => {
+        const loadout = buildPlayerLoadout(style);
+        return [...loadout.basicAttackByTier, ...loadout.skills];
+    });
+}
+
+// Every cast-item override, keyed by its ability's own cast seq id - the runtime-facing lookup
+// WebGLMapViewerRenderer uses (from the player's current animation.seqId) to find the item override
+// to pass into Equipment.equippedVisualItemIds, so nothing outside this file hardcodes which
+// ability has one.
+export const CAST_ITEM_OVERRIDES_BY_SEQ_ID: ReadonlyMap<number, CastItemOverride> = new Map(
+    allPlayerAbilities()
+        .filter(
+            (ability): ability is AbilityDefinition & { castItemOverride: CastItemOverride } =>
+                ability.castItemOverride !== undefined,
+        )
+        .map((ability) => [ability.castSeqId, ability.castItemOverride]),
+);
+
 export function buildPlayerLoadout(style: WeaponStyle): PlayerLoadout<AbilityDefinition> {
+    const basicAttackByTier = WEAPON_LADDERS[style].map((tier) => tier.basicAttack);
     switch (style) {
         case WeaponStyle.MELEE:
-            return {
-                basicAttack: SCIMITAR_SLASH,
-                skills: [CLEAVE, MAUL_SMASH, HEALING_POTION],
-            };
+            return { basicAttackByTier, skills: [CLEAVE, MAUL_SMASH, HEALING_POTION] };
         case WeaponStyle.MAGIC:
-            return { basicAttack: MAGIC_BOLT, skills: [ICE_BARRAGE, HEALING_POTION] };
+            return { basicAttackByTier, skills: [ICE_BARRAGE, HEALING_POTION] };
         case WeaponStyle.RANGED:
-            return { basicAttack: BOW_SHOT, skills: [VOLLEY, POWER_SHOT, HEALING_POTION] };
+            return { basicAttackByTier, skills: [VOLLEY, POWER_SHOT, HEALING_POTION] };
     }
 }
 
-// The composition point for the player's loadouts: every cast timing is read from the
-// cache here, once per Player, so nothing downstream needs the sequence loaders.
-export function resolvePlayerLoadouts(
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): PlayerLoadoutsByStyle<ResolvedAbility> {
+// The composition point for the player's loadouts: every cast sequence is resolved here, once per
+// encounter load, so nothing downstream looks a sequence up.
+export function resolvePlayerLoadouts(catalog: SeqCatalog): PlayerLoadoutsByStyle<ResolvedAbility> {
     const resolveLoadout = (style: WeaponStyle): PlayerLoadout<ResolvedAbility> => {
         const loadout = buildPlayerLoadout(style);
         return {
-            basicAttack: resolveAbility(loadout.basicAttack, seqTypeLoader, seqFrameLoader),
-            skills: loadout.skills.map((definition) =>
-                resolveAbility(definition, seqTypeLoader, seqFrameLoader),
+            basicAttackByTier: loadout.basicAttackByTier.map((definition) =>
+                resolveAbility(definition, catalog),
             ),
+            skills: loadout.skills.map((definition) => resolveAbility(definition, catalog)),
         };
     };
     return {

@@ -16,7 +16,13 @@ import { Affects, PayloadKind, damagePayload } from "./Effect";
 import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
-import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId } from "./EnemyType";
+import {
+    DropTier,
+    EnemyBehaviour,
+    EnemyTypeId,
+    ResolvedEnemyType,
+    resolveEnemyType,
+} from "./EnemyType";
 import {
     AbilitySlotInput,
     CombatInput,
@@ -25,14 +31,15 @@ import {
     SimInput,
 } from "./GameWorld";
 import {
-    createAuthoredLocationTarget,
+    WorldObjectKind,
     createInteraction,
     createInteractionId,
-    createInteractionPose,
+    createWorldObject,
+    createWorldObjectId,
     createWorldPosition,
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
-import { Player, StanceSeqIdsByStance } from "./Player";
+import { Player } from "./Player";
 import { createExperience } from "./Progression";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { recordStationaryRangedHit } from "./StanceMechanics";
@@ -53,7 +60,12 @@ import {
     VOLLEY,
     YT_MEJKOT_HEAL_PULSE,
 } from "./abilities";
-import { stubSequenceLoaders } from "./testLoaders";
+import {
+    STUB_FRAME_COUNT,
+    STUB_FRAME_SECONDS,
+    stubEncounterAnimations,
+    stubSeqCatalog,
+} from "./testLoaders";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -73,44 +85,42 @@ class FakeTerrain implements Terrain {
     }
 }
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+const seqCatalog = stubSeqCatalog();
+const ANIMATIONS = stubEncounterAnimations();
 
 function resolve(definition: AbilityDefinition): ResolvedAbility {
-    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+    return resolveAbility(definition, seqCatalog);
 }
 
 function impactOf(definition: AbilityDefinition): number {
     return resolve(definition).timing.impactSeconds;
 }
 
-const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
-    [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
-    [WeaponStyle.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
-    [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
-};
-
 function makeEnemyType(
     idleSeqId: number,
     walkSeqId: number,
     deathSeqId: number,
     abilities: readonly AbilityDefinition[] = [GOBLIN_MELEE],
-): EnemyType {
-    return {
-        id: EnemyTypeId.GOBLIN,
-        npcTypeId: 0,
-        idleSeqId,
-        walkSeqId,
-        deathSeqId,
-        attackSeqId: -1,
-        hitRadius: 64,
-        projectileLaunchHeight: 40,
-        maxHealth: 20,
-        experienceReward: createExperience(0),
-        walkSpeed: 288 * 1.6,
-        behaviour: EnemyBehaviour.RUSHER,
-        abilities,
-        dropTier: DropTier.NONE,
-    };
+): ResolvedEnemyType {
+    return resolveEnemyType(
+        {
+            id: EnemyTypeId.GOBLIN,
+            npcTypeId: 0,
+            idleSeqId,
+            walkSeqId,
+            deathSeqId,
+            attackSeqId: -1,
+            hitRadius: 64,
+            projectileLaunchHeight: 40,
+            maxHealth: 20,
+            experienceReward: createExperience(0),
+            walkSpeed: 288 * 1.6,
+            behaviour: EnemyBehaviour.RUSHER,
+            abilities,
+            dropTier: DropTier.NONE,
+        },
+        seqCatalog,
+    );
 }
 
 function idleCombat(): CombatInput {
@@ -183,8 +193,8 @@ function autoUpgradeInput(): SimInput {
 
 describe("GameWorld ability wiring", () => {
     it("fires an arrow once the bow's wind-up elapses, not before", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const target = point(500, 0);
 
         advanceSeconds(world, holdBasicAttack(target), impactOf(BOW_SHOT) - 0.05);
@@ -195,8 +205,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("re-fires the bow on cooldown while the slot stays held", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         // Far enough that neither arrow reaches its aimed landing point (and disappears) within
         // this test's short window, so both fired arrows are still in flight to be counted.
         const target = point(100000, 0);
@@ -207,8 +217,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("fires two tracked arrows after five confirmed stationary ranged hits", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const player = world.player!;
         for (let hit = 0; hit < 5; hit++) {
             player.stanceMechanics = recordStationaryRangedHit(player.stanceMechanics);
@@ -221,8 +231,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("counts a confirmed ranged hit and clears the sequence on movement", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(100, 0, 0, { ...makeEnemyType(1, 2, 3), maxHealth: 100 });
         const player = world.player!;
 
@@ -244,8 +254,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("heals the player and locks the ATTACK group when the potion is used", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const player = world.player!;
         player.health = 50;
         advanceSeconds(world, holdSkill(2, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
@@ -256,8 +266,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("no-ops the potion at full health but still consumes the charge", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const player = world.player!;
         expect(player.health).toBe(player.maxHealth);
         advanceSeconds(world, holdSkill(2, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
@@ -268,8 +278,8 @@ describe("GameWorld ability wiring", () => {
     });
 
     it("switches instantly through SimInput, with no delay before the player can move", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const player = world.player!;
         expect(player.style).toBe(WeaponStyle.RANGED);
 
@@ -292,8 +302,8 @@ describe("GameWorld ability wiring", () => {
 
 describe("Melee style", () => {
     it("does not swing when the enemy is out of reach, and walks the player toward it instead", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
@@ -308,8 +318,8 @@ describe("Melee style", () => {
     });
 
     it("does not chase an out-of-range target when a melee skill is held", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
@@ -324,8 +334,8 @@ describe("Melee style", () => {
     });
 
     it("swings once close enough and damages the enemy", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
@@ -337,8 +347,8 @@ describe("Melee style", () => {
     });
 
     it("Cleave hits an enemy in front of the player for double the basic slash damage", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
@@ -351,8 +361,8 @@ describe("Melee style", () => {
     });
 
     it("Cleave does not hit an enemy behind the player's facing", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, -200, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
@@ -368,8 +378,8 @@ describe("Scheduled visual effects", () => {
     const dustWave = MAUL_SMASH.effect.hitEffect!;
 
     it("starts a pending effect once its start time is due, not before", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.pendingVisualEffects.push({
             hitEffect: dustWave,
             anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
@@ -388,8 +398,8 @@ describe("Scheduled visual effects", () => {
     });
 
     it("counts pending effects against the visual effect budget", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         world.player!.style = WeaponStyle.MAGIC;
         for (let i = 0; i < GameWorld.MAX_VISUAL_EFFECTS; i++) {
@@ -419,8 +429,8 @@ describe("Maul Smash ground dust", () => {
         world: GameWorld;
         scheduled: ScheduledVisualEffect[];
     } {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0.5 * TILE_SIZE, 0.5 * TILE_SIZE, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0.5 * TILE_SIZE, 0.5 * TILE_SIZE, 0);
         world.player!.style = WeaponStyle.MELEE;
         const placeholders: ScheduledVisualEffect[] = Array.from({ length: reserved }, () => ({
             hitEffect: MAUL_SMASH.effect.hitEffect!,
@@ -471,22 +481,25 @@ describe("Maul Smash ground dust", () => {
         );
     });
 
-    it("Cleave has no ground graphic", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+    it("Cleave has no per-tile ground graphic, only its own caster-anchored weapon trail", () => {
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.player!.style = WeaponStyle.MELEE;
 
         advanceSeconds(world, holdSkill(0, point(0, 200)), impactOf(CLEAVE) + 0.05);
 
         expect(world.pendingVisualEffects.length).toBe(0);
-        expect(world.visualEffects.length).toBe(0);
+        expect(world.visualEffects.length).toBe(1);
+        expect(world.visualEffects[0].kind).toBe(CLEAVE.effect.casterEffect!.kind);
+        expect(world.visualEffects[0].x).toBe(world.player!.x);
+        expect(world.visualEffects[0].y).toBe(world.player!.y);
     });
 });
 
 describe("Ranged style", () => {
     it("Volley fires one arrow per spread direction on wind-up", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const target = point(500, 0);
         const count =
             VOLLEY.effect.delivery.kind === DeliveryKind.PROJECTILE
@@ -499,8 +512,8 @@ describe("Ranged style", () => {
     });
 
     it("Power Shot pierces through multiple enemies along its path", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(200, 0, 0, makeEnemyType(1, 2, 3));
         world.spawnEnemy(400, 0, 0, makeEnemyType(1, 2, 3));
         const [near, far] = world.enemies;
@@ -514,8 +527,8 @@ describe("Ranged style", () => {
 
 describe("Magic style", () => {
     it("refunds magic mana when a distinct enemy is hit", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MAGIC;
@@ -528,8 +541,8 @@ describe("Magic style", () => {
     });
 
     it("Ice Barrage damages and freezes enemies within its area", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MAGIC;
@@ -543,9 +556,9 @@ describe("Magic style", () => {
     });
 
     it("refunds mana once per distinct enemy hit by a crowd spell", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.setGodMode(true);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         world.spawnEnemy(50, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
@@ -558,8 +571,8 @@ describe("Magic style", () => {
     });
 
     it("centers on the ground point when no enemy is targeted", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(300, 0, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MAGIC;
@@ -577,8 +590,8 @@ describe("Enemy attack cycle", () => {
     });
 
     it("lands a melee hit on the player once the wind-up completes while still in reach", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         const enemy = world.enemies[0];
@@ -590,8 +603,8 @@ describe("Enemy attack cycle", () => {
     });
 
     it("leaves the player's health unchanged in god mode", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         world.setGodMode(true);
         const player = world.player!;
@@ -602,8 +615,8 @@ describe("Enemy attack cycle", () => {
     });
 
     it("misses the melee hit if the player retreats out of reach during the wind-up (dodge by distance)", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         const enemy = world.enemies[0];
@@ -631,8 +644,8 @@ describe("Enemy attack cycle", () => {
     });
 
     it("cancels the enemy's wind-up entirely if frozen mid wind-up", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         const enemy = world.enemies[0];
@@ -669,8 +682,8 @@ describe("Enemy attack cycle", () => {
                 payloads: [damagePayload(3)],
             },
         };
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [rangedAttack]));
         const player = world.player!;
 
@@ -687,8 +700,8 @@ describe("Enemy attack cycle", () => {
 
 describe("Enemy death and respawn", () => {
     it("dies, emits ENEMY_DIED, then respawns at full health at its spawn point after a delay, emitting ENEMY_RESPAWNED", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(50, 100, 0, makeEnemyType(1, 2, 3));
         const enemy = world.enemies[0];
         enemy.health = 0;
@@ -720,8 +733,8 @@ describe("Enemy death and respawn", () => {
     });
 
     it("awards authored enemy experience and emits a level-up event", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(0, 0, 0);
         const enemyId = world.spawnEnemy(100, 0, 0, {
             ...makeEnemyType(1, 2, 3),
             experienceReward: createExperience(100),
@@ -742,8 +755,8 @@ describe("Enemy death and respawn", () => {
 
 describe("Player death and respawn", () => {
     it("dies, ignores input for the death duration, then respawns at full health/mana and resets the encounter", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
-        world.spawnPlayer(10, 20, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
+        world.spawnPlayer(10, 20, 0);
         world.spawnEnemy(50, 100, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         const enemy = world.enemies[0];
@@ -781,8 +794,8 @@ describe("Player death and respawn", () => {
 
 describe("Projectile telegraph", () => {
     it("spawns a falling shadow at the rock's landing point that disappears once it lands", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [JAD_RANGED_STOMP]));
         const player = world.player!;
 
@@ -820,8 +833,8 @@ describe("Projectile telegraph", () => {
             }
         }
         const terrain = new SlopedTerrain();
-        const world = new GameWorld(terrain, seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(terrain, ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [JAD_RANGED_STOMP]));
         const player = world.player!;
 
@@ -871,8 +884,8 @@ describe("Projectile telegraph", () => {
     });
 
     it("spawns no telegraph for a fixed-point spec without one", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [TOK_XIL_RANGED_SHOT]));
 
         advanceSeconds(world, idleInput(), impactOf(TOK_XIL_RANGED_SHOT) + 0.05);
@@ -904,13 +917,8 @@ const NOVA_TEST: AbilityDefinition = {
 
 describe("Faction filtering through one resolver", () => {
     it("hits only enemies when the player casts a hostile circle, and only the player when an enemy casts the same one", () => {
-        const playerWorld = new GameWorld(
-            new FakeTerrain(),
-            seqTypeLoader,
-            seqFrameLoader,
-            () => 0,
-        );
-        playerWorld.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const playerWorld = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        playerWorld.spawnPlayer(0, 0, 0);
         playerWorld.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3));
         playerWorld.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3));
         const player = playerWorld.player!;
@@ -922,8 +930,8 @@ describe("Faction filtering through one resolver", () => {
             expect(enemy.health).toBe(enemy.maxHealth - 10);
         }
 
-        const enemyWorld = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        enemyWorld.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const enemyWorld = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        enemyWorld.spawnPlayer(0, 0, 0);
         enemyWorld.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3, [NOVA_TEST]));
         enemyWorld.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3, [NOVA_TEST]));
         const victim = enemyWorld.player!;
@@ -936,8 +944,8 @@ describe("Faction filtering through one resolver", () => {
     });
 
     it("heals allies of the caster with an ALLIED circle, leaving the other faction alone", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3, [YT_MEJKOT_HEAL_PULSE]));
         world.spawnEnemy(-100, 0, 0, makeEnemyType(1, 2, 3, [YT_MEJKOT_HEAL_PULSE]));
         const player = world.player!;
@@ -959,11 +967,15 @@ function bossTestEncounter(): Encounter {
     const waves = [
         {
             groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
-            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 },
         },
         {
             groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
-            startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
+            startCondition: {
+                maxPreviousAliveFraction: 0,
+                maxElapsedSeconds: Infinity,
+                delaySeconds: 0,
+            },
             boss: true,
         },
     ];
@@ -974,14 +986,20 @@ function bossTestEncounter(): Encounter {
         { kind: "ALL_WAVES_CLEARED" },
         [],
     );
+    // Placed one tile west of the player spawn, facing east, so its approach pose lands exactly on
+    // spawn (see worldObjectApproachPose) and the interaction executes on the very next tick.
+    const lever = createWorldObject(
+        createWorldObjectId(1),
+        WorldObjectKind.LEVER,
+        createWorldPosition(-TILE_SIZE, 0, 0),
+        1,
+    );
     const start = createInteraction(
         createInteractionId("start_boss"),
-        createAuthoredLocationTarget("Start boss", [
-            createInteractionPose(createWorldPosition(0, 0, 0), 0),
-        ]),
+        lever.id,
+        "Pull Lever",
         { kind: "START_PHASE", phaseId: phase.id },
         1,
-        0.01,
     );
     return {
         id: EncounterId.QUICK_CAVE,
@@ -995,11 +1013,17 @@ function bossTestEncounter(): Encounter {
         spawnMode: EncounterSpawnMode.WAVES,
         waves,
         phases: [phase],
+        worldObjects: [lever],
         interactions: [start],
         ambientNpcs: false,
         musicFile: "audio/test.opus",
     };
 }
+
+// stubSeqCatalog gives every sequence id STUB_FRAME_COUNT frames of STUB_TICKS_PER_FRAME
+// ticks (see testLoaders.ts), so the lever's pull animation - and thus this interaction - always
+// takes STUB_FRAME_SECONDS * STUB_FRAME_COUNT = 1.6s to complete regardless of its seq id.
+const STUB_INTERACTION_DURATION_SECONDS = STUB_FRAME_SECONDS * STUB_FRAME_COUNT;
 
 function startBossPhase(world: GameWorld): void {
     const interaction = world.activeInteractions[0];
@@ -1007,13 +1031,13 @@ function startBossPhase(world: GameWorld): void {
         ...idleInput(),
         interaction: { kind: "START", interactionId: interaction.id },
     });
-    advanceSeconds(world, idleInput(), 0.05);
+    advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 }
 
 describe("TzTok-Jad boss wave (integration)", () => {
     it("only spawns Jad once the previous wave is fully dead, then clears the encounter once Jad dies", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.startEncounter(bossTestEncounter(), 0, 0, 0);
         startBossPhase(world);
 
         expect(world.enemies.length).toBe(1);
@@ -1041,8 +1065,8 @@ describe("TzTok-Jad boss wave (integration)", () => {
     });
 
     it("spawns two Yt-HurKot healers and emits BOSS_PHASE once, when Jad's health first crosses 50%", () => {
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+        world.startEncounter(bossTestEncounter(), 0, 0, 0);
         startBossPhase(world);
 
         world.enemies[0].health = 0;

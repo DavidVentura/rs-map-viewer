@@ -1,5 +1,3 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
     AbilityDefinition,
     AbilityTargetKind,
@@ -11,21 +9,16 @@ import {
     resolveAbility,
     resolveCastTiming,
 } from "./Ability";
+import { SeqTiming } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import { Affects, damagePayload } from "./Effect";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC, POWER_SHOT_SPEC } from "./Projectile";
+import { SeqCatalog } from "./SeqCatalog";
 import { CLEAVE, HEALING_POTION, ICE_BARRAGE, SCIMITAR_SLASH } from "./abilities";
 
-const seqFrameLoader = {} as SeqFrameLoader;
-
 // Seq 426 (the bow shot) as it is in the cache: the release frame 5 starts 31 ticks in.
-const bowLoader = {
-    load: () => ({
-        frameIds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-        getFrameLength: (_loader: SeqFrameLoader, frame: number) =>
-            [4, 4, 4, 4, 15, 10, 5, 4, 4, 4][frame],
-    }),
-} as unknown as SeqTypeLoader;
+const BOW_SHOT_SEQ: SeqTiming = { seqId: 426, frameTicks: [4, 4, 4, 4, 15, 10, 5, 4, 4, 4] };
+const bowCatalog: SeqCatalog = { get: () => BOW_SHOT_SEQ };
 
 const BOW_LIKE: AbilityDefinition = {
     id: "bow_like",
@@ -48,28 +41,27 @@ const BOW_LIKE: AbilityDefinition = {
 
 describe("resolveCastTiming", () => {
     it("lands impact when the contact frame starts and the animation at the sequence end, both at castSpeed", () => {
-        const timing = resolveCastTiming(BOW_LIKE, bowLoader, seqFrameLoader);
+        const timing = resolveCastTiming(BOW_LIKE, BOW_SHOT_SEQ);
         expect(timing.impactSeconds).toBeCloseTo(0.62 / 2);
         expect(timing.animationSeconds).toBeCloseTo(1.16 / 2);
     });
 
     it("plays at natural speed when castSpeed is 1", () => {
-        const timing = resolveCastTiming({ ...BOW_LIKE, castSpeed: 1 }, bowLoader, seqFrameLoader);
+        const timing = resolveCastTiming({ ...BOW_LIKE, castSpeed: 1 }, BOW_SHOT_SEQ);
         expect(timing.impactSeconds).toBeCloseTo(0.62);
         expect(timing.animationSeconds).toBeCloseTo(1.16);
     });
 
     it("refuses a contact frame the sequence does not have", () => {
-        expect(() =>
-            resolveCastTiming({ ...BOW_LIKE, contactFrame: 10 }, bowLoader, seqFrameLoader),
-        ).toThrow();
+        expect(() => resolveCastTiming({ ...BOW_LIKE, contactFrame: 10 }, BOW_SHOT_SEQ)).toThrow();
     });
 });
 
 describe("resolveAbility", () => {
-    it("keeps the definition's fields and attaches the resolved timing", () => {
-        const resolved = resolveAbility(BOW_LIKE, bowLoader, seqFrameLoader);
+    it("keeps the definition's fields and attaches the resolved cast sequence and timing", () => {
+        const resolved = resolveAbility(BOW_LIKE, bowCatalog);
         expect(resolved).toMatchObject(BOW_LIKE);
+        expect(resolved.castSeq).toBe(BOW_SHOT_SEQ);
         expect(resolved.timing.impactSeconds).toBeCloseTo(0.31);
     });
 });

@@ -274,10 +274,6 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
             this.fpsLimit = window.wallpaperFpsLimit;
         }
 
-        if (this.mapViewer.camera.updated) {
-            this.mapViewer.updateSearchParams();
-        }
-
         this.mapViewer.inputManager.onFrameEnd();
         this.mapViewer.camera.onFrameEnd();
 

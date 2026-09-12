@@ -11,12 +11,12 @@ import {
 } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { Affects, PayloadKind, damagePayload } from "./Effect";
-import { stubSequenceLoaders } from "./testLoaders";
+import { stubSeqCatalog } from "./testLoaders";
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+const seqCatalog = stubSeqCatalog();
 
 function resolve(definition: AbilityDefinition): ResolvedAbility {
-    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+    return resolveAbility(definition, seqCatalog);
 }
 
 const TEST_MELEE: AbilityEffect = {

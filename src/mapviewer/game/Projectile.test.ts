@@ -16,6 +16,8 @@ import {
     travelSeconds,
 } from "./Projectile";
 import { VisualEffectKind } from "./VisualEffect";
+import { FlightOrigin } from "./projectileMath";
+import { stubEncounterAnimations } from "./testLoaders";
 
 class FakeCombatant implements Combatant {
     readonly hitRadius = 32;
@@ -32,8 +34,7 @@ class FakeCombatant implements Combatant {
     ) {}
 }
 
-const seqTypeLoader = { load: () => ({ frameIds: undefined }) } as any;
-const seqFrameLoader = {} as any;
+const ANIMATIONS = stubEncounterAnimations();
 const START = { x: 0, y: 0, height: 40 };
 const flatTerrain = { getHeight: () => 0 } as any;
 const DAMAGE = 7;
@@ -49,22 +50,28 @@ function impact(faction: Faction, affects: Affects = Affects.HOSTILE): Projectil
 const PLAYER_SHOT = impact(Faction.PLAYER);
 const ENEMY_SHOT = impact(Faction.ENEMY);
 
+function newProjectile(
+    spec: ProjectileSpec,
+    projectileImpact: ProjectileImpact,
+    start: FlightOrigin,
+    target: ProjectileTarget,
+): Projectile {
+    return new Projectile(
+        spec,
+        projectileImpact,
+        start,
+        target,
+        ANIMATIONS.projectileTravel[spec.kind],
+    );
+}
+
 function update(
     projectile: Projectile,
     dtSeconds: number,
     combatants: any[] = [],
     events: any[] = [],
 ): ProjectileOutcome {
-    return projectile.update(
-        dtSeconds,
-        0,
-        combatants,
-        events,
-        () => 0,
-        flatTerrain,
-        seqTypeLoader,
-        seqFrameLoader,
-    );
+    return projectile.update(dtSeconds, 0, combatants, events, () => 0, flatTerrain);
 }
 
 function fly(projectile: Projectile, seconds: number, combatants: any[] = []): ProjectileOutcome {
@@ -117,9 +124,9 @@ describe("Projectile specs", () => {
         expect(JAD_RANGED_ROCK_SPEC.landing.telegraph?.kind).toBe(VisualEffectKind.FALLING_SHADOW);
     });
 
-    it("gives the arrow no real travel sequence and magic a real one", () => {
-        expect(ARROW_SPEC.travelSeqId).toBe(-1);
-        expect(MAGIC_SPEC.travelSeqId).toBe(FIRE_BOLT_TRAVEL_SEQ_ID);
+    it("gives the arrow no travel sequence and magic its fire bolt one", () => {
+        expect(ANIMATIONS.projectileTravel[ARROW_SPEC.kind]).toBeUndefined();
+        expect(ANIMATIONS.projectileTravel[MAGIC_SPEC.kind]?.seqId).toBe(FIRE_BOLT_TRAVEL_SEQ_ID);
     });
 });
 
@@ -131,15 +138,15 @@ describe("travelSeconds", () => {
 
 describe("Projectile animation", () => {
     it("keeps the arrow's animation on frame 0", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         update(projectile, 0.5);
-        expect(projectile.animation.frame).toBe(0);
+        expect(projectile.frame).toBe(0);
     });
 });
 
 describe("Projectile travel", () => {
     it("starts at its launch point facing the target", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         expect(projectile.x).toBe(0);
         expect(projectile.height).toBe(40);
         expect(projectile.rotation).toBe(1024);
@@ -147,7 +154,7 @@ describe("Projectile travel", () => {
     });
 
     it("covers the distance at the spec's travel time", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         const total = travelSeconds(ARROW_SPEC.travelTime, 1000);
         update(projectile, total / 2);
         expect(projectile.x).toBeCloseTo(500);
@@ -155,27 +162,27 @@ describe("Projectile travel", () => {
     });
 
     it("arcs upward mid-flight for arrows", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         update(projectile, travelSeconds(ARROW_SPEC.travelTime, 1000) / 2);
         expect(projectile.height).toBeGreaterThan(START.height);
     });
 
     it("keeps a zero-angle free-flight arrow at its launch height", () => {
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 1000) / 2);
         expect(projectile.height).toBeCloseTo(START.height);
         expect(projectile.pitch).toBe(0);
     });
 
     it("expires once a free-flight projectile reaches its end point", () => {
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(0, 100));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(0, 100));
         const outcome = update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 100));
         expect(outcome).toEqual({ kind: "EXPIRED" });
         expect(projectile.y).toBe(100);
     });
 
     it("keeps flying while short of its end point", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         expect(update(projectile, 0.01)).toEqual({ kind: "ALIVE" });
     });
 });
@@ -183,7 +190,7 @@ describe("Projectile travel", () => {
 describe("Projectile collision (free flight)", () => {
     it("hits a hostile combatant it sweeps through and applies damage", () => {
         const enemy = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         const outcome = fly(projectile, 2, [enemy]);
         expect(outcome).toEqual({ kind: "HIT_COMBATANT", combatant: enemy });
         expect(enemy.health).toBe(100 - DAMAGE);
@@ -191,14 +198,14 @@ describe("Projectile collision (free flight)", () => {
 
     it("stops at the point of impact rather than passing through", () => {
         const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         update(projectile, travelSeconds(VOLLEY_ARROW_SPEC.travelTime, 1000), [enemy], []);
         expect(projectile.x).toBeLessThan(200);
     });
 
     it("does not hit combatants the projectile does not affect", () => {
         const ally = new FakeCombatant(200, 0, 0, Faction.PLAYER);
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         expect(update(projectile, 0.1, [ally], [])).toEqual({ kind: "ALIVE" });
         expect(ally.health).toBe(100);
     });
@@ -206,7 +213,7 @@ describe("Projectile collision (free flight)", () => {
     it("hits allies instead when fired with an ALLIED impact", () => {
         const ally = new FakeCombatant(200, 0, 0, Faction.PLAYER);
         const enemy = new FakeCombatant(100, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(
+        const projectile = newProjectile(
             VOLLEY_ARROW_SPEC,
             impact(Faction.PLAYER, Affects.ALLIED),
             START,
@@ -220,7 +227,7 @@ describe("Projectile collision (free flight)", () => {
 
     it("lands every payload it carries, in order", () => {
         const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(
+        const projectile = newProjectile(
             VOLLEY_ARROW_SPEC,
             {
                 ...PLAYER_SHOT,
@@ -236,7 +243,7 @@ describe("Projectile collision (free flight)", () => {
 
     it("does not hit combatants on a different level", () => {
         const enemy = new FakeCombatant(200, 0, 1, Faction.ENEMY);
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         expect(update(projectile, 0.1, [enemy], [])).toEqual({ kind: "ALIVE" });
         expect(enemy.health).toBe(100);
     });
@@ -246,7 +253,7 @@ describe("Projectile piercing", () => {
     it("stops at the first hit for a non-piercing projectile", () => {
         const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
         const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(VOLLEY_ARROW_SPEC, PLAYER_SHOT, START, point(1000, 0));
         const outcome = fly(projectile, 2, [near, far]);
         expect(outcome.kind).toBe("HIT_COMBATANT");
         expect(near.health).toBeLessThan(100);
@@ -256,7 +263,7 @@ describe("Projectile piercing", () => {
     it("continues through multiple hostile combatants for a piercing projectile", () => {
         const near = new FakeCombatant(200, 0, 0, Faction.ENEMY);
         const far = new FakeCombatant(400, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(POWER_SHOT_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(POWER_SHOT_SPEC, PLAYER_SHOT, START, point(1000, 0));
         const outcome = fly(projectile, 2, [near, far]);
         expect(outcome).toEqual({ kind: "EXPIRED" });
         expect(near.health).toBe(100 - DAMAGE);
@@ -265,7 +272,7 @@ describe("Projectile piercing", () => {
 
     it("does not damage the same combatant twice while still overlapping it", () => {
         const enemy = new FakeCombatant(200, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(POWER_SHOT_SPEC, PLAYER_SHOT, START, point(1000, 0));
+        const projectile = newProjectile(POWER_SHOT_SPEC, PLAYER_SHOT, START, point(1000, 0));
         update(projectile, travelSeconds(POWER_SHOT_SPEC.travelTime, 1000) / 4, [enemy], []);
         const healthAfterFirstHit = enemy.health;
         expect(healthAfterFirstHit).toBeLessThan(100);
@@ -278,14 +285,14 @@ describe("Projectile tracking a combatant", () => {
     it("does not hit an enemy sitting on the path before its target", () => {
         const bystander = new FakeCombatant(200, 0, 0, Faction.ENEMY);
         const target = new FakeCombatant(1000, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
         expect(fly(projectile, 0.2, [bystander, target]).kind).toBe("ALIVE");
         expect(bystander.health).toBe(100);
     });
 
     it("lands on its target at the travel time and damages only it", () => {
         const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
         const outcome = update(projectile, travelSeconds(ARROW_SPEC.travelTime, 500), [target], []);
         expect(outcome).toEqual({ kind: "HIT_COMBATANT", combatant: target });
         expect(projectile.x).toBe(500);
@@ -295,7 +302,7 @@ describe("Projectile tracking a combatant", () => {
 
     it("still lands on a target that moved 2 tiles off the original line mid-flight", () => {
         const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
         const total = travelSeconds(ARROW_SPEC.travelTime, 500);
         fly(projectile, total / 2, [target]);
         target.x = 500;
@@ -309,7 +316,7 @@ describe("Projectile tracking a combatant", () => {
 
     it("flies on to where its target died and expires without damage", () => {
         const target = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, tracked(target));
         const total = travelSeconds(ARROW_SPEC.travelTime, 500);
         fly(projectile, total / 2, [target]);
         target.health = 0;
@@ -323,7 +330,7 @@ describe("Projectile tracking a combatant", () => {
 
     it("expires harmlessly at a bare point when fired with no combatant to track", () => {
         const enemy = new FakeCombatant(500, 0, 0, Faction.ENEMY);
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(500, 0));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(500, 0));
         const outcome = update(projectile, travelSeconds(ARROW_SPEC.travelTime, 500), [enemy], []);
         expect(outcome).toEqual({ kind: "EXPIRED" });
         expect(enemy.health).toBe(100);
@@ -332,14 +339,14 @@ describe("Projectile tracking a combatant", () => {
 
 describe("Projectile pitch", () => {
     it("pitches nose up early in a lobbed flight", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         update(projectile, 0.001);
         expect(projectile.pitch).toBeGreaterThan(0);
         expect(projectile.pitch).toBeLessThan(1024);
     });
 
     it("pitches nose down late in a lobbed flight", () => {
-        const projectile = new Projectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
+        const projectile = newProjectile(ARROW_SPEC, PLAYER_SHOT, START, point(0, 1000));
         fly(projectile, travelSeconds(ARROW_SPEC.travelTime, 1000) * 0.95);
         expect(projectile.pitch).toBeGreaterThan(1024);
     });
@@ -349,7 +356,7 @@ describe("Projectile pitch", () => {
         // ProjectileModelOrientation), so unlike the arrow it must never carry a pitch tilt: doing
         // so would swing its off-origin geometry sideways instead of tilting a nose that was never
         // built to point anywhere in particular.
-        const rock = new Projectile(
+        const rock = newProjectile(
             JAD_RANGED_ROCK_SPEC,
             ENEMY_SHOT,
             { x: 500, y: 500, height: 3000 },
@@ -369,7 +376,7 @@ describe("Projectile landing at a fixed point", () => {
     it("damages every combatant in radius, not just the closest one, on landing", () => {
         const near = new FakeCombatant(500, 0, 0, Faction.ENEMY);
         const far = new FakeCombatant(500, 60, 0, Faction.ENEMY);
-        const projectile = new Projectile(fixedSpec, PLAYER_SHOT, START, point(500, 0));
+        const projectile = newProjectile(fixedSpec, PLAYER_SHOT, START, point(500, 0));
         const outcome = update(
             projectile,
             travelSeconds(fixedSpec.travelTime, 500),
@@ -383,7 +390,7 @@ describe("Projectile landing at a fixed point", () => {
 
     it("lands without damaging anything that moved out of radius", () => {
         const dodged = new FakeCombatant(2000, 2000, 0, Faction.ENEMY);
-        const projectile = new Projectile(fixedSpec, PLAYER_SHOT, START, point(500, 0));
+        const projectile = newProjectile(fixedSpec, PLAYER_SHOT, START, point(500, 0));
         const outcome = update(projectile, travelSeconds(fixedSpec.travelTime, 500), [dodged], []);
         expect(outcome).toEqual({ kind: "LANDED", x: 500, y: 0 });
         expect(dodged.health).toBe(100);
@@ -391,7 +398,7 @@ describe("Projectile landing at a fixed point", () => {
 
     it("keeps Jad's rock at the landing point while its own sequence plays the fall", () => {
         const player = new FakeCombatant(500, 0, 0, Faction.PLAYER);
-        const rock = new Projectile(
+        const rock = newProjectile(
             JAD_RANGED_ROCK_SPEC,
             ENEMY_SHOT,
             { x: 500, y: 0, height: 0 },

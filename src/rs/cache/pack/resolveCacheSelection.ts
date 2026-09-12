@@ -338,6 +338,7 @@ class CacheSelectionWalk {
         }
         roots.npcTypeIds.forEach((id) => this.addNpc(id));
         roots.objTypeIds.forEach((id) => this.addObj(id));
+        roots.locTypeIds.forEach((id) => this.addLoc(id));
         roots.seqIds.forEach((id) => this.addSeq(id));
         roots.spotAnimIds.forEach((id) => this.addSpotAnim(id));
         return this.selection.build();
@@ -553,6 +554,7 @@ export class CacheSelectionResolver {
         const idLists: [string, number, readonly number[]][] = [
             ["npc type", ConfigType.DAT2.npcs, roots.npcTypeIds],
             ["obj type", ConfigType.DAT2.objs, roots.objTypeIds],
+            ["loc type", ConfigType.DAT2.locs, roots.locTypeIds],
             ["seq", ConfigType.DAT2.seqs, roots.seqIds],
             ["spot anim", ConfigType.DAT2.spotAnims, roots.spotAnimIds],
         ];

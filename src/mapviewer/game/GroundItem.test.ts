@@ -1,14 +1,5 @@
-import { WeaponStyle } from "./Ability";
 import { DropTier } from "./EnemyType";
-import {
-    DEFAULT_EQUIPMENT,
-    EquipmentGrantId,
-    EquipmentPath,
-    createEquipmentGrant,
-    equipAtTier,
-    maxTierIndex,
-    styleSetGrant,
-} from "./Equipment";
+import { DEFAULT_EQUIPMENT, EquipmentPath, equipAtTier, maxTierIndex } from "./Equipment";
 import { GroundItem, pendingGroundItemPaths, rollDropPath } from "./GroundItem";
 
 function fixedRandom(...values: number[]): () => number {
@@ -72,22 +63,8 @@ describe("rollDropPath", () => {
 describe("pendingGroundItemPaths", () => {
     it("collects the set of paths currently on the ground", () => {
         const items: GroundItem[] = [
-            {
-                id: 1,
-                grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Bow", [
-                    { path: EquipmentPath.BOW, tierIndex: 1 },
-                ]),
-                x: 0,
-                y: 0,
-                level: 0,
-            },
-            {
-                id: 2,
-                grant: styleSetGrant(WeaponStyle.MAGIC, 1),
-                x: 0,
-                y: 0,
-                level: 0,
-            },
+            { id: 1, path: EquipmentPath.BOW, tierIndex: 1, x: 0, y: 0, level: 0 },
+            { id: 2, path: EquipmentPath.STAFF, tierIndex: 1, x: 0, y: 0, level: 0 },
         ];
         const pending = pendingGroundItemPaths(items);
         expect(pending.has(EquipmentPath.BOW)).toBe(true);

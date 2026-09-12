@@ -10,6 +10,7 @@ export type CacheRoots = {
     readonly mapSquares: readonly MapSquareCoord[];
     readonly npcTypeIds: readonly number[];
     readonly objTypeIds: readonly number[];
+    readonly locTypeIds: readonly number[];
     readonly seqIds: readonly number[];
     readonly spotAnimIds: readonly number[];
     readonly [canonicalBrand]: true;
@@ -19,6 +20,7 @@ export type CacheRootIds = {
     readonly mapSquares: Iterable<MapSquareCoord>;
     readonly npcTypeIds: Iterable<number>;
     readonly objTypeIds: Iterable<number>;
+    readonly locTypeIds: Iterable<number>;
     readonly seqIds: Iterable<number>;
     readonly spotAnimIds: Iterable<number>;
 };
@@ -65,6 +67,7 @@ export function canonicalCacheRoots(ids: CacheRootIds): CacheRoots {
         mapSquares: canonicalMapSquares(ids.mapSquares),
         npcTypeIds: canonicalIds("npc type", ids.npcTypeIds),
         objTypeIds: canonicalIds("obj type", ids.objTypeIds),
+        locTypeIds: canonicalIds("loc type", ids.locTypeIds),
         seqIds: canonicalIds("seq", ids.seqIds),
         spotAnimIds: canonicalIds("spot anim", ids.spotAnimIds),
     } as CacheRoots;
@@ -78,6 +81,7 @@ const ROOT_FIELDS: readonly string[] = [
     "mapSquares",
     "npcTypeIds",
     "objTypeIds",
+    "locTypeIds",
     "seqIds",
     "spotAnimIds",
 ];
@@ -124,6 +128,10 @@ export function parseCacheRoots(json: unknown): ParsedCacheRoots {
     if (objTypeIds.kind === "INVALID") {
         return objTypeIds;
     }
+    const locTypeIds = parseIdList("locTypeIds", json.locTypeIds);
+    if (locTypeIds.kind === "INVALID") {
+        return locTypeIds;
+    }
     const seqIds = parseIdList("seqIds", json.seqIds);
     if (seqIds.kind === "INVALID") {
         return seqIds;
@@ -138,6 +146,7 @@ export function parseCacheRoots(json: unknown): ParsedCacheRoots {
             mapSquares: mapSquares.value,
             npcTypeIds: npcTypeIds.value,
             objTypeIds: objTypeIds.value,
+            locTypeIds: locTypeIds.value,
             seqIds: seqIds.value,
             spotAnimIds: spotAnimIds.value,
         }),

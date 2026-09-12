@@ -1,8 +1,6 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityDefinition, DeliveryKind, ResolvedAbility, aimAtCombatant } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
-import { AnimationPlayback, AnimationState } from "./Animation";
+import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import {
     EnemyBehaviour,
@@ -168,7 +166,7 @@ export class Enemy implements Combatant, SteeringBody {
 
     // Set by the animation viewer (see AnimPreview.ts) to pin this enemy to a single sequence,
     // looped or played once, instead of running the normal AI/state machine.
-    previewSeqId?: number;
+    previewSeq?: SeqTiming;
     previewPlayback: AnimationPlayback = AnimationPlayback.LOOP;
 
     constructor(
@@ -186,27 +184,11 @@ export class Enemy implements Combatant, SteeringBody {
         this.maxHealth = stats.maxHealth;
         this.health = stats.maxHealth;
         this.walkSpeed = stats.walkSpeed;
-        this.animation = new AnimationState(type.idleSeqId);
+        this.animation = new AnimationState(type.seqs.idle);
     }
 
     get projectileLaunchHeight(): number {
         return this.type.projectileLaunchHeight;
-    }
-
-    get idleSeqId(): number {
-        return this.type.idleSeqId;
-    }
-
-    get walkSeqId(): number {
-        return this.type.walkSeqId;
-    }
-
-    get deathSeqId(): number {
-        return this.type.deathSeqId;
-    }
-
-    get attackSeqId(): number {
-        return this.type.attackSeqId;
     }
 
     isFrozen(timeSeconds: number): boolean {
@@ -218,18 +200,11 @@ export class Enemy implements Combatant, SteeringBody {
         neighbours: readonly SteeringBody[],
         deltaTimeSeconds: number,
         timeSeconds: number,
-        seqTypeLoader: SeqTypeLoader,
-        seqFrameLoader: SeqFrameLoader,
         terrain: Terrain,
     ): void {
-        if (this.previewSeqId !== undefined) {
-            this.animation.setSequence(this.previewSeqId);
-            this.animation.advance(
-                deltaTimeSeconds,
-                seqTypeLoader,
-                seqFrameLoader,
-                this.previewPlayback,
-            );
+        if (this.previewSeq !== undefined) {
+            this.animation.setSequence(this.previewSeq);
+            this.animation.advance(deltaTimeSeconds, this.previewPlayback);
             return;
         }
 
@@ -292,19 +267,14 @@ export class Enemy implements Combatant, SteeringBody {
         this.state = nextState;
 
         if (this.state === EnemyState.DEAD) {
-            this.animation.setSequence(this.deathSeqId);
-            this.animation.advance(
-                deltaTimeSeconds,
-                seqTypeLoader,
-                seqFrameLoader,
-                AnimationPlayback.ONCE,
-            );
+            this.animation.setSequence(this.type.seqs.death);
+            this.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE);
             return;
         }
 
         if (frozen) {
-            this.animation.setSequence(this.idleSeqId);
-            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+            this.animation.setSequence(this.type.seqs.idle);
+            this.animation.advance(deltaTimeSeconds);
             return;
         }
 
@@ -325,15 +295,13 @@ export class Enemy implements Combatant, SteeringBody {
             }
             const activeCast = this.abilityRuntime.activeCastAnimation(timeSeconds);
             if (!activeCast) {
-                this.animation.setSequence(this.idleSeqId);
-                this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+                this.animation.setSequence(this.type.seqs.idle);
+                this.animation.advance(deltaTimeSeconds);
                 return;
             }
-            this.animation.setSequence(activeCast.definition.castSeqId);
+            this.animation.setSequence(activeCast.definition.castSeq);
             this.animation.advance(
                 deltaTimeSeconds,
-                seqTypeLoader,
-                seqFrameLoader,
                 AnimationPlayback.ONCE,
                 activeCast.definition.castSpeed,
             );
@@ -341,8 +309,8 @@ export class Enemy implements Combatant, SteeringBody {
         }
 
         if (this.state !== EnemyState.CHASE || !player) {
-            this.animation.setSequence(this.idleSeqId);
-            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+            this.animation.setSequence(this.type.seqs.idle);
+            this.animation.advance(deltaTimeSeconds);
             return;
         }
 
@@ -357,8 +325,8 @@ export class Enemy implements Combatant, SteeringBody {
             : this.computeRushMovement(deltaX, deltaY, distanceToPlayer, player, neighbours);
 
         if (movement.x === 0 && movement.y === 0) {
-            this.animation.setSequence(this.idleSeqId);
-            this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+            this.animation.setSequence(this.type.seqs.idle);
+            this.animation.advance(deltaTimeSeconds);
             return;
         }
 
@@ -372,8 +340,8 @@ export class Enemy implements Combatant, SteeringBody {
         );
         this.x = position.x;
         this.y = position.y;
-        this.animation.setSequence(this.walkSeqId);
-        this.animation.advance(deltaTimeSeconds, seqTypeLoader, seqFrameLoader);
+        this.animation.setSequence(this.type.seqs.walk);
+        this.animation.advance(deltaTimeSeconds);
     }
 
     respawn(): void {
@@ -385,7 +353,7 @@ export class Enemy implements Combatant, SteeringBody {
         this.respawnAt = undefined;
         this.patternIndex = 0;
         this.abilityRuntime.reset();
-        this.animation.restart(this.idleSeqId);
+        this.animation.restart(this.type.seqs.idle);
     }
 
     // The first ability (in priority order) whose own cooldown/resource gate is currently open,

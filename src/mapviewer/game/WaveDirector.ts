@@ -6,6 +6,8 @@ export const MAX_LIVE_WAVE_ENEMIES = 150;
 export type WaveDirectorState = {
     readonly nextWaveIndex: number;
     readonly waveStartedAtSeconds: readonly (number | undefined)[];
+    // When the next wave's start condition was met plus its delay, or undefined while not yet due.
+    readonly nextWaveStartsAtSeconds: number | undefined;
     readonly cleared: boolean;
 };
 
@@ -24,6 +26,7 @@ export function initialWaveDirectorState(waveCount: number): WaveDirectorState {
     return {
         nextWaveIndex: 0,
         waveStartedAtSeconds: new Array(waveCount).fill(undefined),
+        nextWaveStartsAtSeconds: undefined,
         cleared: false,
     };
 }
@@ -43,9 +46,9 @@ function resolveModifiers(wave: Wave): EnemyStatsOverride {
     };
 }
 
-// A boss wave ignores its own startCondition entirely: it starts only once every earlier wave (not
+// A boss wave ignores its own startCondition entirely: it is due only once every earlier wave (not
 // just the one immediately before it) has died down to nothing, with no elapsed-time fallback.
-function shouldStartWave(
+function isWaveDue(
     table: readonly Wave[],
     waveIndex: number,
     timeSeconds: number,
@@ -71,6 +74,12 @@ function shouldStartWave(
         previousAliveFraction <= condition.maxPreviousAliveFraction ||
         elapsedSeconds >= condition.maxElapsedSeconds
     );
+}
+
+// The first wave opens its phase and a boss wave waits for a full clear, so neither is delayed.
+function waveStartDelaySeconds(table: readonly Wave[], waveIndex: number): number {
+    const wave = table[waveIndex];
+    return waveIndex === 0 || wave.boss ? 0 : wave.startCondition.delaySeconds;
 }
 
 function waveFullyCleared(
@@ -124,15 +133,21 @@ export function stepWaveDirector(
 
     let nextWaveIndex = state.nextWaveIndex;
     let waveStartedAtSeconds = state.waveStartedAtSeconds;
+    let nextWaveStartsAtSeconds = state.nextWaveStartsAtSeconds;
     if (
+        nextWaveStartsAtSeconds === undefined &&
         nextWaveIndex < table.length &&
         !blockedByActiveBoss(table, nextWaveIndex, aliveByWave, spawnedSoFarByWave) &&
-        shouldStartWave(table, nextWaveIndex, timeSeconds, waveStartedAtSeconds, aliveByWave)
+        isWaveDue(table, nextWaveIndex, timeSeconds, waveStartedAtSeconds, aliveByWave)
     ) {
+        nextWaveStartsAtSeconds = timeSeconds + waveStartDelaySeconds(table, nextWaveIndex);
+    }
+    if (nextWaveStartsAtSeconds !== undefined && timeSeconds >= nextWaveStartsAtSeconds) {
         waveStartedAtSeconds = waveStartedAtSeconds.map((startedAt, index) =>
             index === nextWaveIndex ? timeSeconds : startedAt,
         );
         nextWaveIndex += 1;
+        nextWaveStartsAtSeconds = undefined;
     }
 
     const totalAlive = aliveByWave.reduce((sum, count) => sum + count, 0);
@@ -166,7 +181,12 @@ export function stepWaveDirector(
         );
 
     return {
-        nextState: { nextWaveIndex, waveStartedAtSeconds, cleared: allWavesCleared },
+        nextState: {
+            nextWaveIndex,
+            waveStartedAtSeconds,
+            nextWaveStartsAtSeconds,
+            cleared: allWavesCleared,
+        },
         spawns,
     };
 }

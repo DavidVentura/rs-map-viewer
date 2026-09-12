@@ -14,6 +14,7 @@ import { getAvailableRenderers } from "./MapViewerRenderers";
 import { packRequest } from "./assets/cacheRoots";
 import { parseAnimPreviewParams } from "./game/AnimPreview";
 import { getEncounter, parseEncounterId } from "./game/Encounter";
+import { parseGearOverride } from "./game/Equipment";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -40,9 +41,6 @@ function selectCache(cacheList: CacheList, cacheName: string | null): CacheInfo 
 
 function MapViewerApp() {
     const [searchParams] = useSearchParams();
-    // The renderer rewrites the URL as the camera moves; the load must only see the URL the page
-    // was opened with, or every camera move would restart it.
-    const [initialSearchParams] = useState(searchParams);
 
     const [errorMessage, setErrorMessage] = useState<string>();
     const [mapViewer, setMapViewer] = useState<MapViewer>();
@@ -50,14 +48,16 @@ function MapViewerApp() {
     useEffect(() => {
         const abortController = new AbortController();
         const { signal } = abortController;
+        let loadedMapViewer: MapViewer | undefined;
 
         const load = async () => {
             const cacheList = await fetchCacheList(signal);
-            const cacheInfo = selectCache(cacheList, initialSearchParams.get("cache"));
+            const cacheInfo = selectCache(cacheList, searchParams.get("cache"));
 
-            const encounterId = parseEncounterId(initialSearchParams.get("enc"));
-            const animPreview = parseAnimPreviewParams(initialSearchParams);
-            const godMode = parseGodMode(initialSearchParams);
+            const encounterId = parseEncounterId(searchParams.get("enc"));
+            const animPreview = parseAnimPreviewParams(searchParams);
+            const godMode = parseGodMode(searchParams);
+            const gearOverride = parseGearOverride(searchParams);
 
             // The base encounter even in the animation viewer: the actor loader bakes the preview
             // for it (see ActorRenderDataLoader), and the preview encounter maps its squares.
@@ -85,14 +85,12 @@ function MapViewerApp() {
                 openCachePack(packBuffer).cache,
                 animPreview,
                 godMode,
+                gearOverride,
             );
             (window as any).mapViewer = mapViewer;
-
-            // MapViewer's constructor already starts the camera at this encounter's spawn;
-            // applySearchParams only needs to override it when the URL asked for a specific spot.
-            mapViewer.applySearchParams(initialSearchParams);
             mapViewer.init();
 
+            loadedMapViewer = mapViewer;
             setMapViewer(mapViewer);
         };
 
@@ -108,10 +106,14 @@ function MapViewerApp() {
             });
         }
 
+        // Fast Refresh re-runs this effect on every hot update, building a new viewer; the old one
+        // must be unmounted and silenced here or its music keeps playing under the new one's.
         return () => {
             abortController.abort();
+            setMapViewer(undefined);
+            loadedMapViewer?.dispose();
         };
-    }, [initialSearchParams]);
+    }, [searchParams]);
 
     let content: JSX.Element;
     if (errorMessage) {

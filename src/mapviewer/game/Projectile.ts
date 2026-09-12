@@ -1,6 +1,4 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { AnimationPlayback, AnimationState } from "./Animation";
+import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { CombatEvent } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import {
@@ -12,7 +10,7 @@ import {
     matchesAffects,
 } from "./Effect";
 import { TILE_SIZE, Terrain } from "./Terrain";
-import { FALLING_SHADOW_SEQ_ID, VisualEffectKind } from "./VisualEffect";
+import { VisualEffectKind } from "./VisualEffect";
 import { RandomSource } from "./abilityRules";
 import {
     FlightOrigin,
@@ -34,6 +32,10 @@ export enum ProjectileKind {
     JAD_RANGED_ROCK,
     TOK_XIL_SHOT,
     KET_ZEK_FIRE_BLAST,
+    CRYSTAL_ARROW,
+    WARPED_SCEPTRE,
+    SWAMP_TRIDENT,
+    TUMEKENS_SHADOW,
 }
 
 export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
@@ -89,7 +91,6 @@ export type ProjectileSpec = {
     travelTime: ProjectileTravelTime;
     range: number;
     landing: ProjectileLanding;
-    travelSeqId: number;
     travelPlayback: AnimationPlayback;
     modelOrientation: ProjectileModelOrientation;
 };
@@ -102,7 +103,6 @@ export const ARROW_SPEC: ProjectileSpec = {
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 16 },
     range: 4096,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 60 },
-    travelSeqId: -1,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.PITCHED,
 };
@@ -122,9 +122,15 @@ export const MAGIC_SPEC: ProjectileSpec = {
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 24 },
     range: 4096,
     landing: { kind: "TRACKED_COMBATANT", endHeight: 80 },
-    travelSeqId: FIRE_BOLT_TRAVEL_SEQ_ID,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+// Bow of Faerdhinen's own crystal arrow graphic flying the plain arrow's path (see
+// ActorAssets.PROJECTILE_BAKES).
+export const CRYSTAL_ARROW_SPEC: ProjectileSpec = {
+    ...ARROW_SPEC,
+    kind: ProjectileKind.CRYSTAL_ARROW,
 };
 
 export const POWER_SHOT_SPEC: ProjectileSpec = {
@@ -133,7 +139,6 @@ export const POWER_SHOT_SPEC: ProjectileSpec = {
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 14 },
     range: 4096,
     landing: { kind: "FREE_FLIGHT", hitRadius: 24, piercing: true },
-    travelSeqId: -1,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.PITCHED,
 };
@@ -157,7 +162,6 @@ export const JAD_MAGE_BLAST_SPEC: ProjectileSpec = {
     },
     range: 12 * TILE_SIZE,
     landing: { kind: "FIXED_POINT", endHeight: 40, hitRadius: 48, origin: { kind: "CASTER" } },
-    travelSeqId: JAD_FIRE_SEQ_ID,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };
@@ -186,11 +190,9 @@ export const JAD_RANGED_ROCK_SPEC: ProjectileSpec = {
         origin: { kind: "AT_TARGET", height: 0 },
         telegraph: {
             kind: VisualEffectKind.FALLING_SHADOW,
-            seqId: FALLING_SHADOW_SEQ_ID,
             height: 0,
         },
     },
-    travelSeqId: JAD_RANGED_ROCK_SEQ_ID,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };
@@ -214,7 +216,6 @@ export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 16 },
     range: 11 * TILE_SIZE,
     landing: TZHAAR_CASTER_LANDING,
-    travelSeqId: -1,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };
@@ -231,9 +232,33 @@ export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
     travelTime: { baseSeconds: 0.05, secondsPerTile: 1 / 8 },
     range: 10 * TILE_SIZE,
     landing: TZHAAR_CASTER_LANDING,
-    travelSeqId: KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID,
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+// Warped sceptre, trident of the swamp and Tumeken's shadow: each fires its own OSRS projectile
+// with its own impact graphic (see VisualEffect.ts), otherwise flying exactly like the basic
+// MAGIC_SPEC bolt. Travel sequence ids are each spotanim's own sequence, verified with a throwaway
+// script (scripts/cache/verify-armour-throwaway.ts, not checked in): 9942 for
+// VFX_WARPED_SCEPTRE_PROJECTILE_PROJECTILE (2569), 5462 for TOXIC_TOTS_PROJECTILE (1040), 663 for
+// TUMEKENS_SHADOW_TRAVEL (2126).
+export const WARPED_SCEPTRE_TRAVEL_SEQ_ID = 9942;
+export const SWAMP_TRIDENT_TRAVEL_SEQ_ID = 5462;
+export const TUMEKENS_SHADOW_TRAVEL_SEQ_ID = 663;
+
+export const WARPED_SCEPTRE_SPEC: ProjectileSpec = {
+    ...MAGIC_SPEC,
+    kind: ProjectileKind.WARPED_SCEPTRE,
+};
+
+export const SWAMP_TRIDENT_SPEC: ProjectileSpec = {
+    ...MAGIC_SPEC,
+    kind: ProjectileKind.SWAMP_TRIDENT,
+};
+
+export const TUMEKENS_SHADOW_SPEC: ProjectileSpec = {
+    ...MAGIC_SPEC,
+    kind: ProjectileKind.TUMEKENS_SHADOW,
 };
 
 export function travelSeconds(travelTime: ProjectileTravelTime, distance: number): number {
@@ -271,7 +296,8 @@ export class Projectile {
     height: number;
     rotation: number;
     pitch: number;
-    readonly animation: AnimationState;
+    // Undefined for a projectile whose model has no travel sequence: it stays on its one frame.
+    private readonly travelAnimation?: AnimationState;
 
     private flight: FlightState;
     private target: ProjectileTarget;
@@ -287,6 +313,7 @@ export class Projectile {
         readonly impact: ProjectileImpact,
         start: FlightOrigin,
         target: ProjectileTarget,
+        travelSeq: SeqTiming | undefined,
     ) {
         this.target = target;
         const aim = targetPoint(target);
@@ -306,7 +333,11 @@ export class Projectile {
             spec.modelOrientation === ProjectileModelOrientation.PITCHED
                 ? pitchRadiansToRotationUnits(spec.launchAngleRadians)
                 : 0;
-        this.animation = new AnimationState(spec.travelSeqId);
+        this.travelAnimation = travelSeq && new AnimationState(travelSeq);
+    }
+
+    get frame(): number {
+        return this.travelAnimation?.frame ?? 0;
     }
 
     get level(): number {
@@ -320,10 +351,8 @@ export class Projectile {
         events: CombatEvent[],
         random: RandomSource,
         terrain: Terrain,
-        seqTypeLoader: SeqTypeLoader,
-        seqFrameLoader: SeqFrameLoader,
     ): ProjectileOutcome {
-        this.animation.advance(dtSeconds, seqTypeLoader, seqFrameLoader, this.spec.travelPlayback);
+        this.travelAnimation?.advance(dtSeconds, this.spec.travelPlayback);
 
         if (this.target.kind === "COMBATANT" && this.target.combatant.health <= 0) {
             this.target = { kind: "POINT", x: this.target.combatant.x, y: this.target.combatant.y };

@@ -1,7 +1,9 @@
 import { WeaponStyle } from "../game/Ability";
 import { Encounter, EncounterId, getEncounter } from "../game/Encounter";
 import { EnemyTypeId, getEnemyType } from "../game/EnemyType";
+import { WorldObjectKind } from "../game/Interaction";
 import { buildPlayerLoadout } from "../game/abilities";
+import { WORLD_OBJECT_BAKES } from "./ActorAssets";
 import { cacheRoots, packRequest } from "./cacheRoots";
 
 function rootsFor(encounter: Encounter) {
@@ -73,7 +75,11 @@ describe("cacheRoots", () => {
                         { enemyTypeId: EnemyTypeId.TZ_KIH, count: 30 },
                         { enemyTypeId: EnemyTypeId.KET_ZEK, count: 2 },
                     ],
-                    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 60 },
+                    startCondition: {
+                        maxPreviousAliveFraction: 0,
+                        maxElapsedSeconds: 60,
+                        delaySeconds: 0,
+                    },
                 },
             ],
         };
@@ -86,7 +92,11 @@ describe("cacheRoots", () => {
                 ...fightCaves.waves,
                 {
                     groups: [{ enemyTypeId: EnemyTypeId.GOBLIN, count: 4 }],
-                    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 60 },
+                    startCondition: {
+                        maxPreviousAliveFraction: 0,
+                        maxElapsedSeconds: 60,
+                        delaySeconds: 0,
+                    },
                 },
             ],
         };
@@ -102,12 +112,30 @@ describe("cacheRoots", () => {
             const roots = rootsFor(getEncounter(id));
             for (const style of [WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC]) {
                 const loadout = buildPlayerLoadout(style);
-                for (const ability of [loadout.basicAttack, ...loadout.skills]) {
+                for (const ability of [...loadout.basicAttackByTier, ...loadout.skills]) {
                     expect(roots.seqIds).toContain(ability.castSeqId);
                 }
             }
         },
     );
+
+    it("Fight Caves roots contain both the lever's and chest's rest/activated locs", () => {
+        const roots = rootsFor(getEncounter(EncounterId.FIGHT_CAVES));
+        const lever = WORLD_OBJECT_BAKES[WorldObjectKind.LEVER];
+        const chest = WORLD_OBJECT_BAKES[WorldObjectKind.CHEST];
+        expect(roots.locTypeIds).toEqual(
+            expect.arrayContaining([
+                lever.restLocId,
+                lever.activatedLocId,
+                chest.restLocId,
+                chest.activatedLocId,
+            ]),
+        );
+    });
+
+    it("Lumbridge (no phases) declares no loc roots", () => {
+        expect(rootsFor(getEncounter(EncounterId.LUMBRIDGE)).locTypeIds).toEqual([]);
+    });
 
     it("preview ranges become npc, seq and spot anim roots", () => {
         const lumbridge = getEncounter(EncounterId.LUMBRIDGE);

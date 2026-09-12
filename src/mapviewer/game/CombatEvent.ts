@@ -1,5 +1,5 @@
 import { Combatant } from "./Combatant";
-import { EquipmentGrant } from "./Equipment";
+import { EquipmentPath } from "./Equipment";
 import { CharacterLevel } from "./Progression";
 
 export enum CombatEventKind {
@@ -55,7 +55,8 @@ export type EncounterClearedEvent = {
 
 export type ItemDroppedEvent = {
     kind: CombatEventKind.ITEM_DROPPED;
-    grant: EquipmentGrant;
+    path: EquipmentPath;
+    tierIndex: number;
     x: number;
     y: number;
     level: number;
@@ -63,7 +64,8 @@ export type ItemDroppedEvent = {
 
 export type ItemPickedUpEvent = {
     kind: CombatEventKind.ITEM_PICKED_UP;
-    grant: EquipmentGrant;
+    path: EquipmentPath;
+    tierIndex: number;
 };
 
 export type BossPhaseEvent = {

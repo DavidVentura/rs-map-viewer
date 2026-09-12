@@ -6,94 +6,85 @@ export enum AnimationPlayback {
     ONCE = 1,
 }
 
+// A sequence's frame lengths in client ticks (20 ms), read from the cache once. An empty list is a
+// sequence without frame data, which counts as already finished.
+export type SeqTiming = {
+    readonly seqId: number;
+    readonly frameTicks: readonly number[];
+};
+
+export function loadSeqTiming(
+    seqId: number,
+    seqTypeLoader: SeqTypeLoader,
+    seqFrameLoader: SeqFrameLoader,
+): SeqTiming {
+    const sequence = seqTypeLoader.load(seqId);
+    const frameCount = sequence.frameIds?.length ?? 0;
+    const frameTicks = Array.from({ length: frameCount }, (_, frame) =>
+        sequence.getFrameLength(seqFrameLoader, frame),
+    );
+    return { seqId, frameTicks };
+}
+
 export class AnimationState {
-    seqId: number;
     frame = 0;
 
     private frameTime = 0;
 
-    constructor(initialSeqId: number) {
-        this.seqId = initialSeqId;
+    constructor(private seq: SeqTiming) {}
+
+    get seqId(): number {
+        return this.seq.seqId;
     }
 
-    setSequence(seqId: number): void {
-        if (this.seqId === seqId) {
+    setSequence(seq: SeqTiming): void {
+        if (this.seq.seqId === seq.seqId) {
             return;
         }
-        this.restart(seqId);
+        this.restart(seq);
     }
 
-    restart(seqId: number): void {
-        this.seqId = seqId;
+    restart(seq: SeqTiming): void {
+        this.seq = seq;
         this.frame = 0;
         this.frameTime = 0;
     }
 
     advance(
         deltaTimeSeconds: number,
-        seqTypeLoader: SeqTypeLoader,
-        seqFrameLoader: SeqFrameLoader,
         playback: AnimationPlayback = AnimationPlayback.LOOP,
         speed: number = 1,
     ): boolean {
-        if (this.seqId === -1) {
-            return false;
-        }
-        const sequence = seqTypeLoader.load(this.seqId);
-        if (!sequence.frameIds || sequence.frameIds.length === 0) {
+        const { frameTicks } = this.seq;
+        if (frameTicks.length === 0) {
             return true;
         }
 
         let completed = false;
         this.frameTime += (deltaTimeSeconds / 0.02) * speed;
-        while (this.frameTime > sequence.getFrameLength(seqFrameLoader, this.frame)) {
-            if (
-                playback === AnimationPlayback.ONCE &&
-                this.frame === sequence.frameIds.length - 1
-            ) {
+        while (this.frameTime > frameTicks[this.frame]) {
+            if (playback === AnimationPlayback.ONCE && this.frame === frameTicks.length - 1) {
                 completed = true;
                 break;
             }
-            this.frameTime -= sequence.getFrameLength(seqFrameLoader, this.frame);
-            this.frame = (this.frame + 1) % sequence.frameIds.length;
+            this.frameTime -= frameTicks[this.frame];
+            this.frame = (this.frame + 1) % frameTicks.length;
             completed ||= playback === AnimationPlayback.LOOP && this.frame === 0;
         }
         return completed;
     }
 }
 
-export function sequenceDurationSeconds(
-    seqId: number,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): number {
-    const sequence = seqTypeLoader.load(seqId);
-    if (!sequence.frameIds) {
-        return 0;
-    }
-    let total = 0;
-    for (let frame = 0; frame < sequence.frameIds.length; frame++) {
-        total += sequence.getFrameLength(seqFrameLoader, frame);
-    }
-    return total * 0.02;
+export function sequenceDurationSeconds(seq: SeqTiming): number {
+    return seq.frameTicks.reduce((total, ticks) => total + ticks, 0) * 0.02;
 }
 
 // Seconds from the start of the sequence (at natural speed) until `frame` is first displayed,
 // i.e. the summed lengths of the frames before it.
-export function sequenceTimeToFrameSeconds(
-    seqId: number,
-    frame: number,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): number {
-    const sequence = seqTypeLoader.load(seqId);
-    const frameCount = sequence.frameIds?.length ?? 0;
+export function sequenceTimeToFrameSeconds(seq: SeqTiming, frame: number): number {
+    const frameCount = seq.frameTicks.length;
     if (!Number.isInteger(frame) || frame < 0 || frame >= frameCount) {
-        throw new Error(`Frame ${frame} is outside sequence ${seqId} (${frameCount} frames)`);
+        throw new Error(`Frame ${frame} is outside sequence ${seq.seqId} (${frameCount} frames)`);
     }
-    let total = 0;
-    for (let before = 0; before < frame; before++) {
-        total += sequence.getFrameLength(seqFrameLoader, before);
-    }
-    return total * 0.02;
+    return seq.frameTicks.slice(0, frame).reduce((total, ticks) => total + ticks, 0) * 0.02;
 }

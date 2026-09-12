@@ -1,5 +1,3 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import {
     AbilityEffect,
     AbilityTarget,
@@ -13,22 +11,21 @@ import {
     aimedCombatant,
     liveAbilityTarget,
 } from "./Ability";
-import { AnimationPlayback } from "./Animation";
+import { AnimationPlayback, SeqTiming, sequenceDurationSeconds } from "./Animation";
 import { CombatEvent, CombatEventKind } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { HitEffect, Payload, PayloadKind, applyPayloads, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
+import { EncounterAnimations } from "./EncounterAnimations";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
     BossPhaseAdds,
     EnemyStatsOverride,
-    EnemyType,
-    getEnemyType,
-    resolveEnemyType,
+    ResolvedEnemyType,
     resolveTriggeredBossPhase,
 } from "./EnemyType";
-import { EquipmentGrantId, createEquipmentGrant } from "./Equipment";
+import { EquipmentChange, EquipmentGrantId, createEquipmentGrant } from "./Equipment";
 import {
     GroundItem,
     distanceToGroundItem,
@@ -41,19 +38,27 @@ import {
     InteractionId,
     InteractionState,
     WorldAction,
+    WorldObject,
+    WorldObjectId,
+    WorldObjectKind,
+    WorldObjectVisual,
     beginExecution,
     beginInteraction,
     cancelInteraction,
     completeInteraction,
+    isWorldObjectVisible,
+    worldObjectApproachPose,
+    worldObjectVariant,
 } from "./Interaction";
 import { PhaseLifecycle, currentPhase, initialPhaseLifecycle, transitionPhase } from "./Phase";
-import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
+import { Player, PlayerInput } from "./Player";
 import { Experience, createExperience } from "./Progression";
 import {
     Projectile,
     ProjectileImpact,
     ProjectileLanding,
     ProjectileOutcome,
+    ProjectileSpec,
     ProjectileTarget,
     travelSeconds,
 } from "./Projectile";
@@ -74,7 +79,6 @@ import {
     pickFarthestSpawnPoint,
     stepWaveDirector,
 } from "./WaveDirector";
-import { BOW_SHOT, resolvePlayerLoadouts } from "./abilities";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import {
     FlightOrigin,
@@ -82,7 +86,7 @@ import {
     generateSpreadDirections,
     rotationToDirection,
 } from "./projectileMath";
-import { resolveSpawn } from "./spawn";
+import { resolveScatterPosition, resolveSpawn } from "./spawn";
 import { UPGRADE_POOL, Upgrade } from "./upgrades";
 
 export type AbilitySlotInput = {
@@ -162,11 +166,13 @@ export class GameWorld {
     pendingUpgradeOffer?: readonly Upgrade[];
     private pendingPhaseRewards: readonly Reward[] = [];
     godMode = false;
+    // Dev preload (see MapViewerApp's ?gear= param): applied to every freshly spawned player, so a
+    // reload with the same URL always previews the same gear.
+    private gearOverride: readonly EquipmentChange[] = [];
 
     constructor(
         private readonly terrain: Terrain,
-        private readonly seqTypeLoader: SeqTypeLoader,
-        private readonly seqFrameLoader: SeqFrameLoader,
+        private readonly animations: EncounterAnimations,
         private readonly random: RandomSource = Math.random,
     ) {}
 
@@ -179,30 +185,33 @@ export class GameWorld {
         }
     }
 
-    spawnPlayer(x: number, y: number, level: number, styleSeqIds: StanceSeqIdsByStance): void {
+    // The dev gear preload (see MapViewerApp's ?gear= param), applied on every future spawnPlayer
+    // call, the same way setGodMode's toggle survives across them.
+    setGearOverride(changes: readonly EquipmentChange[]): void {
+        this.gearOverride = changes;
+    }
+
+    spawnPlayer(x: number, y: number, level: number): void {
         const spawn = resolveSpawn(this.terrain, level, x, y);
-        this.player = new Player(
-            spawn.x,
-            spawn.y,
-            level,
-            styleSeqIds,
-            resolvePlayerLoadouts(this.seqTypeLoader, this.seqFrameLoader),
-        );
+        this.player = new Player(spawn.x, spawn.y, level, this.animations.player);
         this.player.godMode = this.godMode;
+        if (this.gearOverride.length > 0) {
+            this.player.equipGrant(
+                createEquipmentGrant(
+                    EquipmentGrantId.INDIVIDUAL,
+                    "Dev gear preload",
+                    this.gearOverride,
+                ),
+            );
+        }
     }
 
     // Spawns the player and populates the encounter's initial enemies (its static roster for a
     // STATIC_RESPAWN encounter, or nothing yet for a WAVES encounter, which the director fills in
     // from step() onward). May throw (e.g. terrain not loaded yet); on failure call
     // abortEncounter() to roll back rather than leaving partially-spawned state.
-    startEncounter(
-        encounter: Encounter,
-        x: number,
-        y: number,
-        level: number,
-        styleSeqIds: StanceSeqIdsByStance,
-    ): void {
-        this.spawnPlayer(x, y, level, styleSeqIds);
+    startEncounter(encounter: Encounter, x: number, y: number, level: number): void {
+        this.spawnPlayer(x, y, level);
         this.encounter = encounter;
         this.enemies = [];
         this.groundItems = [];
@@ -292,11 +301,57 @@ export class GameWorld {
         });
     }
 
+    // Every world object the encounter declares (the lever, the chest), with whether it should be
+    // drawn right now and which variant (rest/activated) it should show - see
+    // Interaction.isWorldObjectVisible/worldObjectVariant for the rules.
+    get worldObjectVisuals(): readonly WorldObjectVisual[] {
+        const encounter = this.encounter;
+        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+            return [];
+        }
+        const activeInteractions = this.activeInteractions;
+        const rewardsBeingClaimed = this.activatedPhaseRewards !== undefined;
+        return encounter.worldObjects.map((object) => ({
+            object,
+            visible: isWorldObjectVisible(
+                object,
+                activeInteractions,
+                this.interactionState,
+                rewardsBeingClaimed,
+            ),
+            variant: worldObjectVariant(object, this.interactionState, rewardsBeingClaimed),
+        }));
+    }
+
+    private findWorldObject(objectId: WorldObjectId): WorldObject {
+        const encounter = this.encounter;
+        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("Cannot resolve a world object outside a wave encounter");
+        }
+        const object = encounter.worldObjects.find((candidate) => candidate.id === objectId);
+        if (!object) {
+            throw new Error(`Encounter does not declare world object ${objectId}`);
+        }
+        return object;
+    }
+
+    private findWorldObjectByKind(kind: WorldObjectKind): WorldObject {
+        const encounter = this.encounter;
+        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("Cannot resolve a world object outside a wave encounter");
+        }
+        const object = encounter.worldObjects.find((candidate) => candidate.kind === kind);
+        if (!object) {
+            throw new Error(`Encounter does not declare a ${kind} world object`);
+        }
+        return object;
+    }
+
     private spawnStaticEncounterEnemies(encounter: Encounter): void {
         let pointIndex = 0;
         for (const wave of encounter.waves) {
             for (const group of wave.groups) {
-                const enemyType = getEnemyType(group.enemyTypeId);
+                const enemyType = this.animations.enemyType(group.enemyTypeId);
                 for (let i = 0; i < group.count; i++) {
                     const point = encounter.enemySpawns[pointIndex++];
                     this.spawnEnemy(point.x, point.y, point.level, enemyType);
@@ -305,26 +360,21 @@ export class GameWorld {
         }
     }
 
+    private projectileTravelSeq(spec: ProjectileSpec): SeqTiming | undefined {
+        return this.animations.projectileTravel[spec.kind];
+    }
+
     spawnEnemy(
         x: number,
         y: number,
         level: number,
-        enemyType: EnemyType,
+        enemyType: ResolvedEnemyType,
         statsOverride?: EnemyStatsOverride,
     ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
         const id = this.nextEnemyId++;
         this.enemies.push(
-            new Enemy(
-                id,
-                spawn.x,
-                spawn.y,
-                level,
-                spawn.x,
-                spawn.y,
-                resolveEnemyType(enemyType, this.seqTypeLoader, this.seqFrameLoader),
-                statsOverride,
-            ),
+            new Enemy(id, spawn.x, spawn.y, level, spawn.x, spawn.y, enemyType, statsOverride),
         );
         return id;
     }
@@ -378,7 +428,7 @@ export class GameWorld {
         this.startDueVisualEffects();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
-            effect.update(dtSeconds, this.seqTypeLoader, this.seqFrameLoader, this.timeSeconds),
+            effect.update(dtSeconds, this.timeSeconds),
         );
 
         this.checkPlayerDeath();
@@ -392,14 +442,7 @@ export class GameWorld {
 
     private updatePlayer(player: Player, input: SimInput, dtSeconds: number): void {
         if (player.isDead(this.timeSeconds)) {
-            player.update(
-                input.movement,
-                dtSeconds,
-                this.timeSeconds,
-                this.seqTypeLoader,
-                this.seqFrameLoader,
-                this.terrain,
-            );
+            player.update(input.movement, dtSeconds, this.timeSeconds, this.terrain);
             return;
         }
         if (player.isAwaitingRespawn(this.timeSeconds)) {
@@ -422,14 +465,7 @@ export class GameWorld {
         if (movement.x !== 0 || movement.y !== 0) {
             player.stanceMechanics = resetRangedHits(player.stanceMechanics);
         }
-        player.update(
-            movement,
-            dtSeconds,
-            this.timeSeconds,
-            this.seqTypeLoader,
-            this.seqFrameLoader,
-            this.terrain,
-        );
+        player.update(movement, dtSeconds, this.timeSeconds, this.terrain);
         this.resolveReadyCast(player);
         this.resolvePickup(player, input);
     }
@@ -466,11 +502,12 @@ export class GameWorld {
         if (!interaction) {
             return;
         }
-        this.interactionState = beginInteraction(this.interactionState, interaction, {
-            x: player.x,
-            y: player.y,
-            level: player.level,
-        });
+        const object = this.findWorldObject(interaction.objectId);
+        this.interactionState = beginInteraction(
+            this.interactionState,
+            interaction,
+            worldObjectApproachPose(object),
+        );
     }
 
     private updateInteraction(player: Player, running: boolean, dtSeconds: number): boolean {
@@ -488,12 +525,7 @@ export class GameWorld {
                 this.dispatchWorldAction(completed.action);
                 return true;
             }
-            player.animation.advance(
-                dtSeconds,
-                this.seqTypeLoader,
-                this.seqFrameLoader,
-                AnimationPlayback.ONCE,
-            );
+            player.animation.advance(dtSeconds, AnimationPlayback.ONCE);
             return true;
         }
 
@@ -507,16 +539,20 @@ export class GameWorld {
             player.x = state.pose.position.x;
             player.y = state.pose.position.y;
             player.rotation = this.interactionFacingRotation(state.pose.facingRadians);
-            this.interactionState = beginExecution(state, state.pose.position, this.timeSeconds);
-            player.animation.restart(state.interaction.animationSeqId);
+            const seq = this.animations.interactionSeq(state.interaction.id);
+            this.interactionState = beginExecution(
+                state,
+                state.pose.position,
+                this.timeSeconds,
+                sequenceDurationSeconds(seq),
+            );
+            player.animation.restart(seq);
             return true;
         }
         player.update(
             { x: deltaX / distance, y: deltaY / distance, running },
             dtSeconds,
             this.timeSeconds,
-            this.seqTypeLoader,
-            this.seqFrameLoader,
             this.terrain,
         );
         return true;
@@ -565,12 +601,7 @@ export class GameWorld {
             return;
         }
         if (reward.kind === "EQUIPMENT_GRANT") {
-            const player = this.player;
-            if (!player) {
-                throw new Error("Cannot apply an equipment reward without a player");
-            }
-            player.equipGrant(reward.grant);
-            this.events.push({ kind: CombatEventKind.ITEM_PICKED_UP, grant: reward.grant });
+            this.dropEquipmentGrant(reward.grant.changes);
             this.activateNextPhaseReward();
             return;
         }
@@ -617,25 +648,54 @@ export class GameWorld {
         if (distanceToGroundItem(item, player.x, player.y) > GameWorld.PICKUP_RADIUS) {
             return;
         }
-        player.equipGrant(item.grant);
+        player.equipGrant(
+            createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Equipment upgrade", [
+                { path: item.path, tierIndex: item.tierIndex },
+            ]),
+        );
         this.groundItems = this.groundItems.filter((existing) => existing.id !== item.id);
         this.events.push({
             kind: CombatEventKind.ITEM_PICKED_UP,
-            grant: item.grant,
+            path: item.path,
+            tierIndex: item.tierIndex,
         });
+    }
+
+    // A chest's rewards burst onto the floor as individual real items around it, one per change in
+    // the grant, rather than being auto-equipped - the player picks each one up like an enemy drop.
+    private dropEquipmentGrant(changes: readonly EquipmentChange[]): void {
+        const chest = this.findWorldObjectByKind(WorldObjectKind.CHEST);
+        for (const change of changes) {
+            const position = resolveScatterPosition(
+                this.terrain,
+                chest.position.level,
+                chest.position.x,
+                chest.position.y,
+                this.groundItems.length,
+            );
+            const item: GroundItem = {
+                id: this.nextGroundItemId++,
+                path: change.path,
+                tierIndex: change.tierIndex,
+                x: position.x,
+                y: position.y,
+                level: chest.position.level,
+            };
+            this.groundItems.push(item);
+            this.events.push({
+                kind: CombatEventKind.ITEM_DROPPED,
+                path: item.path,
+                tierIndex: item.tierIndex,
+                x: item.x,
+                y: item.y,
+                level: item.level,
+            });
+        }
     }
 
     private updateEnemy(enemy: Enemy, neighbours: readonly Enemy[], dtSeconds: number): void {
         const wasAlive = enemy.state !== EnemyState.DEAD;
-        enemy.update(
-            this.player,
-            neighbours,
-            dtSeconds,
-            this.timeSeconds,
-            this.seqTypeLoader,
-            this.seqFrameLoader,
-            this.terrain,
-        );
+        enemy.update(this.player, neighbours, dtSeconds, this.timeSeconds, this.terrain);
 
         if (wasAlive && enemy.state === EnemyState.DEAD) {
             if (!this.encounter || this.encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
@@ -699,7 +759,7 @@ export class GameWorld {
     }
 
     private spawnBossPhaseAdds(boss: Enemy, adds: BossPhaseAdds): void {
-        const addType = getEnemyType(adds.enemyTypeId);
+        const addType = this.animations.enemyType(adds.enemyTypeId);
         const offset = adds.offsetTiles * TILE_SIZE;
         for (let i = 0; i < adds.count; i++) {
             const angle = (i / adds.count) * Math.PI * 2;
@@ -727,19 +787,18 @@ export class GameWorld {
             return;
         }
         const tierIndex = player.equipment[path] + 1;
-        const grant = createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Equipment upgrade", [
-            { path, tierIndex },
-        ]);
         this.groundItems.push({
             id: this.nextGroundItemId++,
-            grant,
+            path,
+            tierIndex,
             x: enemy.x,
             y: enemy.y,
             level: enemy.level,
         });
         this.events.push({
             kind: CombatEventKind.ITEM_DROPPED,
-            grant,
+            path,
+            tierIndex,
             x: enemy.x,
             y: enemy.y,
             level: enemy.level,
@@ -828,7 +887,7 @@ export class GameWorld {
             return;
         }
         const point = pickFarthestSpawnPoint(encounter.enemySpawns, this.player.x, this.player.y);
-        const enemyType = getEnemyType(spawn.enemyTypeId);
+        const enemyType = this.animations.enemyType(spawn.enemyTypeId);
         const id = this.spawnEnemy(point.x, point.y, point.level, enemyType, spawn.statsOverride);
         this.enemyWaveIndex.set(id, spawn.waveIndex);
     }
@@ -879,8 +938,6 @@ export class GameWorld {
                 this.events,
                 this.random,
                 this.terrain,
-                this.seqTypeLoader,
-                this.seqFrameLoader,
             );
             if (outcome.kind === "ALIVE") {
                 survivingProjectiles.push(projectile);
@@ -1081,6 +1138,9 @@ export class GameWorld {
         target: AbilityTarget,
     ): void {
         const effect = ability.effect;
+        if (effect.casterEffect) {
+            this.spawnVisualEffect(effect.casterEffect, { kind: "COMBATANT", combatant: caster });
+        }
         const aim = liveAbilityTarget(target, caster.level);
         const delivery = effect.delivery;
         switch (delivery.kind) {
@@ -1162,7 +1222,12 @@ export class GameWorld {
         );
         for (const { hitEffect, anchor } of due) {
             this.visualEffects.push(
-                new VisualEffect(hitEffect.kind, anchor, hitEffect.height, hitEffect.seqId),
+                new VisualEffect(
+                    hitEffect.kind,
+                    anchor,
+                    hitEffect.height,
+                    this.animations.effects[hitEffect.kind],
+                ),
             );
         }
     }
@@ -1184,8 +1249,13 @@ export class GameWorld {
             affects: effect.affects,
             payloads: effect.payloads,
             hitEffect: effect.hitEffect,
+            // Ranged's own basic-attack tag: compared against the player's *current* basic attack
+            // rather than a fixed ability id, since which weapon tier (and so which ability) is the
+            // basic attack now depends on the equipped ranged weapon (see Player.basicAttack).
             playerMechanic:
-                caster instanceof Player && ability.id === BOW_SHOT.id
+                caster instanceof Player &&
+                caster.style === WeaponStyle.RANGED &&
+                ability.id === caster.basicAttack.id
                     ? "RANGED_BASIC"
                     : caster instanceof Player && caster.style === WeaponStyle.MAGIC
                     ? "MAGIC"
@@ -1214,7 +1284,9 @@ export class GameWorld {
                     x: caster.x + direction.x * spec.range,
                     y: caster.y + direction.y * spec.range,
                 };
-                this.projectiles.push(new Projectile(spec, impact, start, end));
+                this.projectiles.push(
+                    new Projectile(spec, impact, start, end, this.projectileTravelSeq(spec)),
+                );
             }
             return;
         }
@@ -1238,7 +1310,9 @@ export class GameWorld {
             if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
                 return;
             }
-            this.projectiles.push(new Projectile(spec, impact, start, target));
+            this.projectiles.push(
+                new Projectile(spec, impact, start, target, this.projectileTravelSeq(spec)),
+            );
         }
     }
 
@@ -1321,7 +1395,7 @@ export class GameWorld {
                 hitEffect.kind,
                 anchor,
                 hitEffect.height,
-                hitEffect.seqId,
+                this.animations.effects[hitEffect.kind],
                 holdSeconds !== undefined ? this.timeSeconds + holdSeconds : undefined,
             ),
         );

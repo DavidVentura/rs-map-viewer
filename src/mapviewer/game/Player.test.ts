@@ -7,8 +7,10 @@ import {
     attackLockSeconds,
     resolveAbility,
 } from "./Ability";
-import { Player, StanceSeqIdsByStance } from "./Player";
+import { EquipmentPath } from "./Equipment";
+import { Player } from "./Player";
 import { createExperience } from "./Progression";
+import { Terrain } from "./Terrain";
 import {
     BOW_SHOT,
     CLEAVE,
@@ -16,29 +18,30 @@ import {
     HEALING_POTION_CAST_SEQ_ID,
     MAGIC_BOLT,
     SCIMITAR_SLASH,
-    resolvePlayerLoadouts,
 } from "./abilities";
-import { stubSequenceLoaders } from "./testLoaders";
+import { stubEncounterAnimations, stubSeqCatalog } from "./testLoaders";
 import { DEFAULT_ABILITY_MODIFIERS, FLEET_FOOTED, VITALITY } from "./upgrades";
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
+const seqCatalog = stubSeqCatalog();
+const ANIMATIONS = stubEncounterAnimations();
 
 function resolve(definition: AbilityDefinition): ResolvedAbility {
-    return resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+    return resolveAbility(definition, seqCatalog);
 }
 
-const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
-    [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
-    [WeaponStyle.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
-    [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
-};
+const OPEN_TERRAIN = {
+    isLoaded: () => true,
+    canOccupy: () => true,
+    getWallFlag: () => 0,
+    getHeight: () => 0,
+} as unknown as Terrain;
 
 function point(x: number, y: number): AbilityTarget {
     return { kind: AbilityTargetKind.POINT, x, y };
 }
 
 function makePlayer(): Player {
-    return new Player(0, 0, 0, STYLE_SEQ_IDS, resolvePlayerLoadouts(seqTypeLoader, seqFrameLoader));
+    return new Player(0, 0, 0, ANIMATIONS.player);
 }
 
 describe("Player loadout", () => {
@@ -69,22 +72,41 @@ describe("Player loadout", () => {
         expect(player.basicAttack.id).toBe(MAGIC_BOLT.id);
         expect(player.skills.map((skill) => skill.id)).toEqual(["ice_barrage", HEALING_POTION.id]);
     });
+
+    it("the basic attack itself changes as the equipped weapon tier is upgraded", () => {
+        const player = makePlayer();
+        player.style = WeaponStyle.MELEE;
+        expect(player.basicAttack.id).toBe(SCIMITAR_SLASH.id);
+
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 1);
+        expect(player.basicAttack.id).toBe("dragon_scimitar_slash");
+
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 2);
+        expect(player.basicAttack.id).toBe("whip_slash");
+
+        player.equipItemUpgrade(EquipmentPath.SCIMITAR, 3);
+        expect(player.basicAttack.id).toBe("scythe_sweep");
+    });
 });
 
-describe("Player animation ids follow the equipped style", () => {
-    it("uses the ranged style's seq ids by default", () => {
-        const player = makePlayer();
-        expect(player.idleSeqId).toBe(808);
-        expect(player.walkSeqId).toBe(819);
-        expect(player.runSeqId).toBe(824);
+describe("Player animations follow the equipped style", () => {
+    function playedSeqIds(player: Player): readonly number[] {
+        player.update({ x: 0, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        const idle = player.animation.seqId;
+        player.update({ x: 1, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        const walk = player.animation.seqId;
+        player.update({ x: 1, y: 0, running: true }, 0.01, 0, OPEN_TERRAIN);
+        return [idle, walk, player.animation.seqId];
+    }
+
+    it("plays the ranged style's idle, walk and run by default", () => {
+        expect(playedSeqIds(makePlayer())).toEqual([808, 819, 824]);
     });
 
-    it("switches to the magic style's seq ids once the style changes", () => {
+    it("plays the magic style's idle, walk and run once the style changes", () => {
         const player = makePlayer();
         player.style = WeaponStyle.MAGIC;
-        expect(player.idleSeqId).toBe(813);
-        expect(player.walkSeqId).toBe(1146);
-        expect(player.runSeqId).toBe(1210);
+        expect(playedSeqIds(player)).toEqual([813, 1146, 1210]);
     });
 });
 
@@ -97,10 +119,10 @@ describe("Player mana", () => {
     it("regenerates over time without exceeding the max", () => {
         const player = makePlayer();
         player.mana = 0;
-        player.update({ x: 0, y: 0, running: false }, 1, 0, seqTypeLoader, {} as any, {} as any);
+        player.update({ x: 0, y: 0, running: false }, 1, 0, {} as any);
         expect(player.mana).toBeCloseTo(Player.MANA_REGEN_PER_SECOND);
         player.mana = player.maxMana;
-        player.update({ x: 0, y: 0, running: false }, 1, 0, seqTypeLoader, {} as any, {} as any);
+        player.update({ x: 0, y: 0, running: false }, 1, 0, {} as any);
         expect(player.mana).toBe(player.maxMana);
     });
 });
@@ -139,25 +161,11 @@ describe("Player cast animation duration", () => {
         const played = potion.timing.animationSeconds;
         expect(played).toBeLessThan(potion.timing.impactSeconds + attackLockSeconds(potion));
 
-        player.update(
-            { x: 0, y: 0, running: false },
-            played - 0.01,
-            played - 0.01,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
+        player.update({ x: 0, y: 0, running: false }, played - 0.01, played - 0.01, {} as any);
         expect(player.animation.seqId).toBe(HEALING_POTION_CAST_SEQ_ID);
 
-        player.update(
-            { x: 0, y: 0, running: false },
-            0.02,
-            played + 0.01,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
-        expect(player.animation.seqId).toBe(player.idleSeqId);
+        player.update({ x: 0, y: 0, running: false }, 0.02, played + 0.01, {} as any);
+        expect(player.animation.seqId).toBe(808);
     });
 });
 
@@ -165,14 +173,7 @@ describe("Player movement while busy", () => {
     it("does not move while an ability is winding up", () => {
         const player = makePlayer();
         player.beginCast(resolve(BOW_SHOT), point(100, 0), 0);
-        player.update(
-            { x: 1, y: 0, running: false },
-            0.01,
-            0.01,
-            seqTypeLoader,
-            {} as any,
-            {} as any,
-        );
+        player.update({ x: 1, y: 0, running: false }, 0.01, 0.01, {} as any);
         expect(player.x).toBe(0);
         expect(player.y).toBe(0);
     });
@@ -231,19 +232,12 @@ describe("Player.applyUpgrade", () => {
     it("speeds up movement once Fleet Footed is applied", () => {
         const player = makePlayer();
         player.applyUpgrade(FLEET_FOOTED);
-        player.update(
-            { x: 1, y: 0, running: false },
-            0.1,
-            0.1,
-            seqTypeLoader,
-            {} as any,
-            {
-                isLoaded: () => true,
-                canOccupy: () => true,
-                getWallFlag: () => 0,
-                getHeight: () => 0,
-            } as any,
-        );
+        player.update({ x: 1, y: 0, running: false }, 0.1, 0.1, {
+            isLoaded: () => true,
+            canOccupy: () => true,
+            getWallFlag: () => 0,
+            getHeight: () => 0,
+        } as any);
         expect(player.x).toBeCloseTo(Player.WALK_SPEED * 1.15 * 0.1);
     });
 

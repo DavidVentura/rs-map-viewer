@@ -43,6 +43,7 @@ function request(
             mapSquares: [SQUARE],
             npcTypeIds,
             objTypeIds: [],
+            locTypeIds: [],
             seqIds: [],
             spotAnimIds: [],
         }),

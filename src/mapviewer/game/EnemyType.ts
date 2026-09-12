@@ -1,7 +1,7 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { AbilityDefinition, ResolvedAbility, resolveAbility } from "./Ability";
+import { SeqTiming } from "./Animation";
 import { Experience, createExperience } from "./Progression";
+import { SeqCatalog } from "./SeqCatalog";
 import {
     GOBLIN_MELEE,
     GOBLIN_MELEE_SEQ_ID,
@@ -119,22 +119,28 @@ export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
           readonly pattern: readonly A[];
       });
 
-export type ResolvedEnemyType = EnemyType<ResolvedAbility>;
+export type EnemyTypeSeqs = {
+    readonly idle: SeqTiming;
+    readonly walk: SeqTiming;
+    readonly death: SeqTiming;
+};
 
-// The composition point for an enemy's abilities: cast timing is read from the cache here, once
-// per spawned enemy, so Enemy/AbilityRuntime never need the sequence loaders.
-export function resolveEnemyType(
-    type: EnemyType,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): ResolvedEnemyType {
-    const resolve = (definition: AbilityDefinition) =>
-        resolveAbility(definition, seqTypeLoader, seqFrameLoader);
+export type ResolvedEnemyType = EnemyType<ResolvedAbility> & { readonly seqs: EnemyTypeSeqs };
+
+// The composition point for an enemy type: every sequence it plays is resolved here, once per
+// encounter load, so Enemy/AbilityRuntime never look a sequence up while the encounter runs.
+export function resolveEnemyType(type: EnemyType, catalog: SeqCatalog): ResolvedEnemyType {
+    const resolve = (definition: AbilityDefinition) => resolveAbility(definition, catalog);
     const abilities = type.abilities.map(resolve);
+    const seqs: EnemyTypeSeqs = {
+        idle: catalog.get(type.idleSeqId),
+        walk: catalog.get(type.walkSeqId),
+        death: catalog.get(type.deathSeqId),
+    };
     if (type.behaviour === EnemyBehaviour.BOSS) {
-        return { ...type, abilities, pattern: type.pattern.map(resolve) };
+        return { ...type, abilities, seqs, pattern: type.pattern.map(resolve) };
     }
-    return { ...type, abilities };
+    return { ...type, abilities, seqs };
 }
 
 export type EnemyStatsOverride = {

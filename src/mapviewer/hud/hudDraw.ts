@@ -6,7 +6,6 @@ import {
     AbilitySlotHudInfo,
     BossHudInfo,
     GroundItemHudInfo,
-    InteractionHudInfo,
     PhaseHudInfo,
     PhaseStatus,
     PlayerHudInfo,
@@ -848,38 +847,6 @@ export function drawGroundItemLabel(
     ctx.font = "600 11px sans-serif";
     ctx.fillStyle = GROUND_ITEM_LABEL_TAG_COLOR;
     ctx.fillText(tagText, screen.x, boxY + 4 + GROUND_ITEM_LABEL_LINE_HEIGHT);
-    ctx.restore();
-}
-
-const INTERACTION_MARKER_RADIUS = 16;
-
-export function drawInteractionMarker(
-    ctx: CanvasRenderingContext2D,
-    interaction: InteractionHudInfo,
-): void {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(interaction.screenX, interaction.screenY, INTERACTION_MARKER_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = interaction.selected ? "rgba(77, 255, 122, 0.26)" : "rgba(255, 210, 77, 0.18)";
-    ctx.fill();
-    ctx.lineWidth = interaction.hovered || interaction.selected ? 3 : 2;
-    ctx.strokeStyle = interaction.selected
-        ? "#4dff7a"
-        : interaction.hovered
-        ? "#ffd24d"
-        : "#b8ac94";
-    ctx.stroke();
-
-    if (interaction.hovered || interaction.selected) {
-        ctx.font = "700 13px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-        ctx.fillStyle = interaction.selected ? "#4dff7a" : "#ffd24d";
-        ctx.strokeText(interaction.label, interaction.screenX, interaction.screenY - 22);
-        ctx.fillText(interaction.label, interaction.screenX, interaction.screenY - 22);
-    }
     ctx.restore();
 }
 

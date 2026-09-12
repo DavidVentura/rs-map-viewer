@@ -1,11 +1,9 @@
-import { WeaponStyle } from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
-import { EquipmentGrantId, EquipmentPath, createEquipmentGrant, styleSetGrant } from "./Equipment";
+import { EquipmentPath } from "./Equipment";
 import { GameWorld, SimInput } from "./GameWorld";
 import { GroundItem } from "./GroundItem";
-import { StanceSeqIdsByStance } from "./Player";
 import { Terrain } from "./Terrain";
-import { stubSequenceLoaders } from "./testLoaders";
+import { stubEncounterAnimations } from "./testLoaders";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -25,26 +23,13 @@ class FakeTerrain implements Terrain {
     }
 }
 
-const { seqTypeLoader, seqFrameLoader } = stubSequenceLoaders();
-
-const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
-    [WeaponStyle.RANGED]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 426 },
-    [WeaponStyle.MAGIC]: { idleSeqId: 813, walkSeqId: 1146, runSeqId: 1210, attackSeqId: 711 },
-    [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
-};
+const ANIMATIONS = stubEncounterAnimations();
 
 function pickupInput(groundItemId: number): SimInput {
     return {
         movement: { x: 0, y: 0, running: true },
         combat: { basicAttack: { held: false }, skills: [] },
         pickupTarget: { groundItemId },
-    };
-}
-
-function idleInput(): SimInput {
-    return {
-        movement: { x: 0, y: 0, running: false },
-        combat: { basicAttack: { held: false }, skills: [] },
     };
 }
 
@@ -59,17 +44,16 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 }
 
 function makeWorld(): GameWorld {
-    const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-    world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+    const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
+    world.spawnPlayer(0, 0, 0);
     return world;
 }
 
 function addGroundItem(world: GameWorld, overrides: Partial<GroundItem> = {}): GroundItem {
     const item: GroundItem = {
         id: 1,
-        grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Bow", [
-            { path: EquipmentPath.BOW, tierIndex: 1 },
-        ]),
+        path: EquipmentPath.BOW,
+        tierIndex: 1,
         x: 500,
         y: 0,
         level: 0,
@@ -97,9 +81,8 @@ describe("ground item pickup", () => {
         const item = addGroundItem(world, {
             x: 100,
             y: 0,
-            grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Staff", [
-                { path: EquipmentPath.STAFF, tierIndex: 2 },
-            ]),
+            path: EquipmentPath.STAFF,
+            tierIndex: 2,
         });
         const player = world.player!;
         expect(player.equipment[EquipmentPath.STAFF]).toBe(0);
@@ -118,9 +101,8 @@ describe("ground item pickup", () => {
         const item = addGroundItem(world, {
             x: 50,
             y: 0,
-            grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Amulet", [
-                { path: EquipmentPath.AMULET, tierIndex: 3 },
-            ]),
+            path: EquipmentPath.AMULET,
+            tierIndex: 3,
         });
 
         advanceSeconds(world, pickupInput(item.id), 5);
@@ -129,9 +111,8 @@ describe("ground item pickup", () => {
         const pickedUp = events.find((event) => event.kind === CombatEventKind.ITEM_PICKED_UP);
         expect(pickedUp).toMatchObject({
             kind: CombatEventKind.ITEM_PICKED_UP,
-            grant: expect.objectContaining({
-                changes: [{ path: EquipmentPath.AMULET, tierIndex: 3 }],
-            }),
+            path: EquipmentPath.AMULET,
+            tierIndex: 3,
         });
     });
 
@@ -154,20 +135,5 @@ describe("ground item pickup", () => {
         world.advance(1 / 120, pickupInput(1));
 
         expect(world.groundItems.length).toBe(1);
-    });
-});
-
-describe("equipment set pickup", () => {
-    it("keeps floor grants until pickup and applies a complete set atomically", () => {
-        const world = makeWorld();
-        const item = addGroundItem(world, { x: 50, grant: styleSetGrant(WeaponStyle.MELEE, 2) });
-
-        advanceSeconds(world, idleInput(), 120);
-        expect(world.groundItems.length).toBe(1);
-
-        advanceSeconds(world, pickupInput(item.id), 1);
-        expect(world.groundItems.length).toBe(0);
-        expect(world.player!.equipment[EquipmentPath.SCIMITAR]).toBe(2);
-        expect(world.player!.equipment[EquipmentPath.DEFENDER]).toBe(2);
     });
 });

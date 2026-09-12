@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Joystick } from "react-joystick-component";
-import { useSearchParams } from "react-router-dom";
 
 import { RendererCanvas } from "../components/renderer/RendererCanvas";
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
@@ -21,8 +20,6 @@ interface MapViewerContainerProps {
 const FPS_COUNTER_INTERVAL_MS = 500;
 
 export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.Element {
-    const [, setSearchParams] = useSearchParams();
-
     const [renderer, setRenderer] = useState<MapViewerRenderer>(mapViewer.renderer);
 
     // Gates the canvas/HUD/minimap reveal until the renderer has loaded the encounter's map
@@ -100,16 +97,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
             if (label !== loadingPhaseLabel) {
                 setLoadingPhaseLabel(label);
             }
-        }
-
-        // Wait for 200ms before updating search params
-        if (
-            mapViewer.needsSearchParamUpdate &&
-            performance.now() - mapViewer.lastTimeSearchParamsUpdated > 200
-        ) {
-            setSearchParams(mapViewer.getSearchParams(), { replace: true });
-            mapViewer.needsSearchParamUpdate = false;
-            console.log("Updated search params");
         }
 
         drawHud(time);

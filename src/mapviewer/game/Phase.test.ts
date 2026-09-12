@@ -11,7 +11,7 @@ import { createExperienceReward, createRewardId } from "./Reward";
 
 const WAVE: Wave = {
     groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
-    startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+    startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0, delaySeconds: 0 },
 };
 
 describe("phases", () => {

@@ -45,7 +45,6 @@ export function damagePayload(min: number, max: number = min): DamagePayload {
 
 export type HitEffect = {
     readonly kind: VisualEffectKind;
-    readonly seqId: number;
     readonly height: number;
 };
 
