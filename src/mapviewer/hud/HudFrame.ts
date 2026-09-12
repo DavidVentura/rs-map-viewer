@@ -66,18 +66,29 @@ export type AbilitySlotHudInfo = {
     blocked: AbilitySlotBlockReason;
 };
 
-export enum WaveStatus {
-    ACTIVE = 0,
-    AWAITING_UPGRADE = 1,
-    CLEARED = 2,
+export enum PhaseStatus {
+    READY = 0,
+    ACTIVE = 1,
+    REWARDS = 2,
+    COMPLETE = 3,
 }
 
-export type WaveHudInfo = {
+export type PhaseHudInfo = {
     readonly index: number;
     readonly total: number;
-    readonly aliveEnemies: number;
-    readonly status: WaveStatus;
+    readonly label: string;
+    readonly status: PhaseStatus;
     readonly modifiersSummary?: string;
+};
+
+export type UpgradeCardHudInfo = {
+    readonly name: string;
+    readonly description: string;
+    readonly keyLabel: string;
+};
+
+export type UpgradeOfferHudInfo = {
+    readonly cards: readonly UpgradeCardHudInfo[];
 };
 
 export type InteractionHudInfo = {
@@ -121,11 +132,12 @@ export type HudFrame = {
     activeStyle?: WeaponStyle;
     godMode: boolean;
     splatEvents: SplatEvent[];
-    wave?: WaveHudInfo;
+    phase?: PhaseHudInfo;
     previewSeqId?: number;
     boss?: BossHudInfo;
     groundItems: GroundItemHudInfo[];
     interactions: InteractionHudInfo[];
     interactionActionText?: string;
+    upgradeOffer?: UpgradeOfferHudInfo;
     pickupFlashEvents: PickupFlashEvent[];
 };

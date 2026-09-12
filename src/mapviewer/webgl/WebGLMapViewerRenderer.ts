@@ -50,10 +50,11 @@ import {
     BossHudInfo,
     GroundItemHudInfo,
     HudFrame,
+    PhaseStatus,
     PickupFlashEvent,
     SplatEvent,
     SplatKind,
-    WaveStatus,
+    UpgradeCardHudInfo,
 } from "../hud/HudFrame";
 import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
 import { DataTextureFormat, DataTextureRing, DataTextureSlot } from "./DataTextureRing";
@@ -1365,6 +1366,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             movement: this.buildMovementInput(),
             combat: this.buildCombatInput(),
             styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
+            chooseUpgrade: this.buildUpgradeChoiceInput(),
             pickupTarget: this.buildPickupInput(),
             interaction: this.buildInteractionInput(),
         });
@@ -1534,6 +1536,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
         );
         return hitTestHud(layout, inputManager.mouseX, inputManager.mouseY) !== undefined;
     }
@@ -1548,6 +1551,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
         );
         const region = hitTestHud(layout, inputManager.pressEventX, inputManager.pressEventY);
         return region?.kind === HudRegionKind.STYLE ? region.style : undefined;
@@ -1585,6 +1589,31 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         return { x: deltaX / length, y: deltaY / length, running };
+    }
+
+    private buildUpgradeChoiceInput(): number | undefined {
+        const frame = this.hudFrame;
+        const cardCount = frame?.upgradeOffer?.cards.length ?? 0;
+        if (!frame || cardCount === 0) {
+            return undefined;
+        }
+        const input = this.mapViewer.inputManager;
+        for (let index = 0; index < cardCount; index++) {
+            if (input.isKeyDownEvent(`Digit${index + 1}`)) {
+                return index;
+            }
+        }
+        if (!input.isPressEvent()) {
+            return undefined;
+        }
+        const layout = computeHudLayout(
+            frame.screenSize.width,
+            frame.screenSize.height,
+            frame.abilities.length,
+            cardCount,
+        );
+        const region = hitTestHud(layout, input.pressEventX, input.pressEventY);
+        return region?.kind === HudRegionKind.UPGRADE_CARD ? region.index : undefined;
     }
 
     private buildKeyStyleSwitchInput(): WeaponStyle | undefined {
@@ -1950,7 +1979,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             });
         }
 
-        const waveProgress = world.getWaveProgress();
+        const phaseProgress = world.getPhaseProgress();
         const interactionCandidates = this.buildInteractionCandidates();
         const hoveredInteractionId = this.hoveredInteractionId();
         const interactions = world.activeInteractions.flatMap((interaction) => {
@@ -2014,17 +2043,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                       ({ id }) => id === hoveredInteractionId,
                   )?.target.label}`
                 : undefined,
+            upgradeOffer: world.pendingUpgradeOffer && {
+                cards: world.pendingUpgradeOffer.map(
+                    (upgrade, index): UpgradeCardHudInfo => ({
+                        name: upgrade.name,
+                        description: upgrade.description,
+                        keyLabel: `${index + 1}`,
+                    }),
+                ),
+            },
             pickupFlashEvents,
-            wave: waveProgress && {
-                index: waveProgress.index,
-                total: waveProgress.total,
-                aliveEnemies: world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)
-                    .length,
-                status: this.encounterCleared
-                    ? WaveStatus.CLEARED
-                    : waveProgress.awaitingUpgrade
-                    ? WaveStatus.AWAITING_UPGRADE
-                    : WaveStatus.ACTIVE,
+            phase: phaseProgress && {
+                index: phaseProgress.index,
+                total: phaseProgress.total,
+                label: phaseProgress.label,
+                status: PhaseStatus[phaseProgress.state],
                 modifiersSummary: player && summarizeModifiers(player.getModifiers()),
             },
             previewSeqId: this.mapViewer.animPreview ? world.enemies[0]?.previewSeqId : undefined,

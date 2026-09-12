@@ -57,6 +57,7 @@ import {
     ProjectileTarget,
     travelSeconds,
 } from "./Projectile";
+import { Reward } from "./Reward";
 import { SpatialGrid } from "./SpatialGrid";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
@@ -76,6 +77,7 @@ import {
     rotationToDirection,
 } from "./projectileMath";
 import { resolveSpawn } from "./spawn";
+import { UPGRADE_POOL, Upgrade } from "./upgrades";
 
 export type AbilitySlotInput = {
     readonly held: boolean;
@@ -105,6 +107,7 @@ export type SimInput = {
     // player instead holds an attack on an enemy or plain ground movement.
     pickupTarget?: PickupTarget;
     interaction?: InteractionIntent;
+    chooseUpgrade?: number;
 };
 
 export type ScheduledVisualEffect = {
@@ -150,6 +153,8 @@ export class GameWorld {
     private killsByWave: number[] = [];
     private triggeredBossPhases = new Map<number, Set<number>>();
     activatedPhaseRewards?: WorldAction;
+    pendingUpgradeOffer?: readonly Upgrade[];
+    private pendingPhaseRewards: readonly Reward[] = [];
     godMode = false;
 
     constructor(
@@ -205,6 +210,8 @@ export class GameWorld {
         this.waveDirectorState = initialWaveDirectorState(0);
         this.interactionState = IDLE_INTERACTION;
         this.activatedPhaseRewards = undefined;
+        this.pendingUpgradeOffer = undefined;
+        this.pendingPhaseRewards = [];
         if (encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
             this.spawnStaticEncounterEnemies(encounter);
         }
@@ -218,6 +225,8 @@ export class GameWorld {
         this.phaseLifecycle = undefined;
         this.interactionState = IDLE_INTERACTION;
         this.activatedPhaseRewards = undefined;
+        this.pendingUpgradeOffer = undefined;
+        this.pendingPhaseRewards = [];
         this.enemyWaveIndex.clear();
         this.triggeredBossPhases.clear();
         this.killsByWave = [];
@@ -240,6 +249,21 @@ export class GameWorld {
             total: phase.waves.length,
             cleared: this.waveDirectorState.cleared,
             awaitingUpgrade: false,
+        };
+    }
+
+    getPhaseProgress():
+        | { index: number; total: number; label: string; state: PhaseLifecycle["kind"] }
+        | undefined {
+        const lifecycle = this.phaseLifecycle;
+        if (!lifecycle) {
+            return undefined;
+        }
+        return {
+            index: lifecycle.phaseIndex + 1,
+            total: lifecycle.phases.length,
+            label: currentPhase(lifecycle).label,
+            state: lifecycle.kind,
         };
     }
 
@@ -321,6 +345,11 @@ export class GameWorld {
 
     step(input: SimInput, dtSeconds: number): void {
         this.timeSeconds += dtSeconds;
+
+        if (this.pendingUpgradeOffer) {
+            this.applyUpgradeChoice(input.chooseUpgrade);
+            return;
+        }
 
         if (this.player) {
             this.updatePlayer(this.player, input, dtSeconds);
@@ -507,8 +536,47 @@ export class GameWorld {
                     throw new Error("Cannot activate rewards outside the rewards lifecycle state");
                 }
                 this.activatedPhaseRewards = action;
+                this.pendingPhaseRewards = currentPhase(lifecycle).rewards;
+                this.activateNextPhaseReward();
                 return;
         }
+    }
+
+    private activateNextPhaseReward(): void {
+        const [reward, ...remaining] = this.pendingPhaseRewards;
+        if (!reward) {
+            const lifecycle = this.phaseLifecycle;
+            if (!lifecycle || lifecycle.kind !== "REWARDS") {
+                throw new Error("Cannot finish phase rewards outside the rewards state");
+            }
+            this.phaseLifecycle = transitionPhase(lifecycle, { kind: "REWARDS_CLAIMED" });
+            this.activatedPhaseRewards = undefined;
+            return;
+        }
+        this.pendingPhaseRewards = remaining;
+        if (reward.kind !== "UPGRADE_CHOICE") {
+            throw new Error(`Reward ${reward.kind} is not implemented yet`);
+        }
+        this.pendingUpgradeOffer = reward.choices.map((choice) => {
+            const upgrade = UPGRADE_POOL.find(({ id }) => id === choice);
+            if (!upgrade) {
+                throw new Error(`Unknown authored upgrade ${choice}`);
+            }
+            return upgrade;
+        });
+    }
+
+    private applyUpgradeChoice(choiceIndex: number | undefined): void {
+        if (choiceIndex === undefined || !this.pendingUpgradeOffer || !this.player) {
+            return;
+        }
+        const upgrade = this.pendingUpgradeOffer[choiceIndex];
+        if (!upgrade) {
+            throw new RangeError(`No upgrade choice at index ${choiceIndex}`);
+        }
+        this.player.applyUpgrade(upgrade);
+        this.pendingUpgradeOffer = undefined;
+        this.activateNextPhaseReward();
     }
 
     findGroundItem(id: number): GroundItem | undefined {
@@ -763,6 +831,8 @@ export class GameWorld {
         this.phaseLifecycle = initialPhaseLifecycle(encounter.phases);
         this.interactionState = IDLE_INTERACTION;
         this.activatedPhaseRewards = undefined;
+        this.pendingUpgradeOffer = undefined;
+        this.pendingPhaseRewards = [];
         this.killsByWave = [];
         this.waveDirectorState = initialWaveDirectorState(0);
     }

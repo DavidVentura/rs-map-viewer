@@ -13,11 +13,12 @@ import {
     drawInteractionActionText,
     drawInteractionMarker,
     drawManaGlobe,
+    drawPhaseCounter,
     drawPickupFlash,
     drawPreviewSeqLabel,
     drawStyleRow,
     drawTargetPlate,
-    drawWaveCounter,
+    drawUpgradeOverlay,
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
@@ -50,7 +51,12 @@ export class Hud {
             drawInteractionActionText(ctx, frame.interactionActionText);
         }
 
-        const layout = computeHudLayout(width, height, frame.abilities.length);
+        const layout = computeHudLayout(
+            width,
+            height,
+            frame.abilities.length,
+            frame.upgradeOffer?.cards.length ?? 0,
+        );
         drawBottomPanel(ctx, layout);
         drawAbilityBar(ctx, layout, frame.abilities);
         if (frame.activeStyle !== undefined) {
@@ -63,8 +69,8 @@ export class Hud {
         if (frame.target) {
             drawTargetPlate(ctx, width, frame.target);
         }
-        if (frame.wave) {
-            drawWaveCounter(ctx, width, frame.wave);
+        if (frame.phase) {
+            drawPhaseCounter(ctx, width, frame.phase);
         }
         if (frame.godMode) {
             drawGodModeLabel(ctx, width);
@@ -74,6 +80,9 @@ export class Hud {
         }
         this.drawSplats(frame);
         this.drawPickupFlashes(width);
+        if (frame.upgradeOffer) {
+            drawUpgradeOverlay(ctx, width, height, layout, frame.upgradeOffer.cards);
+        }
         if (frame.previewSeqId !== undefined) {
             drawPreviewSeqLabel(ctx, width, frame.previewSeqId);
         }

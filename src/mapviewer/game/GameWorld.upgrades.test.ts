@@ -12,8 +12,10 @@ import {
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
 import { StanceSeqIdsByStance } from "./Player";
+import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { Terrain } from "./Terrain";
 import { stubSequenceLoaders } from "./testLoaders";
+import { UpgradeId } from "./upgrades";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -86,6 +88,42 @@ function phaseEncounter(waves: readonly Wave[]): WaveEncounter {
     };
 }
 
+function rewardingEncounter(): WaveEncounter {
+    const encounter = phaseEncounter([FIRST_WAVE]);
+    const phase = createPhase(
+        createPhaseId("rewarding"),
+        "Rewarding phase",
+        encounter.waves,
+        { kind: "ALL_WAVES_CLEARED" },
+        [
+            createUpgradeChoiceReward(createRewardId("rewarding_upgrade"), [
+                UpgradeId.DAMAGE_UP,
+                UpgradeId.SWIFT_STRIKES,
+                UpgradeId.QUICK_HANDS,
+            ]),
+        ],
+    );
+    const start = createInteraction(
+        createInteractionId("start_rewarding"),
+        createAuthoredLocationTarget("Start rewarding phase", [
+            createInteractionPose(createWorldPosition(0, 0, 0), 0),
+        ]),
+        { kind: "START_PHASE", phaseId: phase.id },
+        1,
+        0.01,
+    );
+    const rewards = createInteraction(
+        createInteractionId("claim_rewarding"),
+        createAuthoredLocationTarget("Claim rewarding phase", [
+            createInteractionPose(createWorldPosition(0, 0, 0), 0),
+        ]),
+        { kind: "ACTIVATE_PHASE_REWARDS", phaseId: phase.id },
+        1,
+        0.01,
+    );
+    return { ...encounter, phases: [phase], interactions: [start, rewards] };
+}
+
 function idleInput(): SimInput {
     return {
         movement: { x: 0, y: 0, running: false },
@@ -149,5 +187,33 @@ describe("phased wave encounters", () => {
 
         expect(world.interactionState.kind).toBe("IDLE");
         expect(world.phaseLifecycle?.kind).toBe("READY");
+    });
+
+    it("opens an upgrade choice only after the reward interaction completes", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.startEncounter(rewardingEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        startPhase(world);
+        world.enemies[0].health = 0;
+        world.advance(1 / 120, idleInput());
+
+        expect(world.phaseLifecycle?.kind).toBe("REWARDS");
+        expect(world.pendingUpgradeOffer).toBeUndefined();
+        const rewardInteraction = world.activeInteractions[0];
+        world.advance(1 / 120, {
+            ...idleInput(),
+            interaction: { kind: "START", interactionId: rewardInteraction.id },
+        });
+        world.advance(1 / 60, idleInput());
+
+        expect(world.pendingUpgradeOffer?.map(({ id }) => id)).toEqual([
+            UpgradeId.DAMAGE_UP,
+            UpgradeId.SWIFT_STRIKES,
+            UpgradeId.QUICK_HANDS,
+        ]);
+        const previous = world.player!.getModifiers();
+        world.advance(1 / 120, { ...idleInput(), chooseUpgrade: 0 });
+        expect(world.player!.getModifiers()).not.toEqual(previous);
+        expect(world.pendingUpgradeOffer).toBeUndefined();
+        expect(world.phaseLifecycle?.kind).toBe("COMPLETE");
     });
 });

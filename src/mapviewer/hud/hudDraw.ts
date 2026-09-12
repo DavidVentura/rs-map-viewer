@@ -7,10 +7,11 @@ import {
     BossHudInfo,
     GroundItemHudInfo,
     InteractionHudInfo,
+    PhaseHudInfo,
+    PhaseStatus,
     PlayerHudInfo,
     TargetHudInfo,
-    WaveHudInfo,
-    WaveStatus,
+    UpgradeCardHudInfo,
 } from "./HudFrame";
 
 const HEALTH_GLOBE_COLOR = { light: "#ff4a3a", dark: "#5a0606", glow: "#ff9a8a" };
@@ -28,6 +29,9 @@ const TARGET_PLATE_MARGIN_TOP = 16;
 const STYLE_ICON_SIZE = 26;
 const STYLE_ICON_GAP = 6;
 const STYLE_ROW_MARGIN_BOTTOM = 6;
+const UPGRADE_CARD_WIDTH = 260;
+const UPGRADE_CARD_HEIGHT = 300;
+const UPGRADE_CARD_GAP = 24;
 
 const STYLE_ORDER: readonly WeaponStyle[] = [
     WeaponStyle.MELEE,
@@ -50,9 +54,15 @@ export type HudLayout = {
     manaGlobe: { x: number; y: number; radius: number };
     slots: { x: number; y: number; size: number }[];
     styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
+    upgradeCards: { x: number; y: number; width: number; height: number }[];
 };
 
-export function computeHudLayout(width: number, height: number, slotCount: number): HudLayout {
+export function computeHudLayout(
+    width: number,
+    height: number,
+    slotCount: number,
+    upgradeCardCount: number = 0,
+): HudLayout {
     const panelWidth = Math.min(PANEL_MAX_WIDTH, width);
     const panelX = width / 2 - panelWidth / 2;
     const panelY = height - PANEL_BOTTOM_MARGIN - PANEL_HEIGHT;
@@ -65,6 +75,11 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
         STYLE_ICON_SIZE * STYLE_ORDER.length + STYLE_ICON_GAP * (STYLE_ORDER.length - 1);
     const styleIconsX = width / 2 - styleIconsWidth / 2;
     const styleIconsY = slotsY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
+    const upgradeCardsWidth =
+        UPGRADE_CARD_WIDTH * upgradeCardCount +
+        UPGRADE_CARD_GAP * Math.max(0, upgradeCardCount - 1);
+    const upgradeCardsX = width / 2 - upgradeCardsWidth / 2;
+    const upgradeCardsY = height / 2 - UPGRADE_CARD_HEIGHT / 2;
     return {
         panelX,
         panelY,
@@ -82,6 +97,12 @@ export function computeHudLayout(width: number, height: number, slotCount: numbe
             y: styleIconsY,
             size: STYLE_ICON_SIZE,
             style,
+        })),
+        upgradeCards: Array.from({ length: upgradeCardCount }, (_, i) => ({
+            x: upgradeCardsX + i * (UPGRADE_CARD_WIDTH + UPGRADE_CARD_GAP),
+            y: upgradeCardsY,
+            width: UPGRADE_CARD_WIDTH,
+            height: UPGRADE_CARD_HEIGHT,
         })),
     };
 }
@@ -110,15 +131,23 @@ export enum HudRegionKind {
     ORB = 1,
     SLOT = 2,
     STYLE = 3,
+    UPGRADE_CARD = 4,
 }
 
 export type HudRegion =
     | { readonly kind: HudRegionKind.PANEL }
     | { readonly kind: HudRegionKind.ORB }
     | { readonly kind: HudRegionKind.SLOT; readonly slot: number }
-    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle };
+    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle }
+    | { readonly kind: HudRegionKind.UPGRADE_CARD; readonly index: number };
 
 export function hitTestHud(layout: HudLayout, x: number, y: number): HudRegion | undefined {
+    const upgradeCardIndex = layout.upgradeCards.findIndex((card) =>
+        isInsideRect(x, y, card.x, card.y, card.width, card.height),
+    );
+    if (upgradeCardIndex !== -1) {
+        return { kind: HudRegionKind.UPGRADE_CARD, index: upgradeCardIndex };
+    }
     const styleIcon = layout.styleIcons.find((icon) =>
         isInsideRect(x, y, icon.x, icon.y, icon.size, icon.size),
     );
@@ -577,32 +606,35 @@ export function drawHealSplat(
 const WAVE_COUNTER_MARGIN_TOP = TARGET_PLATE_MARGIN_TOP + TARGET_PLATE_HEIGHT + 12;
 const WAVE_COUNTER_SUMMARY_MARGIN_TOP = WAVE_COUNTER_MARGIN_TOP + 24;
 
-function waveCounterText(wave: WaveHudInfo): string {
-    switch (wave.status) {
-        case WaveStatus.CLEARED:
+function phaseCounterText(phase: PhaseHudInfo): string {
+    switch (phase.status) {
+        case PhaseStatus.COMPLETE:
             return "Encounter cleared";
-        case WaveStatus.AWAITING_UPGRADE:
-            return "Wave cleared, choose an upgrade";
-        case WaveStatus.ACTIVE:
-            return `Wave ${wave.index} / ${wave.total} · ${wave.aliveEnemies} left`;
+        case PhaseStatus.REWARDS:
+            return `Phase ${phase.index} / ${phase.total} cleared · claim reward`;
+        case PhaseStatus.READY:
+            return `Phase ${phase.index} / ${phase.total} · ready to start`;
+        case PhaseStatus.ACTIVE:
+            return `Phase ${phase.index} / ${phase.total} · ${phase.label}`;
     }
 }
 
-function waveCounterColor(status: WaveStatus): string {
+function phaseCounterColor(status: PhaseStatus): string {
     switch (status) {
-        case WaveStatus.CLEARED:
+        case PhaseStatus.COMPLETE:
             return "#4dff7a";
-        case WaveStatus.AWAITING_UPGRADE:
+        case PhaseStatus.REWARDS:
+        case PhaseStatus.READY:
             return "#ffd24d";
-        case WaveStatus.ACTIVE:
+        case PhaseStatus.ACTIVE:
             return "#e8e0d0";
     }
 }
 
-export function drawWaveCounter(
+export function drawPhaseCounter(
     ctx: CanvasRenderingContext2D,
     width: number,
-    wave: WaveHudInfo,
+    phase: PhaseHudInfo,
 ): void {
     ctx.save();
     ctx.font = "700 18px sans-serif";
@@ -610,16 +642,16 @@ export function drawWaveCounter(
     ctx.textBaseline = "top";
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillStyle = waveCounterColor(wave.status);
-    const text = waveCounterText(wave);
+    ctx.fillStyle = phaseCounterColor(phase.status);
+    const text = phaseCounterText(phase);
     ctx.strokeText(text, width / 2, WAVE_COUNTER_MARGIN_TOP);
     ctx.fillText(text, width / 2, WAVE_COUNTER_MARGIN_TOP);
 
-    if (wave.modifiersSummary) {
+    if (phase.modifiersSummary) {
         ctx.font = "600 13px sans-serif";
         ctx.fillStyle = "#b8ac94";
-        ctx.strokeText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
-        ctx.fillText(wave.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
+        ctx.strokeText(phase.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
+        ctx.fillText(phase.modifiersSummary, width / 2, WAVE_COUNTER_SUMMARY_MARGIN_TOP);
     }
     ctx.restore();
 }
@@ -697,6 +729,61 @@ export function drawPreviewSeqLabel(
     ctx.strokeText(text, width / 2, PREVIEW_SEQ_LABEL_MARGIN_TOP);
     ctx.fillText(text, width / 2, PREVIEW_SEQ_LABEL_MARGIN_TOP);
     ctx.restore();
+}
+
+const UPGRADE_OVERLAY_DIM_COLOR = "rgba(0, 0, 0, 0.6)";
+
+function drawUpgradeCard(
+    ctx: CanvasRenderingContext2D,
+    card: { x: number; y: number; width: number; height: number },
+    info: UpgradeCardHudInfo,
+): void {
+    const { x, y, width, height } = card;
+    const gradient = ctx.createLinearGradient(0, y, 0, y + height);
+    gradient.addColorStop(0, "rgba(28, 24, 22, 0.96)");
+    gradient.addColorStop(1, "rgba(10, 8, 8, 0.98)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, width, height);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120, 96, 60, 0.7)";
+    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.font = "700 20px sans-serif";
+    ctx.fillStyle = "#ffd24d";
+    ctx.textBaseline = "top";
+    ctx.strokeText(info.name, x + width / 2, y + 28, width - 24);
+    ctx.fillText(info.name, x + width / 2, y + 28, width - 24);
+    ctx.font = "500 15px sans-serif";
+    ctx.fillStyle = "#e8e0d0";
+    ctx.strokeText(info.description, x + width / 2, y + 64, width - 24);
+    ctx.fillText(info.description, x + width / 2, y + 64, width - 24);
+    ctx.font = "700 16px sans-serif";
+    ctx.fillStyle = "#d8cfbc";
+    ctx.textBaseline = "bottom";
+    ctx.strokeText(`[${info.keyLabel}]`, x + width / 2, y + height - 16);
+    ctx.fillText(`[${info.keyLabel}]`, x + width / 2, y + height - 16);
+    ctx.restore();
+}
+
+export function drawUpgradeOverlay(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    layout: HudLayout,
+    cards: readonly UpgradeCardHudInfo[],
+): void {
+    ctx.save();
+    ctx.fillStyle = UPGRADE_OVERLAY_DIM_COLOR;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+    const cardCount = Math.min(layout.upgradeCards.length, cards.length);
+    for (let index = 0; index < cardCount; index++) {
+        drawUpgradeCard(ctx, layout.upgradeCards[index], cards[index]);
+    }
 }
 
 const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
