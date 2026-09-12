@@ -6,8 +6,10 @@ import { AnimationPlayback, AnimationState } from "./Animation";
 import { Combatant, Faction, ManaPool } from "./Combatant";
 import {
     DEFAULT_EQUIPMENT,
+    EquipmentGrant,
     EquipmentPath,
     EquipmentState,
+    applyEquipmentGrant,
     equipAtTier,
     equipmentAbilityModifiers,
     equipmentDamageTakenMultiplier,
@@ -205,6 +207,14 @@ export class Player implements Combatant, ManaPool {
         this.equipment = equipAtTier(this.equipment, path, tierIndex);
         this.health = Math.min(this.maxHealth, this.health + (this.maxHealth - previousMaxHealth));
         this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
+    }
+
+    equipGrant(grant: EquipmentGrant): void {
+        const previousMaxHealth = this.maxHealth;
+        const previousMaxMana = this.maxMana;
+        this.equipment = applyEquipmentGrant(this.equipment, grant);
+        this.health = Math.min(this.maxHealth, this.health + this.maxHealth - previousMaxHealth);
+        this.mana = Math.min(this.maxMana, this.mana + this.maxMana - previousMaxMana);
     }
 
     resetProgression(): void {

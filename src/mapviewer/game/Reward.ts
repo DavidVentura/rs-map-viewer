@@ -1,4 +1,10 @@
-import { EquipmentPath } from "./Equipment";
+import {
+    EquipmentChange,
+    EquipmentGrant,
+    EquipmentGrantId,
+    EquipmentPath,
+    createEquipmentGrant,
+} from "./Equipment";
 import { UpgradeId } from "./upgrades";
 
 declare const rewardIdBrand: unique symbol;
@@ -12,15 +18,10 @@ export type UpgradeChoiceReward = {
     readonly choices: NonEmptyReadonlyArray<UpgradeId>;
 };
 
-export type EquipmentChange = {
-    readonly path: EquipmentPath;
-    readonly tierIndex: number;
-};
-
 export type EquipmentGrantReward = {
     readonly kind: "EQUIPMENT_GRANT";
     readonly id: RewardId;
-    readonly changes: NonEmptyReadonlyArray<EquipmentChange>;
+    readonly grant: EquipmentGrant;
 };
 
 export type RecoveryReward = {
@@ -76,17 +77,18 @@ export function createEquipmentGrantReward(
     id: RewardId,
     changes: readonly EquipmentChange[],
 ): EquipmentGrantReward {
-    if (changes.length === 0) {
-        throw new RangeError("An equipment grant requires at least one equipment change");
-    }
-    if (new Set(changes.map((change) => change.path)).size !== changes.length) {
-        throw new RangeError("An equipment grant cannot change a path more than once");
-    }
     return {
         kind: "EQUIPMENT_GRANT",
         id,
-        changes: nonEmpty(changes),
+        grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Equipment reward", changes),
     };
+}
+
+export function createNamedEquipmentGrantReward(
+    id: RewardId,
+    grant: EquipmentGrant,
+): EquipmentGrantReward {
+    return { kind: "EQUIPMENT_GRANT", id, grant };
 }
 
 export function createRecoveryReward(id: RewardId, health: number, mana: number): RecoveryReward {

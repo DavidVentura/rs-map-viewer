@@ -139,6 +139,18 @@ describe("encounters", () => {
         expect(() => validateEncounter(invalid)).toThrow(RangeError);
     });
 
+    it("guarantees one atomic style-set reward in each pre-finale Fight Caves phase", () => {
+        const encounter = getEncounter(EncounterId.FIGHT_CAVES);
+        if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("expected wave encounter");
+        }
+        const equipmentRewards = encounter.phases.flatMap((phase) =>
+            phase.rewards.flatMap((reward) => (reward.kind === "EQUIPMENT_GRANT" ? [reward] : [])),
+        );
+        expect(equipmentRewards).toHaveLength(3);
+        expect(equipmentRewards.map(({ grant }) => grant.changes.length)).toEqual([2, 2, 2]);
+    });
+
     it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE])(
         "%s ends with a single-enemy TzTok-Jad boss wave that no earlier wave overlaps",
         (id) => {

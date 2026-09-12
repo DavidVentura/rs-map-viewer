@@ -127,6 +127,24 @@ export const EQUIPMENT_PATH_LABELS: Readonly<Record<EquipmentPath, string>> = {
 
 export type EquipmentState = Readonly<Record<EquipmentPath, number>>;
 
+export type EquipmentChange = {
+    readonly path: EquipmentPath;
+    readonly tierIndex: number;
+};
+
+export enum EquipmentGrantId {
+    INDIVIDUAL = "individual",
+    RANGED_SET = "ranged_set",
+    MELEE_SET = "melee_set",
+    MAGIC_SET = "magic_set",
+}
+
+export type EquipmentGrant = {
+    readonly id: EquipmentGrantId;
+    readonly label: string;
+    readonly changes: readonly [EquipmentChange, ...EquipmentChange[]];
+};
+
 export const DEFAULT_EQUIPMENT: EquipmentState = Object.fromEntries(
     ALL_EQUIPMENT_PATHS.map((path) => [path, 0]),
 ) as EquipmentState;
@@ -151,6 +169,59 @@ export function equipAtTier(
 ): EquipmentState {
     const clamped = Math.min(Math.max(tierIndex, equipment[path]), maxTierIndex(path));
     return { ...equipment, [path]: clamped };
+}
+
+export function createEquipmentGrant(
+    id: EquipmentGrantId,
+    label: string,
+    changes: readonly EquipmentChange[],
+): EquipmentGrant {
+    if (label.trim().length === 0 || changes.length === 0) {
+        throw new RangeError("An equipment grant requires a label and at least one change");
+    }
+    if (new Set(changes.map(({ path }) => path)).size !== changes.length) {
+        throw new RangeError("An equipment grant cannot change one path twice");
+    }
+    for (const change of changes) {
+        if (
+            !Number.isInteger(change.tierIndex) ||
+            change.tierIndex < 0 ||
+            change.tierIndex > maxTierIndex(change.path)
+        ) {
+            throw new RangeError(`Invalid ${change.path} tier: ${change.tierIndex}`);
+        }
+    }
+    return { id, label, changes: [changes[0], ...changes.slice(1)] };
+}
+
+export function applyEquipmentGrant(
+    equipment: EquipmentState,
+    grant: EquipmentGrant,
+): EquipmentState {
+    return grant.changes.reduce(
+        (state, { path, tierIndex }) => ({ ...state, [path]: Math.max(state[path], tierIndex) }),
+        equipment,
+    );
+}
+
+export function styleSetGrant(style: WeaponStyle, tierIndex: number): EquipmentGrant {
+    switch (style) {
+        case WeaponStyle.RANGED:
+            return createEquipmentGrant(EquipmentGrantId.RANGED_SET, "Ranged set", [
+                { path: EquipmentPath.BOW, tierIndex },
+                { path: EquipmentPath.ARROWS, tierIndex },
+            ]);
+        case WeaponStyle.MELEE:
+            return createEquipmentGrant(EquipmentGrantId.MELEE_SET, "Melee set", [
+                { path: EquipmentPath.SCIMITAR, tierIndex },
+                { path: EquipmentPath.DEFENDER, tierIndex },
+            ]);
+        case WeaponStyle.MAGIC:
+            return createEquipmentGrant(EquipmentGrantId.MAGIC_SET, "Magic set", [
+                { path: EquipmentPath.STAFF, tierIndex },
+                { path: EquipmentPath.OFFHAND, tierIndex },
+            ]);
+    }
 }
 
 export function weaponPathForStyle(style: WeaponStyle): EquipmentPath {

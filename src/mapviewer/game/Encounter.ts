@@ -1,5 +1,7 @@
 import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
+import { WeaponStyle } from "./Ability";
 import { EnemyTypeId } from "./EnemyType";
+import { EquipmentGrant, styleSetGrant } from "./Equipment";
 import {
     Interaction,
     InteractionPose,
@@ -11,6 +13,7 @@ import {
 } from "./Interaction";
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
+import { createNamedEquipmentGrantReward } from "./Reward";
 import { UpgradeId } from "./upgrades";
 
 export type { MapSquareCoord };
@@ -304,6 +307,7 @@ type PhaseDraft = {
     readonly label: string;
     readonly waves: readonly Wave[];
     readonly grantsUpgrade: boolean;
+    readonly guaranteedEquipment?: EquipmentGrant;
 };
 
 function createEncounterPhases(
@@ -316,14 +320,24 @@ function createEncounterPhases(
             draft.label,
             draft.waves,
             { kind: "ALL_WAVES_CLEARED" },
-            draft.grantsUpgrade
-                ? [
-                      createUpgradeChoiceReward(
-                          createRewardId(`${encounterPrefix}_${draft.id}_upgrade`),
-                          AUTHORED_UPGRADE_CHOICES,
-                      ),
-                  ]
-                : [],
+            [
+                ...(draft.grantsUpgrade
+                    ? [
+                          createUpgradeChoiceReward(
+                              createRewardId(`${encounterPrefix}_${draft.id}_upgrade`),
+                              AUTHORED_UPGRADE_CHOICES,
+                          ),
+                      ]
+                    : []),
+                ...(draft.guaranteedEquipment
+                    ? [
+                          createNamedEquipmentGrantReward(
+                              createRewardId(`${encounterPrefix}_${draft.id}_equipment`),
+                              draft.guaranteedEquipment,
+                          ),
+                      ]
+                    : []),
+            ],
         ),
     );
     return [phases[0], ...phases.slice(1)];
@@ -469,18 +483,21 @@ const FIGHT_CAVES_PHASES = createEncounterPhases("fight_caves", [
         label: "Opening skirmish",
         waves: FIGHT_CAVES_WAVES.slice(0, 3),
         grantsUpgrade: true,
+        guaranteedEquipment: styleSetGrant(WeaponStyle.RANGED, 1),
     },
     {
         id: "pressure",
         label: "Rising pressure",
         waves: FIGHT_CAVES_WAVES.slice(3, 6),
         grantsUpgrade: true,
+        guaranteedEquipment: styleSetGrant(WeaponStyle.MELEE, 1),
     },
     {
         id: "gauntlet",
         label: "The gauntlet",
         waves: FIGHT_CAVES_WAVES.slice(6, 9),
         grantsUpgrade: true,
+        guaranteedEquipment: styleSetGrant(WeaponStyle.MAGIC, 1),
     },
     { id: "finale", label: "TzTok-Jad", waves: FIGHT_CAVES_WAVES.slice(9), grantsUpgrade: false },
 ]);

@@ -28,11 +28,10 @@ import {
     resolveEnemyType,
     resolveTriggeredBossPhase,
 } from "./EnemyType";
+import { EquipmentGrantId, createEquipmentGrant } from "./Equipment";
 import {
-    GROUND_ITEM_LIFETIME_SECONDS,
     GroundItem,
     distanceToGroundItem,
-    isGroundItemExpired,
     pendingGroundItemPaths,
     rollDropPath,
 } from "./GroundItem";
@@ -373,10 +372,6 @@ export class GameWorld {
         this.enemies = this.enemies.filter(
             (enemy) => enemy.despawnAt === undefined || this.timeSeconds < enemy.despawnAt,
         );
-        this.groundItems = this.groundItems.filter(
-            (item) => !isGroundItemExpired(item, this.timeSeconds),
-        );
-
         this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
@@ -569,6 +564,16 @@ export class GameWorld {
             this.activateNextPhaseReward();
             return;
         }
+        if (reward.kind === "EQUIPMENT_GRANT") {
+            const player = this.player;
+            if (!player) {
+                throw new Error("Cannot apply an equipment reward without a player");
+            }
+            player.equipGrant(reward.grant);
+            this.events.push({ kind: CombatEventKind.ITEM_PICKED_UP, grant: reward.grant });
+            this.activateNextPhaseReward();
+            return;
+        }
         if (reward.kind !== "UPGRADE_CHOICE") {
             throw new Error(`Reward ${reward.kind} is not implemented yet`);
         }
@@ -612,12 +617,11 @@ export class GameWorld {
         if (distanceToGroundItem(item, player.x, player.y) > GameWorld.PICKUP_RADIUS) {
             return;
         }
-        player.equipItemUpgrade(item.path, item.tierIndex);
+        player.equipGrant(item.grant);
         this.groundItems = this.groundItems.filter((existing) => existing.id !== item.id);
         this.events.push({
             kind: CombatEventKind.ITEM_PICKED_UP,
-            path: item.path,
-            tierIndex: item.tierIndex,
+            grant: item.grant,
         });
     }
 
@@ -723,19 +727,19 @@ export class GameWorld {
             return;
         }
         const tierIndex = player.equipment[path] + 1;
+        const grant = createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Equipment upgrade", [
+            { path, tierIndex },
+        ]);
         this.groundItems.push({
             id: this.nextGroundItemId++,
-            path,
-            tierIndex,
+            grant,
             x: enemy.x,
             y: enemy.y,
             level: enemy.level,
-            expiresAtSeconds: this.timeSeconds + GROUND_ITEM_LIFETIME_SECONDS,
         });
         this.events.push({
             kind: CombatEventKind.ITEM_DROPPED,
-            path,
-            tierIndex,
+            grant,
             x: enemy.x,
             y: enemy.y,
             level: enemy.level,

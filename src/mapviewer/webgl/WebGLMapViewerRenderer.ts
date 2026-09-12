@@ -153,7 +153,7 @@ type ActiveActor =
     | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
     | { kind: "projectile"; projectile: Projectile }
     | { kind: "effect"; effect: VisualEffect }
-    | { kind: "groundItem"; item: GroundItem }
+    | { kind: "groundItem"; item: GroundItem; itemId: number }
     | { kind: "previewGfx" };
 
 type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset">;
@@ -1923,9 +1923,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 continue;
             }
             if (event.kind === CombatEventKind.ITEM_PICKED_UP) {
-                const itemId = itemIdForTier(event.path, event.tierIndex);
-                const name = this.mapViewer.objTypeLoader.load(itemId).name;
-                pickupFlashEvents.push({ text: `Equipped: ${name}` });
+                pickupFlashEvents.push({ text: `Equipped: ${event.grant.label}` });
                 continue;
             }
             if (event.kind === CombatEventKind.LEVEL_UP) {
@@ -1975,13 +1973,20 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             if (!screen) {
                 continue;
             }
-            const itemId = itemIdForTier(item.path, item.tierIndex);
+            const firstChange = item.grant.changes[0];
+            const itemId = itemIdForTier(firstChange.path, firstChange.tierIndex);
             groundItems.push({
                 groundItemId: item.id,
                 screenX: screen.x,
                 screenY: screen.y,
-                name: this.mapViewer.objTypeLoader.load(itemId).name,
-                pathLabel: EQUIPMENT_PATH_LABELS[item.path],
+                name:
+                    item.grant.changes.length === 1
+                        ? this.mapViewer.objTypeLoader.load(itemId).name
+                        : item.grant.label,
+                pathLabel:
+                    item.grant.changes.length === 1
+                        ? EQUIPMENT_PATH_LABELS[firstChange.path]
+                        : `${item.grant.changes.length} items`,
             });
         }
 
@@ -2511,19 +2516,26 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             if (groundHeight === undefined) {
                 continue;
             }
-            push(
-                { kind: "groundItem", item },
-                {
-                    worldX: item.x,
-                    worldY: item.y,
-                    groundHeight,
-                    rotation: 0,
-                    level: this.terrain.getRenderLevel(item.level, item.x, item.y),
-                    interactType: InteractType.NONE,
-                    interactId: 0,
-                    pitch: 0,
-                },
-            );
+            for (const [index, change] of item.grant.changes.entries()) {
+                const offset = (index - (item.grant.changes.length - 1) / 2) * 24;
+                push(
+                    {
+                        kind: "groundItem",
+                        item,
+                        itemId: itemIdForTier(change.path, change.tierIndex),
+                    },
+                    {
+                        worldX: item.x + offset,
+                        worldY: item.y,
+                        groundHeight,
+                        rotation: 0,
+                        level: this.terrain.getRenderLevel(item.level, item.x, item.y),
+                        interactType: InteractType.NONE,
+                        interactId: 0,
+                        pitch: 0,
+                    },
+                );
+            }
         }
     }
 
@@ -2680,9 +2692,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 };
             }
             case "groundItem": {
-                const { item } = actor;
-                const itemId = itemIdForTier(item.path, item.tierIndex);
-                const animation = getGroundItemAnimation(actorData.groundItems, itemId);
+                const animation = getGroundItemAnimation(actorData.groundItems, actor.itemId);
                 return animation ? { animation, frameIndex: 0 } : undefined;
             }
             case "previewGfx": {

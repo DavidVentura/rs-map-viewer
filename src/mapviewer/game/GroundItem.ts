@@ -1,18 +1,20 @@
 import { DropTier } from "./EnemyType";
-import { ALL_EQUIPMENT_PATHS, EquipmentPath, EquipmentState, isAtMaxTier } from "./Equipment";
+import {
+    ALL_EQUIPMENT_PATHS,
+    EquipmentGrant,
+    EquipmentPath,
+    EquipmentState,
+    isAtMaxTier,
+} from "./Equipment";
 import { RandomSource } from "./abilityRules";
 
 export type GroundItem = {
     readonly id: number;
-    readonly path: EquipmentPath;
-    readonly tierIndex: number;
+    readonly grant: EquipmentGrant;
     readonly x: number;
     readonly y: number;
     readonly level: number;
-    readonly expiresAtSeconds: number;
 };
-
-export const GROUND_ITEM_LIFETIME_SECONDS = 60;
 
 // Diablo-style drop odds by enemy dropTier (see EnemyType.DropTier).
 const DROP_CHANCE: Readonly<Record<DropTier, number>> = {
@@ -48,11 +50,7 @@ export function rollDropPath(
 export function pendingGroundItemPaths(
     groundItems: readonly GroundItem[],
 ): ReadonlySet<EquipmentPath> {
-    return new Set(groundItems.map((item) => item.path));
-}
-
-export function isGroundItemExpired(item: GroundItem, timeSeconds: number): boolean {
-    return timeSeconds >= item.expiresAtSeconds;
+    return new Set(groundItems.flatMap((item) => item.grant.changes.map(({ path }) => path)));
 }
 
 export function distanceToGroundItem(item: GroundItem, x: number, y: number): number {

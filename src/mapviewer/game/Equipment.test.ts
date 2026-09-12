@@ -4,7 +4,10 @@ import {
     DEFAULT_EQUIPMENT,
     ELDER_MAUL_ITEM_ID,
     EQUIPMENT_PATHS,
+    EquipmentGrantId,
     EquipmentPath,
+    applyEquipmentGrant,
+    createEquipmentGrant,
     equipAtTier,
     equipmentAbilityModifiers,
     equipmentDamageTakenMultiplier,
@@ -14,6 +17,7 @@ import {
     itemIdForTier,
     maxTierIndex,
     secondaryPathForStyle,
+    styleSetGrant,
     visualGroupItemId,
     visualGroupItemIds,
     weaponItemId,
@@ -57,6 +61,25 @@ describe("equipment tier ladders", () => {
         itemIds.forEach((id, tier) => {
             expect(itemIdForTier(EquipmentPath.AMULET, tier)).toBe(id);
         });
+    });
+});
+
+describe("equipment grants", () => {
+    it("applies every change in a named set as one immutable transition", () => {
+        const grant = styleSetGrant(WeaponStyle.MELEE, 2);
+        const equipment = applyEquipmentGrant(DEFAULT_EQUIPMENT, grant);
+        expect(equipment[EquipmentPath.SCIMITAR]).toBe(2);
+        expect(equipment[EquipmentPath.DEFENDER]).toBe(2);
+        expect(DEFAULT_EQUIPMENT[EquipmentPath.SCIMITAR]).toBe(0);
+    });
+
+    it("rejects the whole grant when any change is invalid", () => {
+        expect(() =>
+            createEquipmentGrant(EquipmentGrantId.MELEE_SET, "Broken set", [
+                { path: EquipmentPath.SCIMITAR, tierIndex: 2 },
+                { path: EquipmentPath.DEFENDER, tierIndex: 99 },
+            ]),
+        ).toThrow("Invalid defender tier");
     });
 });
 

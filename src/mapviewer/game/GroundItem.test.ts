@@ -1,11 +1,15 @@
+import { WeaponStyle } from "./Ability";
 import { DropTier } from "./EnemyType";
-import { DEFAULT_EQUIPMENT, EquipmentPath, equipAtTier, maxTierIndex } from "./Equipment";
 import {
-    GroundItem,
-    isGroundItemExpired,
-    pendingGroundItemPaths,
-    rollDropPath,
-} from "./GroundItem";
+    DEFAULT_EQUIPMENT,
+    EquipmentGrantId,
+    EquipmentPath,
+    createEquipmentGrant,
+    equipAtTier,
+    maxTierIndex,
+    styleSetGrant,
+} from "./Equipment";
+import { GroundItem, pendingGroundItemPaths, rollDropPath } from "./GroundItem";
 
 function fixedRandom(...values: number[]): () => number {
     let index = 0;
@@ -70,47 +74,24 @@ describe("pendingGroundItemPaths", () => {
         const items: GroundItem[] = [
             {
                 id: 1,
-                path: EquipmentPath.BOW,
-                tierIndex: 1,
+                grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Bow", [
+                    { path: EquipmentPath.BOW, tierIndex: 1 },
+                ]),
                 x: 0,
                 y: 0,
                 level: 0,
-                expiresAtSeconds: 60,
             },
             {
                 id: 2,
-                path: EquipmentPath.STAFF,
-                tierIndex: 1,
+                grant: styleSetGrant(WeaponStyle.MAGIC, 1),
                 x: 0,
                 y: 0,
                 level: 0,
-                expiresAtSeconds: 60,
             },
         ];
         const pending = pendingGroundItemPaths(items);
         expect(pending.has(EquipmentPath.BOW)).toBe(true);
         expect(pending.has(EquipmentPath.STAFF)).toBe(true);
         expect(pending.has(EquipmentPath.SCIMITAR)).toBe(false);
-    });
-});
-
-describe("isGroundItemExpired", () => {
-    const item: GroundItem = {
-        id: 1,
-        path: EquipmentPath.BOW,
-        tierIndex: 1,
-        x: 0,
-        y: 0,
-        level: 0,
-        expiresAtSeconds: 60,
-    };
-
-    it("is not expired before its expiry time", () => {
-        expect(isGroundItemExpired(item, 59.9)).toBe(false);
-    });
-
-    it("is expired at or after its expiry time", () => {
-        expect(isGroundItemExpired(item, 60)).toBe(true);
-        expect(isGroundItemExpired(item, 61)).toBe(true);
     });
 });

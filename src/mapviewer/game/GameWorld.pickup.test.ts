@@ -1,8 +1,8 @@
 import { WeaponStyle } from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
-import { EquipmentPath } from "./Equipment";
+import { EquipmentGrantId, EquipmentPath, createEquipmentGrant, styleSetGrant } from "./Equipment";
 import { GameWorld, SimInput } from "./GameWorld";
-import { GROUND_ITEM_LIFETIME_SECONDS, GroundItem } from "./GroundItem";
+import { GroundItem } from "./GroundItem";
 import { StanceSeqIdsByStance } from "./Player";
 import { Terrain } from "./Terrain";
 import { stubSequenceLoaders } from "./testLoaders";
@@ -67,12 +67,12 @@ function makeWorld(): GameWorld {
 function addGroundItem(world: GameWorld, overrides: Partial<GroundItem> = {}): GroundItem {
     const item: GroundItem = {
         id: 1,
-        path: EquipmentPath.BOW,
-        tierIndex: 1,
+        grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Bow", [
+            { path: EquipmentPath.BOW, tierIndex: 1 },
+        ]),
         x: 500,
         y: 0,
         level: 0,
-        expiresAtSeconds: world.timeSeconds + GROUND_ITEM_LIFETIME_SECONDS,
         ...overrides,
     };
     world.groundItems.push(item);
@@ -97,8 +97,9 @@ describe("ground item pickup", () => {
         const item = addGroundItem(world, {
             x: 100,
             y: 0,
-            path: EquipmentPath.STAFF,
-            tierIndex: 2,
+            grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Staff", [
+                { path: EquipmentPath.STAFF, tierIndex: 2 },
+            ]),
         });
         const player = world.player!;
         expect(player.equipment[EquipmentPath.STAFF]).toBe(0);
@@ -117,8 +118,9 @@ describe("ground item pickup", () => {
         const item = addGroundItem(world, {
             x: 50,
             y: 0,
-            path: EquipmentPath.AMULET,
-            tierIndex: 3,
+            grant: createEquipmentGrant(EquipmentGrantId.INDIVIDUAL, "Amulet", [
+                { path: EquipmentPath.AMULET, tierIndex: 3 },
+            ]),
         });
 
         advanceSeconds(world, pickupInput(item.id), 5);
@@ -127,8 +129,9 @@ describe("ground item pickup", () => {
         const pickedUp = events.find((event) => event.kind === CombatEventKind.ITEM_PICKED_UP);
         expect(pickedUp).toMatchObject({
             kind: CombatEventKind.ITEM_PICKED_UP,
-            path: EquipmentPath.AMULET,
-            tierIndex: 3,
+            grant: expect.objectContaining({
+                changes: [{ path: EquipmentPath.AMULET, tierIndex: 3 }],
+            }),
         });
     });
 
@@ -154,15 +157,17 @@ describe("ground item pickup", () => {
     });
 });
 
-describe("ground item expiry", () => {
-    it("removes a ground item once its lifetime elapses, with no pickup input at all", () => {
+describe("equipment set pickup", () => {
+    it("keeps floor grants until pickup and applies a complete set atomically", () => {
         const world = makeWorld();
-        addGroundItem(world, { expiresAtSeconds: GROUND_ITEM_LIFETIME_SECONDS });
+        const item = addGroundItem(world, { x: 50, grant: styleSetGrant(WeaponStyle.MELEE, 2) });
 
-        advanceSeconds(world, idleInput(), GROUND_ITEM_LIFETIME_SECONDS - 0.1);
+        advanceSeconds(world, idleInput(), 120);
         expect(world.groundItems.length).toBe(1);
 
-        advanceSeconds(world, idleInput(), 0.2);
+        advanceSeconds(world, pickupInput(item.id), 1);
         expect(world.groundItems.length).toBe(0);
+        expect(world.player!.equipment[EquipmentPath.SCIMITAR]).toBe(2);
+        expect(world.player!.equipment[EquipmentPath.DEFENDER]).toBe(2);
     });
 });
