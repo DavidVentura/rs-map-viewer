@@ -1,4 +1,4 @@
-# GPU skinning for actors (planned, not started)
+# GPU skinning (implemented for actors, map NPCs and animated locs)
 
 ## Why
 Actors are currently baked: every animation frame of every body/item is posed on the CPU and
@@ -40,15 +40,18 @@ so converting only the player would mean running both vertex formats and both sh
 by side. Static meshes (arrows, ground items) simply get a single identity frame.
 
 Map NPCs (`npc.vert.glsl`, the ambient wandering NPCs of the original map viewer) and animated
-locs (fires, flags, waterfalls in `LocAnimated`) are baked per map square in `SdMapDataLoader` and
-drawn by their own programs. They stay baked; the same technique can move them over later without
-touching the actor path.
+locs (fires, flags, waterfalls in `LocAnimated`) followed in a second pass. Each map square builds
+its own skinned geometry and tables in `SdMapDataLoader`; NPCs draw with the npc program and
+animated locs with the `SKINNED` variant of `main.vert.glsl`, which keeps contour ground, roof
+hiding and priority. Locs pose in their unrotated space (`locPoseSpace`), NPCs before their
+width/height scale (`NpcRestModel.poseSpace`). A rig only gives matrix rows to labels its models
+have and its frames move; every other label shares the rest row.
 
-Skeletal seqs are not implemented in this pass, but the format is designed so they slot in
-without a second path (see "Skeletal, later" below). Until then only the NPC_SEQS/SPOT_ANIMS
-preview tools can reach them (`AnimationState.advance` already never advances them, so the NPC
-preview sits on frame 0). They render at rest pose and the preview's Info line says they are
-skeletal.
+Skeletal seqs are not implemented yet, but the format is designed so they slot in without a second
+path (see "Skeletal, later" below). They render at rest pose for their whole duration. None of the
+game's actors, nor the NPCs and animated locs of the squares sampled around Lumbridge and the
+Fight Caves, use them; newer areas do, and those now show their skeletal NPCs and locs at rest
+instead of animating.
 
 The baked path is deleted in the same change that lands skinning, with no flag; git history is
 the fallback.
