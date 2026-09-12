@@ -1,5 +1,4 @@
-import { CacheSystem } from "../../rs/cache/CacheSystem";
-import { LoadedCache } from "../Caches";
+import { LoadedCache } from "../../rs/cache/LoadedCache";
 import { NpcSpawn } from "../data/npc/NpcSpawn";
 import { ObjSpawn } from "../data/obj/ObjSpawn";
 import { WorkerState, createWorkerState } from "./WorkerState";
@@ -49,13 +48,12 @@ export function installHeadlessCanvas(): void {
 }
 
 // A render worker's state in Node, without the wasm decoders (Bzip2 and Gzip use their JS
-// versions) and without the browser's map image cache, which the map and actor loaders never use.
+// versions).
 export function createHeadlessWorkerState(
     cache: LoadedCache,
-    cacheSystem: CacheSystem,
     objSpawns: ObjSpawn[],
     npcSpawns: NpcSpawn[],
 ): WorkerState {
     installHeadlessCanvas();
-    return createWorkerState(cache, cacheSystem, objSpawns, npcSpawns, {} as Cache);
+    return createWorkerState(cache, objSpawns, npcSpawns);
 }

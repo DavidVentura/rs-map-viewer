@@ -59,7 +59,17 @@ describe("cacheRoots", () => {
         }
     });
 
-    it("Lumbridge roots include the npc and obj spawns inside its square and none outside it", () => {
+    it("Lumbridge roots hold the 3x3 squares around the player's square", () => {
+        const encounter = getEncounter(EncounterId.LUMBRIDGE);
+        const playerMapX = encounter.playerSpawn.x >> 13;
+        const playerMapY = encounter.playerSpawn.y >> 13;
+        const expected = [-1, 0, 1].flatMap((dx) =>
+            [-1, 0, 1].map((dy) => ({ mapX: playerMapX + dx, mapY: playerMapY + dy })),
+        );
+        expect(rootsFor(encounter).mapSquares).toEqual(expected);
+    });
+
+    it("Lumbridge roots include the npc and obj spawns inside its squares and none outside them", () => {
         const encounter = getEncounter(EncounterId.LUMBRIDGE);
         const roots = rootsFor(encounter);
         const noSpawnRoots = cacheRoots(encounter, undefined, [], []);

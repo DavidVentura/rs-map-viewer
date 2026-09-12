@@ -26,3 +26,5 @@ caches/
 public/audio/*.opus
 
 render-out/
+
+packs/

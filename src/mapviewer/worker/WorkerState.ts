@@ -1,4 +1,4 @@
-import { CacheSystem } from "../../rs/cache/CacheSystem";
+import { LoadedCache } from "../../rs/cache/LoadedCache";
 import {
     CacheLoaderFactory,
     getCacheLoaderFactory,
@@ -17,13 +17,11 @@ import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
 import { SkeletalSeqLoader } from "../../rs/model/skeletal/SkeletalSeqLoader";
 import { SceneBuilder } from "../../rs/scene/SceneBuilder";
 import { TextureLoader } from "../../rs/texture/TextureLoader";
-import { LoadedCache } from "../Caches";
 import { NpcSpawn } from "../data/npc/NpcSpawn";
 import { ObjSpawn } from "../data/obj/ObjSpawn";
 
 export type WorkerState = {
     cache: LoadedCache;
-    cacheSystem: CacheSystem;
     cacheLoaderFactory: CacheLoaderFactory;
 
     locTypeLoader: LocTypeLoader;
@@ -46,7 +44,6 @@ export type WorkerState = {
     varManager: VarManager;
 
     mapImageRenderer: MapImageRenderer;
-    mapImageCache: Cache;
 
     objSpawns: ObjSpawn[];
     npcSpawns: NpcSpawn[];
@@ -55,12 +52,10 @@ export type WorkerState = {
 // Everything a render worker builds from a cache before it loads anything by id.
 export function createWorkerState(
     cache: LoadedCache,
-    cacheSystem: CacheSystem,
     objSpawns: ObjSpawn[],
     npcSpawns: NpcSpawn[],
-    mapImageCache: Cache,
 ): WorkerState {
-    const loaderFactory = getCacheLoaderFactory(cache.info, cacheSystem);
+    const loaderFactory = getCacheLoaderFactory(cache.info, cache.system);
     const underlayTypeLoader = loaderFactory.getUnderlayTypeLoader();
     const overlayTypeLoader = loaderFactory.getOverlayTypeLoader();
 
@@ -127,7 +122,6 @@ export function createWorkerState(
 
     return {
         cache,
-        cacheSystem,
         cacheLoaderFactory: loaderFactory,
 
         locTypeLoader,
@@ -150,7 +144,6 @@ export function createWorkerState(
         varManager,
 
         mapImageRenderer,
-        mapImageCache,
 
         objSpawns,
         npcSpawns,

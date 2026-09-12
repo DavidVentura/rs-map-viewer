@@ -1,8 +1,8 @@
-import { XteaMap } from "../../mapviewer/Caches";
 import { CacheIndex } from "../cache/CacheIndex";
 import { Bzip2 } from "../compression/Bzip2";
 import { ByteBuffer } from "../io/ByteBuffer";
 import { MapFileIndex } from "./MapFileIndex";
+import { XteaMap } from "./XteaMap";
 
 export class MapFileLoader {
     constructor(

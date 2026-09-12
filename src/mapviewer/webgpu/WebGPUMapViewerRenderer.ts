@@ -131,6 +131,8 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
         });
     }
 
+    // Only layer 0 (white) is filled: a pack holds the sprites of just the textures its models and
+    // floors use, so a texture's pixels can only come with a load that uses it.
     initTextures(): void {
         const textureLoader = this.mapViewer.textureLoader;
 
@@ -156,22 +158,6 @@ export class WebGPUMapViewerRenderer extends MapViewerRenderer {
             format: "rgba8unorm",
             usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
         });
-
-        for (let i = 0; i < textureIds.length; i++) {
-            const textureId = textureIds[i];
-            try {
-                const texturePixels = this.mapViewer.textureLoader.getPixelsArgb(
-                    textureId,
-                    textureSize,
-                    true,
-                    1.0,
-                );
-                pixels.set(texturePixels, (i + 1) * pixelCount);
-                // pixels.set(texturePixels, (i) * pixelCount);
-            } catch (e) {
-                console.error("Failed loading texture", textureId, e);
-            }
-        }
 
         this.device.queue.writeTexture(
             {

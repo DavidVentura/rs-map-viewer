@@ -1,7 +1,6 @@
 import { vec3 } from "gl-matrix";
-import { URLSearchParamsInit } from "react-router-dom";
 
-import { CacheSystem } from "../rs/cache/CacheSystem";
+import { LoadedCache } from "../rs/cache/LoadedCache";
 import { CacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
 import { BasTypeLoader } from "../rs/config/bastype/BasTypeLoader";
 import { LocTypeLoader } from "../rs/config/loctype/LocTypeLoader";
@@ -9,12 +8,12 @@ import { NpcTypeLoader } from "../rs/config/npctype/NpcTypeLoader";
 import { ObjTypeLoader } from "../rs/config/objtype/ObjTypeLoader";
 import { SeqTypeLoader } from "../rs/config/seqtype/SeqTypeLoader";
 import { VarManager } from "../rs/config/vartype/VarManager";
-import { MapFileIndex, getMapSquareId } from "../rs/map/MapFileIndex";
+import { getMapSquareId } from "../rs/map/MapFileIndex";
 import { SeqFrameLoader } from "../rs/model/seq/SeqFrameLoader";
 import { Pathfinder } from "../rs/pathfinder/Pathfinder";
 import { TextureLoader } from "../rs/texture/TextureLoader";
 import { isWallpaperEngine } from "../util/DeviceUtil";
-import { CacheList, LoadedCache } from "./Caches";
+import { CacheList } from "./Caches";
 import { Camera, CameraView, ProjectionType } from "./Camera";
 import { InputManager } from "./InputManager";
 import { MapManager } from "./MapManager";
@@ -31,8 +30,6 @@ import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
 const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 64;
 
-const CACHED_MAP_IMAGE_PREFIX = "/map-images/";
-
 export class MapViewer {
     inputManager: InputManager = new InputManager();
     camera: Camera;
@@ -45,7 +42,6 @@ export class MapViewer {
 
     // Cache
     loadedCache!: LoadedCache;
-    cacheSystem!: CacheSystem;
     loaderFactory!: CacheLoaderFactory;
 
     textureLoader!: TextureLoader;
@@ -59,8 +55,6 @@ export class MapViewer {
     basTypeLoader!: BasTypeLoader;
 
     varManager!: VarManager;
-
-    mapFileIndex!: MapFileIndex;
 
     isNewTextureAnim: boolean = false;
 
@@ -77,9 +71,7 @@ export class MapViewer {
 
     debugText?: string;
 
-    mapImageUrls: Map<number, string> = new Map();
     minimapImageUrls: Map<number, string> = new Map();
-    loadingMapImageIds: Set<number> = new Set();
 
     cameraSpeed: number = 1;
 
@@ -89,33 +81,40 @@ export class MapViewer {
         readonly workerPool: RenderDataWorkerPool,
         readonly cacheList: CacheList,
         readonly objSpawns: ObjSpawn[],
-        public npcSpawns: NpcSpawn[],
-        readonly mapImageCache: Cache,
+        readonly npcSpawns: NpcSpawn[],
         readonly encounterId: EncounterId,
         rendererType: MapViewerRendererType,
         cache: LoadedCache,
-        public animPreview?: AnimPreviewParams,
+        readonly animPreview?: AnimPreviewParams,
         readonly godMode: boolean = false,
     ) {
-        // Starting the camera at this encounter's spawn (rather than a fixed literal) matters for
-        // more than convenience: initCache() below queues loads for the squares around the
-        // camera's starting position before any caller gets a chance to move it, so a wrong
-        // default would eagerly load a different encounter's squares - which a size-limited
-        // bundle for THIS encounter would not contain.
+        // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
+        // camera over the encounter's squares, the only ones its pack holds.
         const { playerSpawn } = getEncounter(encounterId);
         this.camera = new Camera(playerSpawn.x / 128, -26, playerSpawn.y / 128, -245, 1862);
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
     }
 
-    // The gfx viewer re-bakes around an id typed outside the loaded range (see the renderer's
-    // jumpToPreviewGfx); the url follows so a reload lands on the same range.
-    setSpotAnimPreviewRange(range: SeqRange): void {
+    // The pack holds only the previewed range, so a spot anim outside it (see the renderer's
+    // jumpToPreviewGfx) needs a new pack: the page reloads on the url of the new range.
+    reloadWithSpotAnimPreviewRange(range: SeqRange): void {
         if (this.animPreview?.kind !== "SPOT_ANIMS") {
             throw new Error("Spot anim preview range set outside the spot anim viewer");
         }
-        this.animPreview = { kind: "SPOT_ANIMS", range };
-        this.updateSearchParams();
+        this.reloadWithSearchParams({
+            ...this.getSearchParams(),
+            gfx: `${range.from}-${range.to}`,
+        });
+    }
+
+    // A cache other than the loaded one is a different pack, so the page reloads on its url.
+    reloadWithCache(cacheName: string): void {
+        this.reloadWithSearchParams({ ...this.getSearchParams(), cache: cacheName });
+    }
+
+    private reloadWithSearchParams(params: Record<string, string>): void {
+        window.location.search = new URLSearchParams(params).toString();
     }
 
     get encounter(): Encounter {
@@ -123,9 +122,9 @@ export class MapViewer {
         return this.animPreview ? buildPreviewEncounter(encounter) : encounter;
     }
 
-    getSearchParams(): URLSearchParamsInit {
+    getSearchParams(): Record<string, string> {
         const cx = this.camera.getPosX().toFixed(2).toString();
-        const cy = -this.camera.getPosY().toFixed(2).toString();
+        const cy = (-this.camera.getPosY()).toFixed(2);
         const cz = this.camera.getPosZ().toFixed(2).toString();
 
         const yaw = this.camera.yaw & 2047;
@@ -133,7 +132,7 @@ export class MapViewer {
         const p = (this.camera.pitch | 0).toString();
         const y = yaw.toString();
 
-        const params: any = {
+        const params: Record<string, string> = {
             cx,
             cy,
             cz,
@@ -163,7 +162,7 @@ export class MapViewer {
             params["gfx"] = `${this.animPreview.range.from}-${this.animPreview.range.to}`;
         }
 
-        params["v"] = 1;
+        params["v"] = "1";
 
         return params;
     }
@@ -208,9 +207,6 @@ export class MapViewer {
     }
 
     init(): void {
-        this.workerPool.loadCachedMapImages().then((mapImageUrls) => {
-            mapImageUrls.forEach((value, key) => this.mapImageUrls.set(key, value));
-        });
         this.syncMusicTrack();
     }
 
@@ -221,13 +217,10 @@ export class MapViewer {
         this.musicPlayer.setTrack(this.encounter.musicFile);
     }
 
-    initCache(cache: LoadedCache): void {
+    private initCache(cache: LoadedCache): void {
         this.loadedCache = cache;
-        this.cacheSystem = CacheSystem.fromFiles(cache.type, cache.files);
-        this.workerPool.initCache(cache, this.objSpawns, this.npcSpawns);
-        this.clearMapImageUrls();
 
-        const loaders = createViewerLoaders(cache.info, this.cacheSystem);
+        const loaders = createViewerLoaders(cache.info, cache.system);
         this.loaderFactory = loaders.loaderFactory;
         this.textureLoader = loaders.textureLoader;
         this.seqTypeLoader = loaders.seqTypeLoader;
@@ -237,7 +230,6 @@ export class MapViewer {
         this.npcTypeLoader = loaders.npcTypeLoader;
         this.basTypeLoader = loaders.basTypeLoader;
         this.varManager = loaders.varManager;
-        this.mapFileIndex = loaders.mapFileIndex;
 
         this.isNewTextureAnim = cache.info.game === "runescape" && cache.info.revision >= 681;
 
@@ -294,86 +286,20 @@ export class MapViewer {
         this.workerPool.setVars(this.varManager.values);
     }
 
-    static getCachedMapImageUrl(mapX: number, mapY: number): string {
-        return CACHED_MAP_IMAGE_PREFIX + `${mapX}_${mapY}.png`;
-    }
-
-    async queueLoadMapImage(mapX: number, mapY: number) {
-        const mapManager = this.renderer.mapManager;
-        const mapId = getMapSquareId(mapX, mapY);
-        if (
-            this.loadingMapImageIds.size > this.workerPool.size * 4 ||
-            this.mapImageUrls.has(mapId) ||
-            this.loadingMapImageIds.has(mapId) ||
-            mapManager.invalidMapIds.has(mapId) ||
-            mapManager.loadingMapIds.has(mapId)
-        ) {
-            return;
-        }
-        this.loadingMapImageIds.add(mapId);
-
-        const minimapData = await this.workerPool.queueMapImage(mapX, mapY, 0, true);
-        if (minimapData) {
-            const url = URL.createObjectURL(minimapData.minimapBlob);
-            this.setMapImageUrl(mapX, mapY, url, false);
-        } else {
-            mapManager.invalidMapIds.add(mapId);
-        }
-
-        this.loadingMapImageIds.delete(mapId);
-    }
-
-    getMapImageUrl(mapX: number, mapY: number, minimap: boolean): string | undefined {
+    getMinimapImageUrl(mapX: number, mapY: number): string | undefined {
         if (mapX < 0 || mapY < 0 || mapX >= MapManager.MAX_MAP_X || mapY >= MapManager.MAX_MAP_Y) {
             return undefined;
         }
-        const urls = minimap ? this.minimapImageUrls : this.mapImageUrls;
-        if (minimap) {
-            this.renderer.mapManager.loadMap(mapX, mapY);
-        } else {
-            this.queueLoadMapImage(mapX, mapY);
-        }
-        const mapId = getMapSquareId(mapX, mapY);
-        return urls.get(mapId);
+        this.renderer.mapManager.loadMap(mapX, mapY);
+        return this.minimapImageUrls.get(getMapSquareId(mapX, mapY));
     }
 
-    setMapImageUrl(
-        mapX: number,
-        mapY: number,
-        url: string,
-        minimap: boolean,
-        cache: boolean = true,
-    ): void {
+    setMinimapImageUrl(mapX: number, mapY: number, url: string): void {
         const mapId = getMapSquareId(mapX, mapY);
-        const urls = minimap ? this.minimapImageUrls : this.mapImageUrls;
-        const old = urls.get(mapId);
+        const old = this.minimapImageUrls.get(mapId);
         if (old) {
             URL.revokeObjectURL(old);
         }
-        if (cache) {
-            fetch(url).then((resp) => {
-                if (resp.ok) {
-                    const request = new Request(MapViewer.getCachedMapImageUrl(mapX, mapY), {
-                        headers: {
-                            "RS-Cache-Name": this.loadedCache.info.name,
-                        },
-                    });
-                    this.mapImageCache.put(request, resp);
-                }
-            });
-        }
-        urls.set(mapId, url);
-    }
-
-    clearMapImageUrls(): void {
-        for (const url of this.mapImageUrls.values()) {
-            URL.revokeObjectURL(url);
-        }
-        for (const url of this.minimapImageUrls.values()) {
-            URL.revokeObjectURL(url);
-        }
-        this.mapImageUrls.clear();
-        this.minimapImageUrls.clear();
-        this.loadingMapImageIds.clear();
+        this.minimapImageUrls.set(mapId, url);
     }
 }

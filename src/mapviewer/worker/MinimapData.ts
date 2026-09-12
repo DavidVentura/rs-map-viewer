@@ -1,15 +1,5 @@
-import { CacheInfo } from "../../rs/cache/CacheInfo";
 import { MapImageRenderer } from "../../rs/map/MapImageRenderer";
 import { Scene } from "../../rs/scene/Scene";
-
-export type MinimapData = {
-    mapX: number;
-    mapY: number;
-    level: number;
-    cacheInfo: CacheInfo;
-
-    minimapBlob: Blob;
-};
 
 export async function loadMinimapBlob(
     mapImageRenderer: MapImageRenderer,

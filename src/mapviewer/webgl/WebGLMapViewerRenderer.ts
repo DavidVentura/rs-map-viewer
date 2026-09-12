@@ -22,7 +22,7 @@ import { NpcType } from "../../rs/config/npctype/NpcType";
 import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 import { Scene } from "../../rs/scene/Scene";
 import { isWebGL2Supported } from "../../util/DeviceUtil";
-import { PlayerCentredResidency, ResidencyPolicyKind } from "../MapManager";
+import { ResidencyPolicyKind, WholeWorldResidency } from "../MapManager";
 import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
@@ -108,9 +108,9 @@ const ENEMY_BODY_HEIGHT_SCALE = 3;
 // Leva never overwrites an existing input's value when a schema is re-registered, so read-only
 // preview labels are polled monitors instead of static values.
 const PREVIEW_LABEL_MONITOR = { graph: false, interval: 200 };
-// Ids baked either side of a gfx id typed into the viewer, so Prev/Next still have neighbours to
-// step through without the bake growing to the whole cache.
-const PREVIEW_GFX_REBAKE_WINDOW = 10;
+// Ids baked from a gfx id typed into the viewer, so Prev/Next still have neighbours to step
+// through without the pack and bake growing to the whole cache.
+const PREVIEW_GFX_RELOAD_RANGE_SIZE = 21;
 
 // Generous click target for a ground item: covers its floor label above the point, plus a radius
 // around the item's own projected screen point.
@@ -303,10 +303,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // SPOT_ANIMS mode): unlike the npc seq preview, there's no Enemy to own this state on, since a
     // gfx preview never spawns one.
     private previewGfxId?: number;
-    // An id typed into the viewer that lies outside the baked range: honoured once the re-bake
-    // around it has landed (see initPreviewGfxIfNeeded), re-queued if a later jump moved the
-    // range again while a bake was already in flight.
-    private requestedPreviewGfxId?: number;
     private previewGfxPlayback: AnimationPlayback = AnimationPlayback.LOOP;
     private readonly previewGfxAnimation = new AnimationState(-1);
 
@@ -329,7 +325,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private roofMaskedSquares: Set<WebGLMapSquare> = new Set();
 
     constructor(public mapViewer: MapViewer) {
-        super(mapViewer, ResidencyPolicyKind.PLAYER_CENTRED);
+        super(mapViewer, ResidencyPolicyKind.WHOLE_WORLD);
         this.terrain = new WebGLTerrain(this.mapManager);
         this.encounter = mapViewer.encounter;
     }
@@ -529,14 +525,15 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         console.log("init textures", this.textureIds, allTextureIds.length);
     }
 
+    // Sized for every texture definition, but only layer 0 (white) is filled here: the pack holds
+    // the sprites of just the textures its models and floors use, and the workers return those
+    // textures' pixels with the map squares and actors that use them (see updateTextureArray).
     initTextureArray() {
         if (this.textureArray) {
             this.textureArray.delete();
             this.textureArray = undefined;
         }
         this.loadedTextureIds.clear();
-
-        console.time("load textures");
 
         const pixelCount = TEXTURE_SIZE * TEXTURE_SIZE;
 
@@ -545,30 +542,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         // White texture
         pixels.fill(0xffffffff, 0, pixelCount);
-
-        const cacheInfo = this.mapViewer.loadedCache.info;
-
-        let maxPreloadTextures = textureCount;
-        // we should check if the texture loader is procedural instead
-        if (cacheInfo.game === "runescape" && cacheInfo.revision >= 508) {
-            maxPreloadTextures = 64;
-        }
-
-        for (let i = 0; i < Math.min(textureCount, maxPreloadTextures); i++) {
-            const textureId = this.textureIds[i];
-            try {
-                const texturePixels = this.mapViewer.textureLoader.getPixelsArgb(
-                    textureId,
-                    TEXTURE_SIZE,
-                    true,
-                    1.0,
-                );
-                pixels.set(texturePixels, (i + 1) * pixelCount);
-            } catch (e) {
-                console.error("Failed loading texture", textureId, e);
-            }
-            this.loadedTextureIds.add(textureId);
-        }
 
         this.textureArray = createTextureArray(
             this.app,
@@ -580,8 +553,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
 
         this.updateTextureFiltering();
-
-        console.timeEnd("load textures");
     }
 
     updateTextureFiltering(): void {
@@ -966,8 +937,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.notifyControlsChanged?.();
     }
 
-    // Typing an id inside the baked range just switches to it; outside it, the range is re-centred
-    // on the id and the actor buffer re-baked, since the bake only ever holds the url's range.
+    // Typing an id inside the baked range just switches to it; outside it, the page reloads on a
+    // range starting at the id, since the pack and the bake only ever hold the url's range.
     private jumpToPreviewGfx(value: number): void {
         const preview = this.mapViewer.animPreview;
         if (!preview || preview.kind !== "SPOT_ANIMS" || !Number.isFinite(value)) {
@@ -983,12 +954,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.notifyControlsChanged?.();
             return;
         }
-        this.requestedPreviewGfxId = gfxId;
-        this.mapViewer.setSpotAnimPreviewRange({
-            from: Math.max(0, gfxId - PREVIEW_GFX_REBAKE_WINDOW),
-            to: gfxId + PREVIEW_GFX_REBAKE_WINDOW,
+        this.mapViewer.reloadWithSpotAnimPreviewRange({
+            from: gfxId,
+            to: gfxId + PREVIEW_GFX_RELOAD_RANGE_SIZE - 1,
         });
-        this.queueLoadActors();
     }
 
     private stepPreviewGfx(direction: -1 | 1): void {
@@ -1085,13 +1054,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     ): void {
         const { mapX, mapY } = mapData;
 
-        this.mapViewer.setMapImageUrl(
-            mapX,
-            mapY,
-            URL.createObjectURL(mapData.minimapBlob),
-            true,
-            false,
-        );
+        this.mapViewer.setMinimapImageUrl(mapX, mapY, URL.createObjectURL(mapData.minimapBlob));
 
         const frameCount = this.stats.frameCount;
         const mapSquare = WebGLMapSquare.load(
@@ -1199,13 +1162,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
     }
 
-    override residencyPolicy(): PlayerCentredResidency {
-        const focus = this.mapViewer.world.player ?? this.encounter.playerSpawn;
-        return {
-            kind: ResidencyPolicyKind.PLAYER_CENTRED,
-            encounterSquares: this.encounter.mapSquares,
-            focusTile: { tileX: focus.x >> 7, tileY: focus.y >> 7 },
-        };
+    override residencyPolicy(): WholeWorldResidency {
+        return { kind: ResidencyPolicyKind.WHOLE_WORLD };
     }
 
     // True once the encounter has spawned and the camera has settled onto its real third-person
@@ -1281,18 +1239,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         ) {
             return;
         }
-        const requested = this.requestedPreviewGfxId;
-        const requestedLoaded =
-            requested !== undefined &&
-            requested >= preview.range.from &&
-            requested <= preview.range.to;
-        if (requested !== undefined && !requestedLoaded) {
-            this.queueLoadActors();
-        }
-        this.previewGfxId = requestedLoaded ? requested : preview.range.from;
-        if (requestedLoaded) {
-            this.requestedPreviewGfxId = undefined;
-        }
+        this.previewGfxId = preview.range.from;
         this.restartPreviewGfxAnimation();
         this.notifyControlsChanged?.();
     }

@@ -9,12 +9,11 @@ import { EncounterId, getEncounter } from "../../src/mapviewer/game/Encounter";
 import { CacheIndex } from "../../src/rs/cache/CacheIndex";
 import { IndexType } from "../../src/rs/cache/IndexType";
 import { CachePack, encodeCachePack } from "../../src/rs/cache/pack/CachePack";
-import { openSourceCache } from "../../src/rs/cache/pack/SourceCache";
-import { buildCachePack } from "../../src/rs/cache/pack/buildCachePack";
-import { resolveCacheSelection } from "../../src/rs/cache/pack/resolveCacheSelection";
-import { MemoryStore } from "../../src/rs/cache/store/MemoryStore";
+import { CachePackBuilder } from "../../src/rs/cache/pack/CachePackBuilder";
+import { CacheSelectionResolver } from "../../src/rs/cache/pack/resolveCacheSelection";
 import { Bzip2 } from "../../src/rs/compression/Bzip2";
-import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
+import { readSourceCache } from "../../src/server/CacheDirectory";
+import { loadCacheInfos, loadCacheList } from "./load-util";
 
 function parseEncounterId(arg: string | undefined): EncounterId {
     const validIds = Object.values(EncounterId);
@@ -77,13 +76,7 @@ async function main(): Promise<void> {
     const outputPath = process.argv[3];
     await Bzip2.initWasm();
 
-    const info = loadCacheList(loadCacheInfos()).latest;
-    const loadedCache = loadCache(info);
-    const source = openSourceCache(
-        info,
-        MemoryStore.fromFiles(loadedCache.files),
-        loadedCache.xteas,
-    );
+    const source = readSourceCache("./caches", loadCacheList(loadCacheInfos()).latest);
 
     const roots = cacheRoots(
         getEncounter(encounterId),
@@ -93,11 +86,11 @@ async function main(): Promise<void> {
     );
 
     const resolveStart = performance.now();
-    const selection = resolveCacheSelection(source, roots);
+    const selection = new CacheSelectionResolver(source).resolve(roots);
     const resolveMs = performance.now() - resolveStart;
 
     const encodeStart = performance.now();
-    const pack = buildCachePack(source, selection);
+    const pack = new CachePackBuilder(source).build(selection);
     const bytes = encodeCachePack(pack);
     const encodeMs = performance.now() - encodeStart;
 

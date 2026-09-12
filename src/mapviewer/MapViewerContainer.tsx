@@ -5,10 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { RendererCanvas } from "../components/renderer/RendererCanvas";
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
 import { MinimapContainer } from "../components/rs/minimap/MinimapContainer";
-import { WorldMapModal } from "../components/rs/worldmap/WorldMapModal";
 import { RS_TO_DEGREES } from "../rs/MathConstants";
-import { DownloadProgress } from "../rs/cache/CacheFiles";
-import { formatBytes } from "../util/BytesUtil";
 import { isTouchDevice, pixelRatio } from "../util/DeviceUtil";
 import { MapViewer } from "./MapViewer";
 import "./MapViewerContainer.css";
@@ -27,8 +24,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     const [renderer, setRenderer] = useState<MapViewerRenderer>(mapViewer.renderer);
 
-    const [downloadProgress, setDownloadProgress] = useState<DownloadProgress>();
-
     // Gates the canvas/HUD/minimap reveal until the renderer has loaded the encounter's map
     // squares, baked and uploaded its actors, spawned the encounter and pinned the camera to the
     // player - so the user never sees a frame from before the spawn (default camera framing, no
@@ -45,7 +40,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
     const [fps, setFps] = useState(0);
     const lastFpsUpdateRef = useRef(0);
     const [cameraYaw, setCameraYaw] = useState(mapViewer.camera.getYaw());
-    const [isWorldMapOpen, setWorldMapOpen] = useState<boolean>(false);
 
     const requestRef = useRef<number | undefined>();
 
@@ -152,25 +146,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
         mapViewer.camera.setYaw(0);
     }, [mapViewer]);
 
-    const openWorldMap = useCallback(() => {
-        setWorldMapOpen(true);
-    }, []);
-
-    const closeWorldMap = useCallback(() => {
-        setWorldMapOpen(false);
-        renderer.canvas.focus();
-    }, [renderer]);
-
-    const onMapClicked = useCallback(
-        (x: number, y: number) => {
-            mapViewer.camera.pos[0] = x;
-            mapViewer.camera.pos[2] = y;
-            mapViewer.camera.updated = true;
-            closeWorldMap();
-        },
-        [mapViewer, closeWorldMap],
-    );
-
     const getMapPosition = useCallback(() => {
         const x = mapViewer.camera.getPosX();
         const y = mapViewer.camera.getPosZ();
@@ -181,33 +156,15 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
         };
     }, [mapViewer]);
 
-    const loadMapImageUrl = useCallback(
-        (mapX: number, mapY: number) => {
-            return mapViewer.getMapImageUrl(mapX, mapY, false);
-        },
-        [mapViewer],
-    );
-
     const loadMinimapImageUrl = useCallback(
         (mapX: number, mapY: number) => {
-            return mapViewer.getMapImageUrl(mapX, mapY, true);
+            return mapViewer.getMinimapImageUrl(mapX, mapY);
         },
         [mapViewer],
     );
 
     let loadingBarOverlay: JSX.Element | undefined = undefined;
-    if (downloadProgress) {
-        const formattedCacheSize = formatBytes(downloadProgress.total);
-        const progress = ((downloadProgress.current / downloadProgress.total) * 100) | 0;
-        loadingBarOverlay = (
-            <div className="overlay-container max-height">
-                <OsrsLoadingBar
-                    text={`Downloading cache (${formattedCacheSize})`}
-                    progress={progress}
-                />
-            </div>
-        );
-    } else if (!revealed) {
+    if (!revealed) {
         loadingBarOverlay = (
             <div className="overlay-container loading-gate-overlay max-height">
                 <OsrsLoadingBar text={loadingPhaseLabel} />
@@ -222,7 +179,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                 hideUi={hideUi}
                 setRenderer={setRenderer}
                 setHideUi={setHideUi}
-                setDownloadProgress={setDownloadProgress}
             />
 
             {revealed && !hideUi && (
@@ -231,7 +187,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                         <MinimapContainer
                             yawDegrees={(2047 - cameraYaw) * RS_TO_DEGREES}
                             onCompassClick={resetCameraYaw}
-                            onWorldMapClick={openWorldMap}
                             getPosition={getMapPosition}
                             loadMapImageUrl={loadMinimapImageUrl}
                         />
@@ -239,13 +194,6 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
                         <div className="fps-counter content-text">{fps}</div>
                         <div className="fps-counter content-text">{mapViewer.debugText}</div>
                     </div>
-                    <WorldMapModal
-                        isOpen={isWorldMapOpen}
-                        onRequestClose={closeWorldMap}
-                        onDoubleClick={onMapClicked}
-                        getPosition={getMapPosition}
-                        loadMapImageUrl={loadMapImageUrl}
-                    />
                 </span>
             )}
 

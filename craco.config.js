@@ -3,7 +3,15 @@ const { when, whenDev, addBeforeLoader, loaderByName } = require("@craco/craco")
 const ThreadsPlugin = require("threads-plugin");
 const JsonMinimizerPlugin = require("json-minimizer-webpack-plugin");
 
-const express = require("express");
+// The pack server (src/server/main.ts) runs beside the dev server under npm start, which sets
+// its port; the browser reaches it as /packs on the page's own origin.
+function packServerTarget() {
+    const port = process.env.PACK_SERVER_PORT;
+    if (!port) {
+        throw new Error("PACK_SERVER_PORT is not set: run the dev server through npm start");
+    }
+    return `http://127.0.0.1:${port}`;
+}
 
 module.exports = {
     webpack: {
@@ -55,12 +63,16 @@ module.exports = {
             return jestConfig;
         },
     },
-    devServer: {
+    // A function, so the pack server's port is only required when the dev server starts, not when
+    // craco builds or tests.
+    devServer: (devServerConfig) => ({
+        ...devServerConfig,
         headers: {
             "Cross-Origin-Opener-Policy": "same-origin",
             "Cross-Origin-Embedder-Policy": "require-corp",
         },
         client: {
+            ...devServerConfig.client,
             overlay: {
                 errors: true,
                 warnings: false,
@@ -72,14 +84,8 @@ module.exports = {
                 },
             },
         },
-        setupMiddlewares: (middlewares, devServer) => {
-            if (!devServer) {
-                throw new Error("webpack-dev-server is not defined");
-            }
-
-            devServer.app.use("/caches", express.static("caches"));
-
-            return middlewares;
+        proxy: {
+            "/packs": { target: packServerTarget() },
         },
-    },
+    }),
 };

@@ -4,17 +4,18 @@ import { registerSerializer } from "threads";
 import WebFont from "webfontloader";
 
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
-import { DownloadProgress } from "../rs/cache/CacheFiles";
-import { formatBytes } from "../util/BytesUtil";
+import { CacheInfo } from "../rs/cache/CacheInfo";
+import { openCachePack } from "../rs/cache/pack/openCachePack";
 import { isIos, isWallpaperEngine } from "../util/DeviceUtil";
-import { fetchCacheList, loadCacheBundle, loadCacheFiles } from "./Caches";
+import { CacheList, fetchCacheList, loadCachePack, pruneCacheStorage } from "./Caches";
 import { MapViewer } from "./MapViewer";
 import { MapViewerContainer } from "./MapViewerContainer";
-import { WEBGL, getAvailableRenderers } from "./MapViewerRenderers";
+import { getAvailableRenderers } from "./MapViewerRenderers";
+import { cacheRoots } from "./assets/cacheRoots";
 import { fetchNpcSpawns, getNpcSpawnsUrl } from "./data/npc/NpcSpawnFetch";
 import { fetchObjSpawns } from "./data/obj/ObjSpawnFetch";
 import { parseAnimPreviewParams } from "./game/AnimPreview";
-import { parseEncounterId } from "./game/Encounter";
+import { getEncounter, parseEncounterId } from "./game/Encounter";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -26,8 +27,6 @@ WebFont.load({
     },
 });
 
-const cachesPromise = fetchCacheList();
-
 const workerPool = RenderDataWorkerPool.create(isWallpaperEngine ? 1 : 4);
 
 // Debug god mode: no damage taken, free casting (see GameWorld.setGodMode); parsed here, at the
@@ -37,60 +36,39 @@ function parseGodMode(searchParams: URLSearchParams): boolean {
     return searchParams.get("invuln") === "1";
 }
 
+function selectCache(cacheList: CacheList, cacheName: string | null): CacheInfo {
+    return cacheList.caches.find((cache) => cache.name === cacheName) ?? cacheList.latest;
+}
+
 function MapViewerApp() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams] = useSearchParams();
 
     const [errorMessage, setErrorMessage] = useState<string>();
-    const [downloadProgress, setDownloadProgress] = useState<DownloadProgress>();
     const [mapViewer, setMapViewer] = useState<MapViewer>();
 
     useEffect(() => {
         const abortController = new AbortController();
+        const { signal } = abortController;
 
         const load = async () => {
-            const objSpawnsPromise = fetchObjSpawns();
-
-            const cacheList = await cachesPromise;
-            if (!cacheList) {
-                setErrorMessage("Failed to load cache list");
-                throw new Error("No caches found");
-            }
-
-            const cacheNameParam = searchParams.get("cache");
-            let cacheInfo = cacheList.latest;
-            if (cacheNameParam) {
-                const foundCache = cacheList.caches.find((cache) => cache.name === cacheNameParam);
-                if (foundCache) {
-                    cacheInfo = foundCache;
-                }
-            }
+            const [cacheList, objSpawns] = await Promise.all([
+                fetchCacheList(signal),
+                fetchObjSpawns(),
+            ]);
+            const cacheInfo = selectCache(cacheList, searchParams.get("cache"));
 
             const encounterId = parseEncounterId(searchParams.get("enc"));
             const animPreview = parseAnimPreviewParams(searchParams);
             const godMode = parseGodMode(searchParams);
-            // The animation viewer always needs the full cache: it previews arbitrary npcs/seqs or
-            // spot anims that an encounter bundle was never built to contain. Bundles are build
-            // artifacts, so development uses the full cache unless explicitly asked, to avoid
-            // stale bundles hiding data changes.
-            const useBundle =
-                !animPreview &&
-                (process.env.NODE_ENV === "production" || searchParams.get("bundle") === "1");
 
-            const [cache, objSpawns, npcSpawns] = await Promise.all([
-                (useBundle
-                    ? loadCacheBundle(encounterId, abortController.signal, setDownloadProgress)
-                    : Promise.resolve(undefined)
-                ).then(
-                    (bundleCache) =>
-                        bundleCache ??
-                        loadCacheFiles(cacheInfo, abortController.signal, setDownloadProgress),
-                ),
-                objSpawnsPromise,
-                fetchNpcSpawns(getNpcSpawnsUrl(cacheInfo)),
-            ]);
-            console.log(`Loaded "${cache.info.name}" cache from ${cache.source} source`);
-
-            const mapImageCache = await caches.open("map-images");
+            const npcSpawns = await fetchNpcSpawns(getNpcSpawnsUrl(cacheInfo));
+            // The base encounter even in the animation viewer: the actor loader bakes the preview
+            // for it (see ActorRenderDataLoader), and the preview encounter maps its squares.
+            const roots = cacheRoots(getEncounter(encounterId), animPreview, npcSpawns, objSpawns);
+            const packBuffer = await loadCachePack(cacheInfo.name, roots, signal);
+            pruneCacheStorage(cacheInfo.name).catch((e) =>
+                console.error("Failed pruning cache storage", e),
+            );
 
             const availableRenderers = getAvailableRenderers();
             if (availableRenderers.length === 0) {
@@ -101,15 +79,15 @@ function MapViewerApp() {
             // Add some way to get preferred renderer
             const rendererType = availableRenderers[0];
 
+            workerPool.initCache(packBuffer, objSpawns, npcSpawns);
             const mapViewer = new MapViewer(
                 workerPool,
                 cacheList,
                 objSpawns,
                 npcSpawns,
-                mapImageCache,
                 encounterId,
                 rendererType,
-                cache,
+                openCachePack(packBuffer),
                 animPreview,
                 godMode,
             );
@@ -120,14 +98,19 @@ function MapViewerApp() {
             mapViewer.applySearchParams(searchParams);
             mapViewer.init();
 
-            setDownloadProgress(undefined);
             setMapViewer(mapViewer);
         };
 
         if (isIos) {
             setErrorMessage("iOS is not supported.");
         } else {
-            load().catch(console.error);
+            load().catch((e) => {
+                if (signal.aborted) {
+                    return;
+                }
+                console.error(e);
+                setErrorMessage(`Failed to load: ${e instanceof Error ? e.message : e}`);
+            });
         }
 
         return () => {
@@ -135,22 +118,17 @@ function MapViewerApp() {
         };
     }, []);
 
-    let content: JSX.Element | undefined;
+    let content: JSX.Element;
     if (errorMessage) {
         content = <div className="center-container max-height content-text">{errorMessage}</div>;
-    } else if (downloadProgress) {
-        const formattedCacheSize = formatBytes(downloadProgress.total);
-        const progress = ((downloadProgress.current / downloadProgress.total) * 100) | 0;
-        content = (
-            <div className="center-container max-height">
-                <OsrsLoadingBar
-                    text={`Downloading cache (${formattedCacheSize})`}
-                    progress={progress}
-                />
-            </div>
-        );
     } else if (mapViewer) {
         content = <MapViewerContainer mapViewer={mapViewer} />;
+    } else {
+        content = (
+            <div className="center-container max-height">
+                <OsrsLoadingBar text="Loading cache" />
+            </div>
+        );
     }
 
     return <div className="App max-height">{content}</div>;

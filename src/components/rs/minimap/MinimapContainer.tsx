@@ -16,7 +16,6 @@ interface MinimapContainerProps {
     yawDegrees: number;
 
     onCompassClick: () => void;
-    onWorldMapClick: () => void;
 
     getPosition: () => Position;
     loadMapImageUrl: (mapX: number, mapY: number) => string | undefined;
@@ -25,7 +24,6 @@ interface MinimapContainerProps {
 export const MinimapContainer = memo(function MinimapContainer({
     yawDegrees,
     onCompassClick,
-    onWorldMapClick,
 
     getPosition,
     loadMapImageUrl,
@@ -95,8 +93,6 @@ export const MinimapContainer = memo(function MinimapContainer({
                 src={compass}
                 onClick={onCompassClick}
             />
-
-            <div className="worldmap-icon" onClick={onWorldMapClick} />
         </div>
     );
 });

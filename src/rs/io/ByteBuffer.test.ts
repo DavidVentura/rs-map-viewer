@@ -7,7 +7,7 @@ describe("ByteBuffer", () => {
             expect(Array.from(buffer.readUnsignedBytes(4))).toEqual([1, 2, 3, 4]);
         });
 
-        // A cache bundle entry is a view into one big shared ArrayBuffer, so its Int8Array has a
+        // A cache pack entry is a view into one big shared ArrayBuffer, so its Int8Array has a
         // nonzero byteOffset relative to that buffer. readUnsignedBytes must read relative to the
         // view's own start, not byte 0 of the underlying buffer.
         it("reads relative to the view's own byteOffset, not the underlying buffer's", () => {

@@ -93,9 +93,18 @@ const LUMBRIDGE_GOBLIN_TILE_OFFSETS = [
     { x: -1, y: 3 },
 ];
 
+// The player's square and the ring around it: the camera sees past one square's edges, and the
+// world holds only the squares an encounter declares.
+const LUMBRIDGE_MAP_SQUARES: readonly MapSquareCoord[] = [-1, 0, 1].flatMap((dx) =>
+    [-1, 0, 1].map((dy) => ({
+        mapX: (LUMBRIDGE_PLAYER_TILE.x >> 6) + dx,
+        mapY: (LUMBRIDGE_PLAYER_TILE.y >> 6) + dy,
+    })),
+);
+
 const LUMBRIDGE: Encounter = {
     id: EncounterId.LUMBRIDGE,
-    mapSquares: [{ mapX: LUMBRIDGE_PLAYER_TILE.x >> 6, mapY: LUMBRIDGE_PLAYER_TILE.y >> 6 }],
+    mapSquares: LUMBRIDGE_MAP_SQUARES,
     playerSpawn: { x: lumbridgePlayerX, y: lumbridgePlayerY, level: 0 },
     enemySpawns: LUMBRIDGE_GOBLIN_TILE_OFFSETS.map((offset) => {
         const [x, y] = tileToWorld(

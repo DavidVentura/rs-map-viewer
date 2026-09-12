@@ -14,7 +14,7 @@ export class Container {
         const compression: CompressionType = buffer.readUnsignedByte();
         const size = buffer.readInt();
         if (Xtea.isValidKey(key)) {
-            // Decrypt a copy: stores hand out views into a shared pack or bundle buffer, which a
+            // Decrypt a copy: stores hand out views into a shared pack buffer, which a
             // later read of the same archive must see still encrypted.
             const offset = buffer.offset;
             buffer = new ByteBuffer(buffer.data.slice());

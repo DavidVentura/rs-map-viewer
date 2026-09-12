@@ -1,7 +1,6 @@
 import { Schema } from "leva/dist/declarations/src/types";
 
 import { Renderer } from "../components/renderer/Renderer";
-import { SceneBuilder } from "../rs/scene/SceneBuilder";
 import { clamp } from "../util/MathUtil";
 import { getAxisDeadzone } from "./InputManager";
 import { MapManager, MapSquare, ResidencyPolicy, ResidencyPolicyKind } from "./MapManager";
@@ -31,6 +30,7 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
             mapViewer.workerPool.size * 2,
             this.queueLoadMap.bind(this),
             residencyKind,
+            mapViewer.encounter.mapSquares,
         );
     }
 
@@ -65,10 +65,7 @@ export abstract class MapViewerRenderer<T extends MapSquare = MapSquare> extends
     }
 
     initCache(): void {
-        this.mapManager.init(
-            this.mapViewer.mapFileIndex,
-            SceneBuilder.fillEmptyTerrain(this.mapViewer.loadedCache.info),
-        );
+        this.mapManager.cleanUp();
         this.mapManager.update(
             this.mapViewer.camera,
             this.stats.frameCount,

@@ -3,10 +3,8 @@ import { QueuedTask } from "threads/dist/master/pool";
 import { WorkerDescriptor } from "threads/dist/master/pool-types";
 import { ObservablePromise } from "threads/dist/observable-promise";
 
-import { LoadedCache } from "../Caches";
 import { NpcSpawn } from "../data/npc/NpcSpawn";
 import { ObjSpawn } from "../data/obj/ObjSpawn";
-import { MinimapData } from "./MinimapData";
 import { RenderDataLoader } from "./RenderDataLoader";
 import { RenderDataWorker } from "./RenderDataWorker";
 
@@ -30,9 +28,10 @@ export class RenderDataWorkerPool {
         readonly size: number,
     ) {}
 
-    initCache(cache: LoadedCache, objSpawns: ObjSpawn[], npcSpawns: NpcSpawn[]): void {
+    // Every worker opens the same shared pack bytes into its own cache.
+    initCache(packBuffer: SharedArrayBuffer, objSpawns: ObjSpawn[], npcSpawns: NpcSpawn[]): void {
         for (const worker of this.workers) {
-            worker.init.then((w) => w.initCache(cache, objSpawns, npcSpawns));
+            worker.init.then((w) => w.initCache(packBuffer, objSpawns, npcSpawns));
         }
     }
 
@@ -55,40 +54,8 @@ export class RenderDataWorkerPool {
         return this.pool.queue((w) => w.load(loader, input) as ObservablePromise<D>);
     }
 
-    queueLoadTexture(
-        id: number,
-        size: number,
-        flipH: boolean,
-        brightness: number,
-    ): QueuedTask<RenderDataWorkerThread, Int32Array> {
-        return this.pool.queue(
-            (w) => w.loadTexture(id, size, flipH, brightness) as ObservablePromise<Int32Array>,
-        );
-    }
-
-    queueMapImage(
-        mapX: number,
-        mapY: number,
-        level: number,
-        drawMapFunctions: boolean,
-    ): QueuedTask<RenderDataWorkerThread, MinimapData | undefined> {
-        return this.pool.queue((w) => w.loadMapImage(mapX, mapY, level, drawMapFunctions));
-    }
-
     setVars(vars: Int32Array): Promise<void> {
         return this.runAll((w) => w.setVars(vars));
-    }
-
-    loadCachedMapImages(): QueuedTask<RenderDataWorkerThread, Map<number, string>> {
-        return this.pool.queue((w) => w.loadCachedMapImages());
-    }
-
-    exportSprites(): QueuedTask<RenderDataWorkerThread, Blob> {
-        return this.pool.queue((w) => w.exportSpritesToZip());
-    }
-
-    exportTextures(): QueuedTask<RenderDataWorkerThread, Blob> {
-        return this.pool.queue((w) => w.exportTexturesToZip());
     }
 
     terminate(): Promise<void> {
