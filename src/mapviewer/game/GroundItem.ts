@@ -1,5 +1,11 @@
 import { DropTier } from "./EnemyType";
-import { ALL_EQUIPMENT_PATHS, EquipmentPath, EquipmentState, isAtMaxTier } from "./Equipment";
+import {
+    ALL_EQUIPMENT_PATHS,
+    EquipmentChange,
+    EquipmentPath,
+    EquipmentState,
+    isAtMaxTier,
+} from "./Equipment";
 import { RandomSource } from "./abilityRules";
 
 // A single real OSRS item lying on the ground: one equipment path at one tier, rendered with its
@@ -42,6 +48,39 @@ export function rollDropPath(
         return undefined;
     }
     return eligible[Math.floor(random() * eligible.length)];
+}
+
+export type GrantDropPlan = {
+    // The changes that go on the floor, in grant order.
+    readonly drops: readonly EquipmentChange[];
+    // Floor items a better drop of the same path takes the place of.
+    readonly replacedItemIds: readonly number[];
+};
+
+// The same rule as rollDropPath for an authored grant (e.g. a phase chest): at most one floor item
+// per path and nothing the player already wears at that tier or better. A change that beats an
+// item already waiting on the floor for its path takes that item's place.
+export function planGrantDrops(
+    changes: readonly EquipmentChange[],
+    equipment: EquipmentState,
+    groundItems: readonly GroundItem[],
+): GrantDropPlan {
+    const drops: EquipmentChange[] = [];
+    const replacedItemIds: number[] = [];
+    for (const change of changes) {
+        if (change.tierIndex <= equipment[change.path]) {
+            continue;
+        }
+        const waiting = groundItems.find((item) => item.path === change.path);
+        if (waiting && waiting.tierIndex >= change.tierIndex) {
+            continue;
+        }
+        if (waiting) {
+            replacedItemIds.push(waiting.id);
+        }
+        drops.push(change);
+    }
+    return { drops, replacedItemIds };
 }
 
 export function pendingGroundItemPaths(

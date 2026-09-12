@@ -31,6 +31,7 @@ import {
     GroundItem,
     distanceToGroundItem,
     pendingGroundItemPaths,
+    planGrantDrops,
     rollDropPath,
 } from "./GroundItem";
 import {
@@ -72,7 +73,12 @@ import {
     resetRangedHits,
 } from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
-import { VisualEffect, VisualEffectAnchor, casterEffectTiming } from "./VisualEffect";
+import {
+    VisualEffect,
+    VisualEffectAnchor,
+    casterEffectAnchor,
+    casterEffectTiming,
+} from "./VisualEffect";
 import {
     WaveDirectorState,
     WaveSpawn,
@@ -661,8 +667,15 @@ export class GameWorld {
     // A chest's rewards burst onto the floor as individual real items around it, one per change in
     // the grant, rather than being auto-equipped - the player picks each one up like an enemy drop.
     private dropEquipmentGrant(changes: readonly EquipmentChange[]): void {
+        const player = this.player;
+        if (!player) {
+            throw new Error("Cannot drop an equipment reward without a player");
+        }
         const chest = this.findWorldObjectByKind(WorldObjectKind.CHEST);
-        for (const change of changes) {
+        const plan = planGrantDrops(changes, player.equipment, this.groundItems);
+        const replaced = new Set(plan.replacedItemIds);
+        this.groundItems = this.groundItems.filter((item) => !replaced.has(item.id));
+        for (const change of plan.drops) {
             const position = resolveScatterPosition(
                 this.terrain,
                 chest.position.level,
@@ -1103,7 +1116,7 @@ export class GameWorld {
             this.pushVisualEffect(
                 new VisualEffect(
                     casterEffect.kind,
-                    { kind: "COMBATANT", combatant: player },
+                    casterEffectAnchor(player, casterEffect.placement),
                     casterEffect.height,
                     casterEffectTiming(this.animations.effects[casterEffect.kind], ability.castSeq),
                     undefined,
@@ -1216,7 +1229,7 @@ export class GameWorld {
         for (const spawn of farthest) {
             this.pendingVisualEffects.push({
                 hitEffect,
-                anchor: { kind: "POINT", x: spawn.x, y: spawn.y, level: caster.level },
+                anchor: { kind: "POINT", x: spawn.x, y: spawn.y, level: caster.level, rotation: 0 },
                 startsAt: this.timeSeconds + spawn.delaySeconds,
             });
         }
@@ -1311,7 +1324,7 @@ export class GameWorld {
             const distance = Math.hypot(aimPoint.x - start.x, aimPoint.y - start.y);
             this.spawnVisualEffect(
                 spec.landing.telegraph,
-                { kind: "POINT", x: aimPoint.x, y: aimPoint.y, level: caster.level },
+                { kind: "POINT", x: aimPoint.x, y: aimPoint.y, level: caster.level, rotation: 0 },
                 travelSeconds(spec.travelTime, distance),
             );
         }
@@ -1383,6 +1396,7 @@ export class GameWorld {
                     x: outcome.x,
                     y: outcome.y,
                     level,
+                    rotation: 0,
                 });
                 return;
             case "EXPIRED":

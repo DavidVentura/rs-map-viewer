@@ -15,11 +15,13 @@
 #define INTERACT_TYPE_OBJ 2u
 #define INTERACT_TYPE_ENEMY 4u
 
-// Ground items pulse at a gentle, per-item-desynced rate so a pile of drops doesn't flash in
-// lockstep - see the v_highlight ambient glow below.
+// Ground items breathe between half and full hover brightness (never dimmer, occasionally as
+// bright as a hovered item) so loot reads against a dark floor without needing the pointer over
+// it - see the v_highlight ambient glow below. Desynced per item so a pile of drops doesn't pulse
+// in lockstep.
 #define GROUND_ITEM_GLOW_SPEED 2.0
-#define GROUND_ITEM_GLOW_BASE 0.15
-#define GROUND_ITEM_GLOW_AMPLITUDE 0.15
+#define GROUND_ITEM_GLOW_FLOOR 0.5
+#define GROUND_ITEM_GLOW_AMPLITUDE 0.5
 
 precision highp float;
 
@@ -156,13 +158,13 @@ void main() {
             actorInfo.interactType == INTERACT_TYPE_OBJ &&
             int(actorInfo.interactId) == u_highlightItemId);
 
-    // A subtle constant glow on every ground item so loot reads against a dark floor, desynced per
-    // item via a cheap hash of its world position so a cluster of drops doesn't pulse in lockstep.
+    // Desynced per item via a cheap hash of its world position so a cluster of drops doesn't pulse
+    // in lockstep.
     float itemGlowPhase = fract(sin(dot(actorInfo.worldPos, vec2(12.9898, 78.233))) * 43758.5453);
     float itemGlow = when_eq(float(actorInfo.interactType), float(INTERACT_TYPE_OBJ)) *
-        (GROUND_ITEM_GLOW_BASE +
+        (GROUND_ITEM_GLOW_FLOOR +
             GROUND_ITEM_GLOW_AMPLITUDE *
-                sin(u_currentTime * GROUND_ITEM_GLOW_SPEED + itemGlowPhase * TAU));
+                (0.5 + 0.5 * sin(u_currentTime * GROUND_ITEM_GLOW_SPEED + itemGlowPhase * TAU)));
 
     v_highlight = max(float(isHoveredActor), itemGlow);
 

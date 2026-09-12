@@ -1,5 +1,7 @@
+import { CasterEffectPlacement } from "./Ability";
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { Combatant } from "./Combatant";
+import { rotationToDirection } from "./projectileMath";
 
 export enum VisualEffectKind {
     MAGIC_HIT = 0,
@@ -13,7 +15,7 @@ export enum VisualEffectKind {
     WARPED_SCEPTRE_IMPACT = 8,
     SWAMP_TRIDENT_IMPACT = 9,
     TUMEKENS_SHADOW_IMPACT = 10,
-    DRAGON_HALBERD_SPECIAL_RED = 11,
+    DRAGON_HALBERD_SPECIAL_DARKRED = 11,
     ARROW_LAUNCH = 12,
     CRYSTAL_ARROW_LAUNCH = 13,
     SWAMP_TRIDENT_CAST = 14,
@@ -82,17 +84,45 @@ export function casterEffectTiming(effectSeq: SeqTiming, castSeq: SeqTiming): Se
 }
 
 // A COMBATANT anchor reads the combatant's current position whenever the effect is drawn, so an
-// impact or buff graphic stays on a moving body instead of freezing where it was spawned.
+// impact or buff graphic stays on a moving body instead of freezing where it was spawned. A POINT
+// anchor carries its own facing.
 export type VisualEffectAnchor =
-    | { readonly kind: "POINT"; readonly x: number; readonly y: number; readonly level: number }
+    | {
+          readonly kind: "POINT";
+          readonly x: number;
+          readonly y: number;
+          readonly level: number;
+          readonly rotation: number;
+      }
     | { readonly kind: "COMBATANT"; readonly combatant: Combatant };
+
+// Where a caster effect plays for a caster facing its current rotation (see CasterEffectPlacement).
+export function casterEffectAnchor(
+    caster: Combatant,
+    placement: CasterEffectPlacement,
+): VisualEffectAnchor {
+    switch (placement.kind) {
+        case "ON_CASTER":
+            return { kind: "COMBATANT", combatant: caster };
+        case "AHEAD": {
+            const facing = rotationToDirection(caster.rotation);
+            return {
+                kind: "POINT",
+                x: caster.x + facing.x * placement.distance,
+                y: caster.y + facing.y * placement.distance,
+                level: caster.level,
+                rotation: caster.rotation,
+            };
+        }
+    }
+}
 
 export class VisualEffect {
     readonly animation: AnimationState;
     // Captured once here rather than read live off the anchor: OSRS commits an actor to one facing
     // for a weapon-trail's whole playback, but this project's own combatant.rotation keeps changing
     // as its owner moves or turns to a new aim, and a caster-anchored effect can still be playing a
-    // second or more after it was cast (see CRYSTAL_HALBERD_SPECIAL/DRAGON_HALBERD_SPECIAL_RED,
+    // second or more after it was cast (see CRYSTAL_HALBERD_SPECIAL/DRAGON_HALBERD_SPECIAL_DARKRED,
     // ~1s at CLEAVE/SCYTHE_SWEEP's own castSpeed). Reading combatant.rotation live therefore made
     // the effect visibly swing away from the direction it was actually cast in as soon as its
     // caster moved. Position still tracks the anchor live (see x/y below) - only facing is frozen.
@@ -110,8 +140,7 @@ export class VisualEffect {
         private readonly speed: number = 1,
     ) {
         this.animation = new AnimationState(seq);
-        // A point anchor has no facing of its own, so it stays unrotated.
-        this.rotation = anchor.kind === "COMBATANT" ? anchor.combatant.rotation : 0;
+        this.rotation = anchor.kind === "COMBATANT" ? anchor.combatant.rotation : anchor.rotation;
     }
 
     get x(): number {

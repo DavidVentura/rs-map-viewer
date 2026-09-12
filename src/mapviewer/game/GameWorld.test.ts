@@ -16,7 +16,6 @@ import { Affects, PayloadKind, damagePayload } from "./Effect";
 import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
 import { EnemyState } from "./Enemy";
-import { EquipmentPath } from "./Equipment";
 import {
     DropTier,
     EnemyBehaviour,
@@ -24,6 +23,7 @@ import {
     ResolvedEnemyType,
     resolveEnemyType,
 } from "./EnemyType";
+import { EquipmentPath } from "./Equipment";
 import {
     AbilitySlotInput,
     CombatInput,
@@ -460,7 +460,7 @@ describe("Scheduled visual effects", () => {
         world.spawnPlayer(0, 0, 0);
         world.pendingVisualEffects.push({
             hitEffect: dustWave,
-            anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+            anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
             startsAt: 0.5,
         });
 
@@ -483,7 +483,7 @@ describe("Scheduled visual effects", () => {
         for (let i = 0; i < GameWorld.MAX_VISUAL_EFFECTS; i++) {
             world.pendingVisualEffects.push({
                 hitEffect: dustWave,
-                anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+                anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
                 startsAt: 1000,
             });
         }
@@ -512,7 +512,7 @@ describe("Maul Smash ground dust", () => {
         world.player!.style = WeaponStyle.MELEE;
         const placeholders: ScheduledVisualEffect[] = Array.from({ length: reserved }, () => ({
             hitEffect: MAUL_SMASH.effect.hitEffect!,
-            anchor: { kind: "POINT", x: 0, y: 0, level: 0 },
+            anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
             startsAt: 1000,
         }));
         world.pendingVisualEffects.push(...placeholders);
@@ -559,7 +559,7 @@ describe("Maul Smash ground dust", () => {
         );
     });
 
-    it("Cleave has no per-tile ground graphic, only its own caster-anchored weapon trail", () => {
+    it("Cleave has no per-tile ground graphic, only its sweep on the row one tile ahead", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.spawnPlayer(0, 0, 0);
         world.player!.style = WeaponStyle.MELEE;
@@ -569,8 +569,10 @@ describe("Maul Smash ground dust", () => {
         expect(world.pendingVisualEffects.length).toBe(0);
         expect(world.visualEffects.length).toBe(1);
         expect(world.visualEffects[0].kind).toBe(CLEAVE.effect.casterEffect!.kind);
-        expect(world.visualEffects[0].x).toBe(world.player!.x);
-        expect(world.visualEffects[0].y).toBe(world.player!.y);
+        // Aimed north, so the sweep sits one tile north of the caster, facing the same way.
+        expect(world.visualEffects[0].x).toBeCloseTo(world.player!.x);
+        expect(world.visualEffects[0].y).toBeCloseTo(world.player!.y + 128);
+        expect(world.visualEffects[0].rotation).toBe(world.player!.rotation);
     });
 
     it("Cleave's weapon trail starts with the cast, not at impact, and plays at castSpeed", () => {

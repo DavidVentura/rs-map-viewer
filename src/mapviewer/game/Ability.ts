@@ -77,16 +77,25 @@ export type Delivery = TargetDelivery | ConeDelivery | CircleDelivery | Projecti
 
 // hitEffect is spawned on each affected combatant for TARGET/CIRCLE deliveries and tracked
 // projectiles, and once at the landing point for CONE deliveries and fixed-point projectiles.
-// casterEffect is spawned once on the caster itself when the ability resolves, regardless of
-// delivery kind - a weapon-special graphic that plays on the wielder (rotated to their facing)
-// rather than at the target or landing point.
+// casterEffect is spawned once when the cast begins, regardless of delivery kind, at its placement
+// (see CasterEffectPlacement) and facing the caster's direction.
 export type AbilityEffect<D extends Delivery = Delivery> = {
     readonly delivery: D;
     readonly affects: Affects;
     readonly payloads: readonly Payload[];
     readonly hitEffect?: HitEffect;
-    readonly casterEffect?: HitEffect;
+    readonly casterEffect?: CasterEffect;
 };
+
+// ON_CASTER rides on the caster (cast and launch graphics at the hands or bow). AHEAD sits on the
+// ground `distance` in front of where the caster faces when the cast begins: OSRS spawns its sweep
+// graphics on the row in front that the sweep hits, so their arc models are centred on their own
+// origin rather than on the wielder.
+export type CasterEffectPlacement =
+    | { readonly kind: "ON_CASTER" }
+    | { readonly kind: "AHEAD"; readonly distance: number };
+
+export type CasterEffect = HitEffect & { readonly placement: CasterEffectPlacement };
 
 // The item shown in the caster's hand for the duration of a cast, in place of whatever they have
 // equipped - e.g. the elder maul special or the crystal halberd special. hidesShield mirrors that

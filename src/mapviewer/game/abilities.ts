@@ -1,6 +1,7 @@
 import {
     AbilityDefinition,
     CastItemOverride,
+    CasterEffectPlacement,
     CircleCenter,
     ConeAim,
     CooldownGroup,
@@ -60,6 +61,10 @@ export const TWISTED_BOW_ITEM_ID = 20997;
 export const ELDER_MAUL_ITEM_ID = 21003;
 export const CRYSTAL_HALBERD_ITEM_ID = 23987;
 
+const ON_CASTER: CasterEffectPlacement = { kind: "ON_CASTER" };
+// The halberd and scythe sweeps hit the row one tile in front, where OSRS plays their arc.
+const SWEEP_AHEAD: CasterEffectPlacement = { kind: "AHEAD", distance: 128 };
+
 function singleShot(spec: ProjectileSpec): ProjectileDelivery {
     return { kind: DeliveryKind.PROJECTILE, spec, count: 1, spreadAngleRadians: 0 };
 }
@@ -91,7 +96,7 @@ export const BOW_SHOT: AbilityDefinition = {
         // Every shortbow-family tier draws the same bow (magic shortbow/twisted bow inherit this
         // effect below), so they all show the same generic bow release; Bow of Faerdhinen overrides
         // it with its own crystal-arrow launch instead (see BOW_OF_FAERDHINEN_SHOT).
-        casterEffect: { kind: VisualEffectKind.ARROW_LAUNCH, height: 70 },
+        casterEffect: { kind: VisualEffectKind.ARROW_LAUNCH, height: 70, placement: ON_CASTER },
     },
 };
 
@@ -113,7 +118,7 @@ export const MAGIC_BOLT: AbilityDefinition = {
         affects: Affects.HOSTILE,
         payloads: [damagePayload(MAGIC_BOLT_DAMAGE)],
         hitEffect: { kind: VisualEffectKind.MAGIC_HIT, height: 124 },
-        casterEffect: { kind: VisualEffectKind.FIRE_BOLT_CAST, height: 100 },
+        casterEffect: { kind: VisualEffectKind.FIRE_BOLT_CAST, height: 100, placement: ON_CASTER },
     },
 };
 
@@ -222,7 +227,11 @@ export const SCYTHE_SWEEP: AbilityDefinition = {
         payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
         // OSRS plays the dragon halberd special's own weapon-trail for the scythe's basic attack
         // too, in its red livery rather than the crystal halberd's white (see CLEAVE).
-        casterEffect: { kind: VisualEffectKind.DRAGON_HALBERD_SPECIAL_RED, height: 100 },
+        casterEffect: {
+            kind: VisualEffectKind.DRAGON_HALBERD_SPECIAL_DARKRED,
+            height: 100,
+            placement: SWEEP_AHEAD,
+        },
     },
 };
 
@@ -243,7 +252,11 @@ export const BOW_OF_FAERDHINEN_SHOT: AbilityDefinition = {
         delivery: singleShot(CRYSTAL_ARROW_SPEC),
         // Its own crystal-arrow launch in place of the generic bow release the rest of the ladder
         // inherits from BOW_SHOT.
-        casterEffect: { kind: VisualEffectKind.CRYSTAL_ARROW_LAUNCH, height: 70 },
+        casterEffect: {
+            kind: VisualEffectKind.CRYSTAL_ARROW_LAUNCH,
+            height: 70,
+            placement: ON_CASTER,
+        },
     },
 };
 export const TWISTED_BOW_SHOT: AbilityDefinition = {
@@ -307,7 +320,11 @@ export const SWAMP_TRIDENT_BOLT: AbilityDefinition = {
             kind: VisualEffectKind.SWAMP_TRIDENT_IMPACT,
             height: 100,
         },
-        casterEffect: { kind: VisualEffectKind.SWAMP_TRIDENT_CAST, height: 100 },
+        casterEffect: {
+            kind: VisualEffectKind.SWAMP_TRIDENT_CAST,
+            height: 100,
+            placement: ON_CASTER,
+        },
     },
 };
 
@@ -336,7 +353,11 @@ export const TUMEKENS_SHADOW_BEAM: AbilityDefinition = {
             kind: VisualEffectKind.TUMEKENS_SHADOW_IMPACT,
             height: 100,
         },
-        casterEffect: { kind: VisualEffectKind.TUMEKENS_SHADOW_CAST, height: 50 },
+        casterEffect: {
+            kind: VisualEffectKind.TUMEKENS_SHADOW_CAST,
+            height: 50,
+            placement: ON_CASTER,
+        },
     },
 };
 
@@ -459,6 +480,7 @@ export const CLEAVE: AbilityDefinition = {
         casterEffect: {
             kind: VisualEffectKind.CRYSTAL_HALBERD_SPECIAL,
             height: 100,
+            placement: SWEEP_AHEAD,
         },
     },
 };

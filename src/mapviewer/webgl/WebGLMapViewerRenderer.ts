@@ -315,8 +315,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     skyColor: vec4 = vec4.fromValues(0, 0, 0, 1);
     fogDepth: number = 16;
 
-    brightness: number = 1.0;
-    colorBanding: number = 255;
+    // OSRS's four brightness settings (1-4), applied as gamma exponents 0.9..0.6.
+    brightnessLevel: number = 3;
+    // 0-100; the shader quantizes each channel to 255 - 2 * colorBanding levels.
+    colorBanding: number = 50;
 
     smoothTerrain: boolean = false;
 
@@ -780,21 +782,21 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 },
             },
             Brightness: {
-                value: 1,
-                min: 0,
+                value: this.brightnessLevel,
+                min: 1,
                 max: 4,
                 step: 1,
                 onChange: (v: number) => {
-                    this.brightness = 1.0 - v * 0.1;
+                    this.brightnessLevel = v;
                 },
             },
             "Color Banding": {
-                value: 50,
+                value: this.colorBanding,
                 min: 0,
                 max: 100,
                 step: 1,
                 onChange: (v: number) => {
-                    this.colorBanding = 255 - v * 2;
+                    this.colorBanding = v;
                 },
             },
             "Texture Filtering": {
@@ -1492,8 +1494,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             .set(5, renderDistance as any)
             .set(6, this.fogDepth as any)
             .set(7, timeSec as any)
-            .set(8, this.brightness as any)
-            .set(9, this.colorBanding as any)
+            .set(8, (1.0 - this.brightnessLevel * 0.1) as any)
+            .set(9, (255 - this.colorBanding * 2) as any)
             .set(10, this.mapViewer.isNewTextureAnim as any)
             .update();
 
@@ -2339,8 +2341,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 continue;
             }
             if (event.kind === CombatEventKind.ITEM_DROPPED) {
-                // world.groundItems already carries the dropped item; the HUD's floor label is
-                // rebuilt from that persistent state below, not from this one-off event.
+                // world.groundItems already carries the dropped item, and the item is drawn from
+                // that persistent state rather than from this one-off event.
                 continue;
             }
             if (event.kind === CombatEventKind.ITEM_PICKED_UP) {

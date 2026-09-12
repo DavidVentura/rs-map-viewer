@@ -1,6 +1,6 @@
 import { DropTier } from "./EnemyType";
 import { DEFAULT_EQUIPMENT, EquipmentPath, equipAtTier, maxTierIndex } from "./Equipment";
-import { GroundItem, pendingGroundItemPaths, rollDropPath } from "./GroundItem";
+import { GroundItem, pendingGroundItemPaths, planGrantDrops, rollDropPath } from "./GroundItem";
 
 function fixedRandom(...values: number[]): () => number {
     let index = 0;
@@ -70,5 +70,45 @@ describe("pendingGroundItemPaths", () => {
         expect(pending.has(EquipmentPath.BOW)).toBe(true);
         expect(pending.has(EquipmentPath.STAFF)).toBe(true);
         expect(pending.has(EquipmentPath.SCIMITAR)).toBe(false);
+    });
+});
+
+describe("planGrantDrops", () => {
+    function floorItem(id: number, path: EquipmentPath, tierIndex: number): GroundItem {
+        return { id, path, tierIndex, x: 0, y: 0, level: 0 };
+    }
+
+    it("drops every change above what the player wears when nothing waits on the floor", () => {
+        const changes = [
+            { path: EquipmentPath.BOW, tierIndex: 1 },
+            { path: EquipmentPath.ARROWS, tierIndex: 1 },
+        ];
+        expect(planGrantDrops(changes, DEFAULT_EQUIPMENT, [])).toEqual({
+            drops: changes,
+            replacedItemIds: [],
+        });
+    });
+
+    it("never puts a second item on the floor for a path that already has one as good", () => {
+        const arrows = { path: EquipmentPath.ARROWS, tierIndex: 1 };
+        const plan = planGrantDrops([arrows], DEFAULT_EQUIPMENT, [
+            floorItem(7, EquipmentPath.ARROWS, 1),
+        ]);
+        expect(plan).toEqual({ drops: [], replacedItemIds: [] });
+    });
+
+    it("replaces a worse item waiting on the floor for the same path", () => {
+        const arrows = { path: EquipmentPath.ARROWS, tierIndex: 2 };
+        const plan = planGrantDrops([arrows], DEFAULT_EQUIPMENT, [
+            floorItem(7, EquipmentPath.ARROWS, 1),
+            floorItem(8, EquipmentPath.BOW, 1),
+        ]);
+        expect(plan).toEqual({ drops: [arrows], replacedItemIds: [7] });
+    });
+
+    it("skips a change the player already wears at that tier or better", () => {
+        const equipment = equipAtTier(DEFAULT_EQUIPMENT, EquipmentPath.BOW, 2);
+        const plan = planGrantDrops([{ path: EquipmentPath.BOW, tierIndex: 1 }], equipment, []);
+        expect(plan).toEqual({ drops: [], replacedItemIds: [] });
     });
 });

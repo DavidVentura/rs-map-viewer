@@ -1,6 +1,12 @@
 import { SeqTiming } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
-import { VisualEffect, VisualEffectKind, casterEffectTiming } from "./VisualEffect";
+import {
+    VisualEffect,
+    VisualEffectKind,
+    casterEffectAnchor,
+    casterEffectTiming,
+} from "./VisualEffect";
+import { directionToRotation } from "./projectileMath";
 
 const SEQ: SeqTiming = { seqId: 0, frameTicks: [20] };
 
@@ -55,7 +61,7 @@ describe("VisualEffect rotation", () => {
     it("is unrotated for a point anchor", () => {
         const effect = new VisualEffect(
             VisualEffectKind.MAUL_IMPACT_SPARK,
-            { kind: "POINT", x: 0, y: 0, level: 0 },
+            { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
             0,
             SEQ,
         );
@@ -75,5 +81,27 @@ describe("casterEffectTiming", () => {
     it("keeps a graphic's own timings when it isn't authored frame for frame against the swing", () => {
         const puff = { seqId: 366, frameTicks: [2, 2] };
         expect(casterEffectTiming(puff, swing)).toBe(puff);
+    });
+});
+
+describe("casterEffectAnchor", () => {
+    it("rides on the caster for an ON_CASTER placement", () => {
+        const caster = makeCombatant();
+        expect(casterEffectAnchor(caster, { kind: "ON_CASTER" })).toEqual({
+            kind: "COMBATANT",
+            combatant: caster,
+        });
+    });
+
+    it("sits the given distance ahead of the caster's facing, facing the same way", () => {
+        const facingEast = directionToRotation(1, 0);
+        const caster = makeCombatant({ x: 1000, y: 500, rotation: facingEast });
+        const anchor = casterEffectAnchor(caster, { kind: "AHEAD", distance: 128 });
+        expect(anchor).toMatchObject({ kind: "POINT", level: 0, rotation: facingEast });
+        if (anchor.kind !== "POINT") {
+            throw new Error("expected a point anchor");
+        }
+        expect(anchor.x).toBeCloseTo(1128);
+        expect(anchor.y).toBeCloseTo(500);
     });
 });
