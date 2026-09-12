@@ -2,16 +2,23 @@ import {
     ENCOUNTERS,
     EncounterId,
     EncounterSpawnMode,
+    WaveEncounter,
     getEncounter,
     parseEncounterId,
+    validateEncounter,
 } from "./Encounter";
 import { ENEMY_TYPES, EnemyTypeId } from "./EnemyType";
+import { createPhaseId } from "./Phase";
 
 function tileKey(x: number, y: number, level: number): string {
     return `${x >> 7},${y >> 7},${level}`;
 }
 
 describe("encounters", () => {
+    it.each(Object.values(EncounterId))("%s satisfies its authored encounter contract", (id) => {
+        validateEncounter(getEncounter(id));
+    });
+
     it.each(Object.values(EncounterId))("%s spawns every enemy on a distinct tile", (id) => {
         const encounter = getEncounter(id);
         const keys = encounter.enemySpawns.map((spawn) => tileKey(spawn.x, spawn.y, spawn.level));
@@ -65,6 +72,8 @@ describe("encounters", () => {
     it("Lumbridge is a single never-ending static-respawn wave covering every spawn point", () => {
         const encounter = getEncounter(EncounterId.LUMBRIDGE);
         expect(encounter.spawnMode).toBe(EncounterSpawnMode.STATIC_RESPAWN);
+        expect(encounter.phases).toEqual([]);
+        expect(encounter.interactions).toEqual([]);
         expect(encounter.waves.length).toBe(1);
         const totalCount = encounter.waves[0].groups.reduce((sum, group) => sum + group.count, 0);
         expect(totalCount).toBe(encounter.enemySpawns.length);
@@ -88,6 +97,46 @@ describe("encounters", () => {
             (wave) => wave.groups.length > 1 || wave.modifiers !== undefined,
         );
         expect(hasTankierMix).toBe(true);
+    });
+
+    it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE, EncounterId.SANDBOX])(
+        "%s partitions waves into player-started phases",
+        (id) => {
+            const encounter = getEncounter(id);
+            if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+                throw new Error("expected wave encounter");
+            }
+            expect(encounter.phases.flatMap((phase) => phase.waves)).toEqual(encounter.waves);
+            for (const phase of encounter.phases) {
+                expect(
+                    encounter.interactions.filter(
+                        (interaction) =>
+                            interaction.action.kind === "START_PHASE" &&
+                            interaction.action.phaseId === phase.id,
+                    ),
+                ).toHaveLength(1);
+            }
+        },
+    );
+
+    it("requires interaction actions to reference a declared phase", () => {
+        const fightCaves = getEncounter(EncounterId.FIGHT_CAVES);
+        if (fightCaves.spawnMode !== EncounterSpawnMode.WAVES) {
+            throw new Error("expected wave encounter");
+        }
+        const firstInteraction = fightCaves.interactions[0];
+        const invalid: WaveEncounter = {
+            ...fightCaves,
+            interactions: [
+                {
+                    ...firstInteraction,
+                    action: { kind: "START_PHASE", phaseId: createPhaseId("missing") },
+                },
+                ...fightCaves.interactions.slice(1),
+            ],
+        };
+
+        expect(() => validateEncounter(invalid)).toThrow(RangeError);
     });
 
     it.each([EncounterId.FIGHT_CAVES, EncounterId.QUICK_CAVE])(

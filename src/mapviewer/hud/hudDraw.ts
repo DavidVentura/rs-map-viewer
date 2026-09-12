@@ -6,9 +6,9 @@ import {
     AbilitySlotHudInfo,
     BossHudInfo,
     GroundItemHudInfo,
+    InteractionHudInfo,
     PlayerHudInfo,
     TargetHudInfo,
-    UpgradeCardHudInfo,
     WaveHudInfo,
     WaveStatus,
 } from "./HudFrame";
@@ -28,9 +28,6 @@ const TARGET_PLATE_MARGIN_TOP = 16;
 const STYLE_ICON_SIZE = 26;
 const STYLE_ICON_GAP = 6;
 const STYLE_ROW_MARGIN_BOTTOM = 6;
-const UPGRADE_CARD_WIDTH = 260;
-const UPGRADE_CARD_HEIGHT = 300;
-const UPGRADE_CARD_GAP = 24;
 
 const STYLE_ORDER: readonly WeaponStyle[] = [
     WeaponStyle.MELEE,
@@ -53,15 +50,9 @@ export type HudLayout = {
     manaGlobe: { x: number; y: number; radius: number };
     slots: { x: number; y: number; size: number }[];
     styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
-    upgradeCards: { x: number; y: number; width: number; height: number }[];
 };
 
-export function computeHudLayout(
-    width: number,
-    height: number,
-    slotCount: number,
-    upgradeCardCount: number = 0,
-): HudLayout {
+export function computeHudLayout(width: number, height: number, slotCount: number): HudLayout {
     const panelWidth = Math.min(PANEL_MAX_WIDTH, width);
     const panelX = width / 2 - panelWidth / 2;
     const panelY = height - PANEL_BOTTOM_MARGIN - PANEL_HEIGHT;
@@ -74,11 +65,6 @@ export function computeHudLayout(
         STYLE_ICON_SIZE * STYLE_ORDER.length + STYLE_ICON_GAP * (STYLE_ORDER.length - 1);
     const styleIconsX = width / 2 - styleIconsWidth / 2;
     const styleIconsY = slotsY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
-    const upgradeCardsWidth =
-        UPGRADE_CARD_WIDTH * upgradeCardCount +
-        UPGRADE_CARD_GAP * Math.max(0, upgradeCardCount - 1);
-    const upgradeCardsX = width / 2 - upgradeCardsWidth / 2;
-    const upgradeCardsY = height / 2 - UPGRADE_CARD_HEIGHT / 2;
     return {
         panelX,
         panelY,
@@ -96,12 +82,6 @@ export function computeHudLayout(
             y: styleIconsY,
             size: STYLE_ICON_SIZE,
             style,
-        })),
-        upgradeCards: Array.from({ length: upgradeCardCount }, (_, i) => ({
-            x: upgradeCardsX + i * (UPGRADE_CARD_WIDTH + UPGRADE_CARD_GAP),
-            y: upgradeCardsY,
-            width: UPGRADE_CARD_WIDTH,
-            height: UPGRADE_CARD_HEIGHT,
         })),
     };
 }
@@ -130,23 +110,15 @@ export enum HudRegionKind {
     ORB = 1,
     SLOT = 2,
     STYLE = 3,
-    UPGRADE_CARD = 4,
 }
 
 export type HudRegion =
     | { readonly kind: HudRegionKind.PANEL }
     | { readonly kind: HudRegionKind.ORB }
     | { readonly kind: HudRegionKind.SLOT; readonly slot: number }
-    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle }
-    | { readonly kind: HudRegionKind.UPGRADE_CARD; readonly index: number };
+    | { readonly kind: HudRegionKind.STYLE; readonly style: WeaponStyle };
 
 export function hitTestHud(layout: HudLayout, x: number, y: number): HudRegion | undefined {
-    const upgradeCardIndex = layout.upgradeCards.findIndex((card) =>
-        isInsideRect(x, y, card.x, card.y, card.width, card.height),
-    );
-    if (upgradeCardIndex !== -1) {
-        return { kind: HudRegionKind.UPGRADE_CARD, index: upgradeCardIndex };
-    }
     const styleIcon = layout.styleIcons.find((icon) =>
         isInsideRect(x, y, icon.x, icon.y, icon.size, icon.size),
     );
@@ -727,70 +699,6 @@ export function drawPreviewSeqLabel(
     ctx.restore();
 }
 
-const UPGRADE_OVERLAY_DIM_COLOR = "rgba(0, 0, 0, 0.6)";
-
-function drawUpgradeCard(
-    ctx: CanvasRenderingContext2D,
-    card: { x: number; y: number; width: number; height: number },
-    info: UpgradeCardHudInfo,
-): void {
-    const { x, y, width, height } = card;
-
-    const gradient = ctx.createLinearGradient(0, y, 0, y + height);
-    gradient.addColorStop(0, "rgba(28, 24, 22, 0.96)");
-    gradient.addColorStop(1, "rgba(10, 8, 8, 0.98)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(x, y, width, height);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(120, 96, 60, 0.7)";
-    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
-    ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
-
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-
-    ctx.font = "700 20px sans-serif";
-    ctx.fillStyle = "#ffd24d";
-    ctx.textBaseline = "top";
-    ctx.strokeText(info.name, x + width / 2, y + 28, width - 24);
-    ctx.fillText(info.name, x + width / 2, y + 28, width - 24);
-
-    ctx.font = "500 15px sans-serif";
-    ctx.fillStyle = "#e8e0d0";
-    ctx.strokeText(info.description, x + width / 2, y + 64, width - 24);
-    ctx.fillText(info.description, x + width / 2, y + 64, width - 24);
-
-    ctx.font = "700 16px sans-serif";
-    ctx.fillStyle = "#d8cfbc";
-    ctx.textBaseline = "bottom";
-    const keyText = `[${info.keyLabel}]`;
-    ctx.strokeText(keyText, x + width / 2, y + height - 16);
-    ctx.fillText(keyText, x + width / 2, y + height - 16);
-    ctx.restore();
-}
-
-export function drawUpgradeOverlay(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    layout: HudLayout,
-    cards: readonly UpgradeCardHudInfo[],
-): void {
-    ctx.save();
-    ctx.fillStyle = UPGRADE_OVERLAY_DIM_COLOR;
-    ctx.fillRect(0, 0, width, height);
-    ctx.restore();
-
-    const cardCount = Math.min(layout.upgradeCards.length, cards.length);
-    for (let i = 0; i < cardCount; i++) {
-        drawUpgradeCard(ctx, layout.upgradeCards[i], cards[i]);
-    }
-}
-
 const GROUND_ITEM_LABEL_NAME_COLOR = "#ffd24d";
 const GROUND_ITEM_LABEL_TAG_COLOR = "#8fe88f";
 const GROUND_ITEM_LABEL_BG_COLOR = "rgba(6, 6, 10, 0.78)";
@@ -829,6 +737,51 @@ export function drawGroundItemLabel(
     ctx.font = "600 11px sans-serif";
     ctx.fillStyle = GROUND_ITEM_LABEL_TAG_COLOR;
     ctx.fillText(tagText, screen.x, boxY + 4 + GROUND_ITEM_LABEL_LINE_HEIGHT);
+    ctx.restore();
+}
+
+const INTERACTION_MARKER_RADIUS = 16;
+
+export function drawInteractionMarker(
+    ctx: CanvasRenderingContext2D,
+    interaction: InteractionHudInfo,
+): void {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(interaction.screenX, interaction.screenY, INTERACTION_MARKER_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = interaction.selected ? "rgba(77, 255, 122, 0.26)" : "rgba(255, 210, 77, 0.18)";
+    ctx.fill();
+    ctx.lineWidth = interaction.hovered || interaction.selected ? 3 : 2;
+    ctx.strokeStyle = interaction.selected
+        ? "#4dff7a"
+        : interaction.hovered
+        ? "#ffd24d"
+        : "#b8ac94";
+    ctx.stroke();
+
+    if (interaction.hovered || interaction.selected) {
+        ctx.font = "700 13px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.fillStyle = interaction.selected ? "#4dff7a" : "#ffd24d";
+        ctx.strokeText(interaction.label, interaction.screenX, interaction.screenY - 22);
+        ctx.fillText(interaction.label, interaction.screenX, interaction.screenY - 22);
+    }
+    ctx.restore();
+}
+
+export function drawInteractionActionText(ctx: CanvasRenderingContext2D, text: string): void {
+    ctx.save();
+    ctx.font = "700 14px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillStyle = "#ffd24d";
+    ctx.strokeText(text, 12, 12);
+    ctx.fillText(text, 12, 12);
     ctx.restore();
 }
 

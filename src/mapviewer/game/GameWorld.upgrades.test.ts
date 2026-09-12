@@ -1,12 +1,19 @@
 import { WeaponStyle } from "./Ability";
-import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
+import { EncounterId, EncounterSpawnMode, Wave, WaveEncounter } from "./Encounter";
 import { EnemyState } from "./Enemy";
 import { EnemyTypeId } from "./EnemyType";
 import { GameWorld, SimInput } from "./GameWorld";
+import {
+    createAuthoredLocationTarget,
+    createInteraction,
+    createInteractionId,
+    createInteractionPose,
+    createWorldPosition,
+} from "./Interaction";
+import { createPhase, createPhaseId } from "./Phase";
 import { StanceSeqIdsByStance } from "./Player";
 import { Terrain } from "./Terrain";
 import { stubSequenceLoaders } from "./testLoaders";
-import { UPGRADE_POOL } from "./upgrades";
 
 class FakeTerrain implements Terrain {
     isLoaded(): boolean {
@@ -34,13 +41,33 @@ const STYLE_SEQ_IDS: StanceSeqIdsByStance = {
     [WeaponStyle.MELEE]: { idleSeqId: 808, walkSeqId: 819, runSeqId: 824, attackSeqId: 390 },
 };
 
-// Two waves. Wave 2's condition uses a fraction threshold below the valid 0..1 range so it can
-// never start via the "previous wave died down" path (real encounters always stay within 0..1;
-// this is a deliberately unreachable value that isolates wave 2 to the elapsed-time path only),
-// which only fires 50ms after wave 1 starts. That keeps the two waves from starting in the same
-// tick a real, overlapping encounter would allow, so the pause/resume tests below have a clean,
-// unambiguous "before" and "after".
-function twoWaveEncounter(): Encounter {
+const FIRST_WAVE: Wave = {
+    groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
+    startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+};
+
+const SECOND_WAVE: Wave = {
+    groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
+    startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 60 },
+};
+
+function phaseEncounter(waves: readonly Wave[]): WaveEncounter {
+    const phase = createPhase(
+        createPhaseId("first"),
+        "First phase",
+        waves,
+        { kind: "ALL_WAVES_CLEARED" },
+        [],
+    );
+    const start = createInteraction(
+        createInteractionId("start_first"),
+        createAuthoredLocationTarget("Start first phase", [
+            createInteractionPose(createWorldPosition(0, 0, 0), 0),
+        ]),
+        { kind: "START_PHASE", phaseId: phase.id },
+        1,
+        0.01,
+    );
     return {
         id: EncounterId.FIGHT_CAVES,
         mapSquares: [{ mapX: 0, mapY: 0 }],
@@ -53,16 +80,9 @@ function twoWaveEncounter(): Encounter {
         spawnMode: EncounterSpawnMode.WAVES,
         ambientNpcs: false,
         musicFile: "audio/tzhaar.opus",
-        waves: [
-            {
-                groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
-                startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
-            },
-            {
-                groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
-                startCondition: { maxPreviousAliveFraction: -1, maxElapsedSeconds: 0.05 },
-            },
-        ],
+        waves,
+        phases: [phase],
+        interactions: [start],
     };
 }
 
@@ -73,88 +93,61 @@ function idleInput(): SimInput {
     };
 }
 
-function killAllEnemies(world: GameWorld): void {
-    for (const enemy of world.enemies) {
-        enemy.health = 0;
-    }
+function startPhase(world: GameWorld): void {
+    const interaction = world.activeInteractions[0];
+    world.advance(1 / 120, {
+        ...idleInput(),
+        interaction: { kind: "START", interactionId: interaction.id },
+    });
+    world.advance(1 / 120, idleInput());
+    world.advance(1 / 120, idleInput());
 }
 
-describe("Wave-cleared upgrade offer", () => {
-    it("pauses the sim and offers 3 distinct upgrades once a non-final wave fully clears", () => {
+describe("phased wave encounters", () => {
+    it("waits for an authored START_PHASE interaction before spawning enemies", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(twoWaveEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        world.startEncounter(phaseEncounter([FIRST_WAVE]), 0, 0, 0, STYLE_SEQ_IDS);
 
-        world.advance(1 / 120, idleInput());
-        expect(world.enemies.length).toBe(1);
-        expect(world.pendingUpgradeOffer).toBeUndefined();
+        world.advance(1, idleInput());
+        expect(world.enemies).toEqual([]);
+        expect(world.phaseLifecycle?.kind).toBe("READY");
+        expect(world.activeInteractions).toHaveLength(1);
 
-        killAllEnemies(world);
-        world.advance(1 / 120, idleInput());
+        startPhase(world);
 
-        expect(world.pendingUpgradeOffer).toBeDefined();
-        const offer = world.pendingUpgradeOffer!;
-        expect(offer.length).toBe(3);
-        expect(new Set(offer.map((upgrade) => upgrade.id)).size).toBe(3);
-        expect(offer).toEqual([UPGRADE_POOL[0], UPGRADE_POOL[1], UPGRADE_POOL[2]]);
+        expect(world.phaseLifecycle?.kind).toBe("ACTIVE");
+        expect(world.enemies).toHaveLength(1);
     });
 
-    it("freezes the director while an offer is pending, even once wave 2's timer would fire", () => {
+    it("keeps wave scheduling running after an internal wave clears without an upgrade modal", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(twoWaveEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
-        world.advance(1 / 120, idleInput());
-        killAllEnemies(world);
-        world.advance(1 / 120, idleInput());
-        expect(world.pendingUpgradeOffer).toBeDefined();
-        const enemyCountDuringOffer = world.enemies.length;
+        world.startEncounter(phaseEncounter([FIRST_WAVE, SECOND_WAVE]), 0, 0, 0, STYLE_SEQ_IDS);
+        startPhase(world);
 
-        // 200 ticks at 1/120s is ~1.67s, well past wave 2's 50ms elapsed-time trigger: if the
-        // director weren't paused, wave 2 would have started by now.
-        for (let i = 0; i < 200; i++) {
-            world.advance(1 / 120, idleInput());
-        }
+        world.enemies[0].health = 0;
+        world.advance(1 / 120, idleInput());
 
-        expect(world.pendingUpgradeOffer).toBeDefined();
-        expect(world.enemies.length).toBe(enemyCountDuringOffer);
+        expect(world.interactionState.kind).toBe("IDLE");
+        expect(world.phaseLifecycle?.kind).toBe("ACTIVE");
+        expect(world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)).toHaveLength(1);
     });
 
-    it("applies the chosen upgrade to the player, clears the offer, and resumes the director", () => {
+    it("cancels an interaction when the player gives movement input", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(twoWaveEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
-        world.advance(1 / 120, idleInput());
-        killAllEnemies(world);
-        world.advance(1 / 120, idleInput());
-        const offer = world.pendingUpgradeOffer!;
-        const player = world.player!;
-        const previousModifiers = player.getModifiers();
+        world.startEncounter(phaseEncounter([FIRST_WAVE]), 0, 0, 0, STYLE_SEQ_IDS);
+        const interaction = world.activeInteractions[0];
+        world.advance(1 / 120, {
+            ...idleInput(),
+            interaction: { kind: "START", interactionId: interaction.id },
+        });
+        expect(world.interactionState.kind).toBe("EXECUTING");
 
         world.advance(1 / 120, {
-            movement: { x: 0, y: 0, running: false },
-            combat: { basicAttack: { held: false }, skills: [] },
-            chooseUpgrade: 1,
+            ...idleInput(),
+            movement: { x: 1, y: 0, running: false },
         });
 
-        expect(world.pendingUpgradeOffer).toBeUndefined();
-        expect(player.getModifiers()).toEqual(offer[1].apply(previousModifiers));
-
-        // The director resumes stepping; once wave 2's 50ms elapsed-time trigger fires, it spawns.
-        for (let i = 0; i < 20; i++) {
-            world.advance(1 / 120, idleInput());
-        }
-        expect(world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD).length).toBe(1);
-    });
-
-    it("sends the final wave's clear straight to ENCOUNTER_CLEARED, with no offer", () => {
-        const encounter: Encounter = {
-            ...twoWaveEncounter(),
-            waves: [twoWaveEncounter().waves[0]],
-        };
-        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
-        world.startEncounter(encounter, 0, 0, 0, STYLE_SEQ_IDS);
-        world.advance(1 / 120, idleInput());
-        killAllEnemies(world);
-        world.advance(1 / 120, idleInput());
-
-        expect(world.pendingUpgradeOffer).toBeUndefined();
-        expect(world.getWaveProgress()?.cleared).toBe(true);
+        expect(world.interactionState.kind).toBe("IDLE");
+        expect(world.phaseLifecycle?.kind).toBe("READY");
     });
 });

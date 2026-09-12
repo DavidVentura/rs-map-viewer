@@ -13,6 +13,7 @@ import {
     aimedCombatant,
     liveAbilityTarget,
 } from "./Ability";
+import { AnimationPlayback } from "./Animation";
 import { CombatEvent, CombatEventKind } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
@@ -35,6 +36,18 @@ import {
     pendingGroundItemPaths,
     rollDropPath,
 } from "./GroundItem";
+import {
+    IDLE_INTERACTION,
+    Interaction,
+    InteractionId,
+    InteractionState,
+    WorldAction,
+    beginExecution,
+    beginInteraction,
+    cancelInteraction,
+    completeInteraction,
+} from "./Interaction";
+import { PhaseLifecycle, currentPhase, initialPhaseLifecycle, transitionPhase } from "./Phase";
 import { Player, PlayerInput, StanceSeqIdsByStance } from "./Player";
 import {
     Projectile,
@@ -53,7 +66,6 @@ import {
     initialWaveDirectorState,
     pickFarthestSpawnPoint,
     stepWaveDirector,
-    totalGroupCount,
 } from "./WaveDirector";
 import { resolvePlayerLoadouts } from "./abilities";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
@@ -64,7 +76,6 @@ import {
     rotationToDirection,
 } from "./projectileMath";
 import { resolveSpawn } from "./spawn";
-import { UPGRADE_POOL, Upgrade, drawUpgradeOffer } from "./upgrades";
 
 export type AbilitySlotInput = {
     readonly held: boolean;
@@ -80,20 +91,21 @@ export type PickupTarget = {
     readonly groundItemId: number;
 };
 
+export type InteractionIntent =
+    | { readonly kind: "START"; readonly interactionId: InteractionId }
+    | { readonly kind: "CANCEL" };
+
 export type SimInput = {
     movement: PlayerInput;
     combat: CombatInput;
     styleSwitch?: WeaponStyle;
-    // Index into the pending upgrade offer; only consulted while one is pending.
-    chooseUpgrade?: number;
     // Set while the player has an active pickup intent (see the renderer's click handling); the
     // world walks the player to the item using the same walk-to-target movement as the melee
     // chase, and equips it once in range. Cleared by the renderer, not the world, whenever the
     // player instead holds an attack on an enemy or plain ground movement.
     pickupTarget?: PickupTarget;
+    interaction?: InteractionIntent;
 };
-
-const UPGRADE_OFFER_SIZE = 3;
 
 export type ScheduledVisualEffect = {
     readonly hitEffect: HitEffect;
@@ -131,12 +143,13 @@ export class GameWorld {
     private nextGroundItemId = 1;
 
     private encounter?: Encounter;
+    phaseLifecycle?: PhaseLifecycle;
+    interactionState: InteractionState = IDLE_INTERACTION;
     private waveDirectorState: WaveDirectorState = initialWaveDirectorState(0);
     private enemyWaveIndex = new Map<number, number>();
     private killsByWave: number[] = [];
-    private waveClearedNotified: boolean[] = [];
     private triggeredBossPhases = new Map<number, Set<number>>();
-    pendingUpgradeOffer?: readonly Upgrade[];
+    activatedPhaseRewards?: WorldAction;
     godMode = false;
 
     constructor(
@@ -184,10 +197,14 @@ export class GameWorld {
         this.groundItems = [];
         this.enemyWaveIndex.clear();
         this.triggeredBossPhases.clear();
-        this.killsByWave = encounter.waves.map(() => 0);
-        this.waveClearedNotified = encounter.waves.map(() => false);
-        this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
-        this.pendingUpgradeOffer = undefined;
+        this.phaseLifecycle =
+            encounter.spawnMode === EncounterSpawnMode.WAVES
+                ? initialPhaseLifecycle(encounter.phases)
+                : undefined;
+        this.killsByWave = [];
+        this.waveDirectorState = initialWaveDirectorState(0);
+        this.interactionState = IDLE_INTERACTION;
+        this.activatedPhaseRewards = undefined;
         if (encounter.spawnMode === EncounterSpawnMode.STATIC_RESPAWN) {
             this.spawnStaticEncounterEnemies(encounter);
         }
@@ -198,26 +215,51 @@ export class GameWorld {
         this.enemies = [];
         this.groundItems = [];
         this.encounter = undefined;
+        this.phaseLifecycle = undefined;
+        this.interactionState = IDLE_INTERACTION;
+        this.activatedPhaseRewards = undefined;
         this.enemyWaveIndex.clear();
         this.triggeredBossPhases.clear();
         this.killsByWave = [];
-        this.waveClearedNotified = [];
         this.waveDirectorState = initialWaveDirectorState(0);
-        this.pendingUpgradeOffer = undefined;
     }
 
     getWaveProgress():
         | { index: number; total: number; cleared: boolean; awaitingUpgrade: boolean }
         | undefined {
-        if (!this.encounter || this.encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+        if (
+            !this.encounter ||
+            this.encounter.spawnMode !== EncounterSpawnMode.WAVES ||
+            !this.phaseLifecycle
+        ) {
             return undefined;
         }
+        const phase = currentPhase(this.phaseLifecycle);
         return {
-            index: Math.min(this.waveDirectorState.nextWaveIndex, this.encounter.waves.length),
-            total: this.encounter.waves.length,
+            index: Math.min(this.waveDirectorState.nextWaveIndex, phase.waves.length),
+            total: phase.waves.length,
             cleared: this.waveDirectorState.cleared,
-            awaitingUpgrade: this.pendingUpgradeOffer !== undefined,
+            awaitingUpgrade: false,
         };
+    }
+
+    get activeInteractions(): readonly Interaction[] {
+        const encounter = this.encounter;
+        const lifecycle = this.phaseLifecycle;
+        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES || !lifecycle) {
+            return [];
+        }
+        const phase = currentPhase(lifecycle);
+        return encounter.interactions.filter((interaction) => {
+            if (interaction.action.phaseId !== phase.id) {
+                return false;
+            }
+            return (
+                (interaction.action.kind === "START_PHASE" && lifecycle.kind === "READY") ||
+                (interaction.action.kind === "ACTIVATE_PHASE_REWARDS" &&
+                    lifecycle.kind === "REWARDS")
+            );
+        });
     }
 
     private spawnStaticEncounterEnemies(encounter: Encounter): void {
@@ -280,11 +322,6 @@ export class GameWorld {
     step(input: SimInput, dtSeconds: number): void {
         this.timeSeconds += dtSeconds;
 
-        if (this.pendingUpgradeOffer) {
-            this.applyUpgradeChoice(input.chooseUpgrade);
-            return;
-        }
-
         if (this.player) {
             this.updatePlayer(this.player, input, dtSeconds);
         }
@@ -340,6 +377,12 @@ export class GameWorld {
             return;
         }
 
+        this.cancelInteractionForPlayerAction(input);
+        this.processInteractionIntent(player, input.interaction);
+        if (this.updateInteraction(player, input.movement.running, dtSeconds)) {
+            return;
+        }
+
         if (input.styleSwitch !== undefined) {
             player.requestStyleSwitch(input.styleSwitch);
         }
@@ -355,6 +398,117 @@ export class GameWorld {
         );
         this.resolveReadyCast(player);
         this.resolvePickup(player, input);
+    }
+
+    private cancelInteractionForPlayerAction(input: SimInput): void {
+        if (this.interactionState.kind === "IDLE" || input.interaction?.kind === "START") {
+            return;
+        }
+        const moved = input.movement.x !== 0 || input.movement.y !== 0;
+        const attacked =
+            input.combat.basicAttack.held || input.combat.skills.some((skill) => skill.held);
+        if (!moved && !attacked && input.styleSwitch === undefined && !input.pickupTarget) {
+            return;
+        }
+        this.interactionState = cancelInteraction(this.interactionState);
+    }
+
+    private processInteractionIntent(player: Player, intent: InteractionIntent | undefined): void {
+        if (!intent) {
+            return;
+        }
+        if (intent.kind === "CANCEL") {
+            if (this.interactionState.kind !== "IDLE") {
+                this.interactionState = cancelInteraction(this.interactionState);
+            }
+            return;
+        }
+        if (this.interactionState.kind !== "IDLE") {
+            return;
+        }
+        const interaction = this.activeInteractions.find(
+            (candidate) => candidate.id === intent.interactionId,
+        );
+        if (!interaction) {
+            return;
+        }
+        this.interactionState = beginInteraction(this.interactionState, interaction, {
+            x: player.x,
+            y: player.y,
+            level: player.level,
+        });
+    }
+
+    private updateInteraction(player: Player, running: boolean, dtSeconds: number): boolean {
+        const state = this.interactionState;
+        if (state.kind === "IDLE") {
+            return false;
+        }
+        if (state.kind === "EXECUTING") {
+            player.x = state.pose.position.x;
+            player.y = state.pose.position.y;
+            player.rotation = this.interactionFacingRotation(state.pose.facingRadians);
+            if (this.timeSeconds >= state.completesAtSeconds) {
+                const completed = completeInteraction(state, this.timeSeconds);
+                this.interactionState = completed.state;
+                this.dispatchWorldAction(completed.action);
+                return true;
+            }
+            player.animation.advance(
+                dtSeconds,
+                this.seqTypeLoader,
+                this.seqFrameLoader,
+                AnimationPlayback.ONCE,
+            );
+            return true;
+        }
+
+        const deltaX = state.pose.position.x - player.x;
+        const deltaY = state.pose.position.y - player.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const speed =
+            (running ? Player.RUN_SPEED : Player.WALK_SPEED) *
+            player.getModifiers().moveSpeedMultiplier;
+        if (distance <= speed * dtSeconds) {
+            player.x = state.pose.position.x;
+            player.y = state.pose.position.y;
+            player.rotation = this.interactionFacingRotation(state.pose.facingRadians);
+            this.interactionState = beginExecution(state, state.pose.position, this.timeSeconds);
+            player.animation.restart(state.interaction.animationSeqId);
+            return true;
+        }
+        player.update(
+            { x: deltaX / distance, y: deltaY / distance, running },
+            dtSeconds,
+            this.timeSeconds,
+            this.seqTypeLoader,
+            this.seqFrameLoader,
+            this.terrain,
+        );
+        return true;
+    }
+
+    private interactionFacingRotation(facingRadians: number): number {
+        return Math.round((facingRadians / (Math.PI * 2)) * 2048) & 2047;
+    }
+
+    private dispatchWorldAction(action: WorldAction): void {
+        const lifecycle = this.phaseLifecycle;
+        if (!lifecycle || currentPhase(lifecycle).id !== action.phaseId) {
+            throw new Error(`Interaction action ${action.kind} does not target the current phase`);
+        }
+        switch (action.kind) {
+            case "START_PHASE":
+                this.phaseLifecycle = transitionPhase(lifecycle, { kind: "START_PHASE" });
+                this.startPhaseWaves();
+                return;
+            case "ACTIVATE_PHASE_REWARDS":
+                if (lifecycle.kind !== "REWARDS") {
+                    throw new Error("Cannot activate rewards outside the rewards lifecycle state");
+                }
+                this.activatedPhaseRewards = action;
+                return;
+        }
     }
 
     findGroundItem(id: number): GroundItem | undefined {
@@ -523,16 +677,37 @@ export class GameWorld {
         return counts;
     }
 
+    private startPhaseWaves(): void {
+        const lifecycle = this.phaseLifecycle;
+        if (!lifecycle || lifecycle.kind !== "ACTIVE") {
+            throw new Error("Cannot start wave scheduling without an active phase");
+        }
+        const phase = currentPhase(lifecycle);
+        this.enemies = this.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD);
+        this.enemyWaveIndex.clear();
+        this.triggeredBossPhases.clear();
+        this.killsByWave = phase.waves.map(() => 0);
+        this.waveDirectorState = initialWaveDirectorState(phase.waves.length);
+    }
+
     private advanceWaveDirector(): void {
         const encounter = this.encounter;
-        if (!encounter || encounter.spawnMode !== EncounterSpawnMode.WAVES || !this.player) {
+        const lifecycle = this.phaseLifecycle;
+        if (
+            !encounter ||
+            encounter.spawnMode !== EncounterSpawnMode.WAVES ||
+            !lifecycle ||
+            lifecycle.kind !== "ACTIVE" ||
+            !this.player
+        ) {
             return;
         }
-        const aliveByWave = this.aliveCountsByWave(encounter.waves.length);
+        const phase = currentPhase(lifecycle);
+        const aliveByWave = this.aliveCountsByWave(phase.waves.length);
         const wasCleared = this.waveDirectorState.cleared;
         const result = stepWaveDirector(
             this.waveDirectorState,
-            encounter.waves,
+            phase.waves,
             this.timeSeconds,
             aliveByWave,
             this.killsByWave,
@@ -542,49 +717,11 @@ export class GameWorld {
             this.spawnWaveEnemy(encounter, spawn);
         }
         if (!wasCleared && result.nextState.cleared) {
-            this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
-            return;
-        }
-        this.maybeOfferUpgrade(encounter, aliveByWave);
-    }
-
-    // A non-final wave that has fully spawned and died pauses the sim and offers an upgrade; the
-    // final wave's clear is handled above by ENCOUNTER_CLEARED instead, with no offer.
-    private maybeOfferUpgrade(encounter: Encounter, aliveByWave: readonly number[]): void {
-        if (this.pendingUpgradeOffer) {
-            return;
-        }
-        for (let waveIndex = 0; waveIndex < encounter.waves.length - 1; waveIndex++) {
-            if (this.waveClearedNotified[waveIndex]) {
-                continue;
+            this.phaseLifecycle = transitionPhase(lifecycle, { kind: "PHASE_CLEARED" });
+            if (this.phaseLifecycle.kind === "COMPLETE") {
+                this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
             }
-            const spawnedFully =
-                (aliveByWave[waveIndex] ?? 0) + (this.killsByWave[waveIndex] ?? 0) >=
-                totalGroupCount(encounter.waves[waveIndex]);
-            if (!spawnedFully || (aliveByWave[waveIndex] ?? 0) !== 0) {
-                continue;
-            }
-            this.waveClearedNotified[waveIndex] = true;
-            this.pendingUpgradeOffer = drawUpgradeOffer(
-                UPGRADE_POOL,
-                UPGRADE_OFFER_SIZE,
-                this.random,
-            );
-            return;
         }
-    }
-
-    private applyUpgradeChoice(chooseUpgrade: number | undefined): void {
-        const offer = this.pendingUpgradeOffer;
-        if (!offer || chooseUpgrade === undefined || !this.player) {
-            return;
-        }
-        const upgrade = offer[chooseUpgrade];
-        if (!upgrade) {
-            return;
-        }
-        this.player.applyUpgrade(upgrade);
-        this.pendingUpgradeOffer = undefined;
     }
 
     private spawnWaveEnemy(encounter: Encounter, spawn: WaveSpawn): void {
@@ -607,7 +744,6 @@ export class GameWorld {
     }
 
     private resetEncounter(): void {
-        this.pendingUpgradeOffer = undefined;
         this.player?.resetProgression();
         this.groundItems = [];
 
@@ -624,9 +760,11 @@ export class GameWorld {
         this.enemies = [];
         this.enemyWaveIndex.clear();
         this.triggeredBossPhases.clear();
-        this.killsByWave = encounter.waves.map(() => 0);
-        this.waveClearedNotified = encounter.waves.map(() => false);
-        this.waveDirectorState = initialWaveDirectorState(encounter.waves.length);
+        this.phaseLifecycle = initialPhaseLifecycle(encounter.phases);
+        this.interactionState = IDLE_INTERACTION;
+        this.activatedPhaseRewards = undefined;
+        this.killsByWave = [];
+        this.waveDirectorState = initialWaveDirectorState(0);
     }
 
     private updateProjectiles(dtSeconds: number): void {

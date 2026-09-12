@@ -24,6 +24,14 @@ import {
     ScheduledVisualEffect,
     SimInput,
 } from "./GameWorld";
+import {
+    createAuthoredLocationTarget,
+    createInteraction,
+    createInteractionId,
+    createInteractionPose,
+    createWorldPosition,
+} from "./Interaction";
+import { createPhase, createPhaseId } from "./Phase";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -166,10 +174,8 @@ function idleInput(): SimInput {
     return { movement: { x: 0, y: 0, running: false }, combat: idleCombat() };
 }
 
-// Auto-picks the first upgrade offer whenever one is pending (a no-op otherwise), so a wave-clear
-// upgrade pause between waves doesn't stall a test that isn't exercising the upgrade flow itself.
 function autoUpgradeInput(): SimInput {
-    return { ...idleInput(), chooseUpgrade: 0 };
+    return idleInput();
 }
 
 describe("GameWorld ability wiring", () => {
@@ -868,6 +874,33 @@ describe("Faction filtering through one resolver", () => {
 });
 
 function bossTestEncounter(): Encounter {
+    const waves = [
+        {
+            groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
+            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+        },
+        {
+            groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
+            startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
+            boss: true,
+        },
+    ];
+    const phase = createPhase(
+        createPhaseId("boss"),
+        "Boss",
+        waves,
+        { kind: "ALL_WAVES_CLEARED" },
+        [],
+    );
+    const start = createInteraction(
+        createInteractionId("start_boss"),
+        createAuthoredLocationTarget("Start boss", [
+            createInteractionPose(createWorldPosition(0, 0, 0), 0),
+        ]),
+        { kind: "START_PHASE", phaseId: phase.id },
+        1,
+        0.01,
+    );
     return {
         id: EncounterId.QUICK_CAVE,
         mapSquares: [],
@@ -878,28 +911,29 @@ function bossTestEncounter(): Encounter {
         ],
         enemyTypeIds: [EnemyTypeId.TZ_KIH, EnemyTypeId.TZTOK_JAD, EnemyTypeId.YT_HURKOT],
         spawnMode: EncounterSpawnMode.WAVES,
-        waves: [
-            {
-                groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 1 }],
-                startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
-            },
-            {
-                groups: [{ enemyTypeId: EnemyTypeId.TZTOK_JAD, count: 1 }],
-                startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: Infinity },
-                boss: true,
-            },
-        ],
+        waves,
+        phases: [phase],
+        interactions: [start],
         ambientNpcs: false,
         musicFile: "audio/test.opus",
     };
+}
+
+function startBossPhase(world: GameWorld): void {
+    const interaction = world.activeInteractions[0];
+    world.advance(1 / 120, {
+        ...idleInput(),
+        interaction: { kind: "START", interactionId: interaction.id },
+    });
+    advanceSeconds(world, idleInput(), 0.05);
 }
 
 describe("TzTok-Jad boss wave (integration)", () => {
     it("only spawns Jad once the previous wave is fully dead, then clears the encounter once Jad dies", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        startBossPhase(world);
 
-        world.advance(1 / 120, autoUpgradeInput());
         expect(world.enemies.length).toBe(1);
         expect(world.enemies[0].type.id).toBe(EnemyTypeId.TZ_KIH);
         world.drainEvents();
@@ -927,8 +961,8 @@ describe("TzTok-Jad boss wave (integration)", () => {
     it("spawns two Yt-HurKot healers and emits BOSS_PHASE once, when Jad's health first crosses 50%", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.startEncounter(bossTestEncounter(), 0, 0, 0, STYLE_SEQ_IDS);
+        startBossPhase(world);
 
-        world.advance(1 / 120, autoUpgradeInput());
         world.enemies[0].health = 0;
         advanceSeconds(world, autoUpgradeInput(), 0.1);
         world.drainEvents();

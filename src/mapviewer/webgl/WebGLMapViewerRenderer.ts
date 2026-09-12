@@ -36,6 +36,7 @@ import { EnemyBehaviour } from "../game/EnemyType";
 import { EQUIPMENT_PATH_LABELS, equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import { AbilitySlotInput, CombatInput, GameWorld, PickupTarget } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
+import { InteractionId } from "../game/Interaction";
 import { Player, PlayerInput } from "../game/Player";
 import { Projectile } from "../game/Projectile";
 import { Terrain } from "../game/Terrain";
@@ -52,7 +53,6 @@ import {
     PickupFlashEvent,
     SplatEvent,
     SplatKind,
-    UpgradeCardHudInfo,
     WaveStatus,
 } from "../hud/HudFrame";
 import { HudRegionKind, computeHudLayout, hitTestHud } from "../hud/hudDraw";
@@ -77,6 +77,7 @@ import {
 } from "./actor/ActorRenderData";
 import { WebGLActorBuffer } from "./actor/WebGLActorBuffer";
 import { screenToGroundPoint, worldToScreen } from "./groundPoint";
+import { InteractionScreenCandidate, pickInteractionNear } from "./interactionPicking";
 import { ActorBufferData } from "./loader/ActorBufferData";
 import { ActorLoaderInput } from "./loader/ActorLoaderInput";
 import { ActorRenderDataLoader } from "./loader/ActorRenderDataLoader";
@@ -271,6 +272,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // Set by a click on a ground item's label/mesh (see buildPickupInput); cleared by a later click
     // elsewhere, by the item being picked up or expiring, or by resolving to nothing on load.
     private pickupTargetItemId?: number;
+    private selectedInteractionId?: InteractionId;
 
     npcRenderCount: number = 0;
     npcRenderData: Uint32Array = new Uint32Array(16 * 4 * NPC_INSTANCE_TEXELS);
@@ -1363,8 +1365,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             movement: this.buildMovementInput(),
             combat: this.buildCombatInput(),
             styleSwitch: this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput(),
-            chooseUpgrade: this.buildUpgradeChoiceInput(),
             pickupTarget: this.buildPickupInput(),
+            interaction: this.buildInteractionInput(),
         });
         this.advancePreviewGfx(deltaTime / 1000);
         this.updateRoofHiding();
@@ -1532,7 +1534,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
-            frame.upgradeOffer?.cards.length ?? 0,
         );
         return hitTestHud(layout, inputManager.mouseX, inputManager.mouseY) !== undefined;
     }
@@ -1547,35 +1548,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             frame.screenSize.width,
             frame.screenSize.height,
             frame.abilities.length,
-            frame.upgradeOffer?.cards.length ?? 0,
         );
         const region = hitTestHud(layout, inputManager.pressEventX, inputManager.pressEventY);
         return region?.kind === HudRegionKind.STYLE ? region.style : undefined;
-    }
-
-    private buildUpgradeChoiceInput(): number | undefined {
-        const frame = this.hudFrame;
-        const cardCount = frame?.upgradeOffer?.cards.length ?? 0;
-        if (!frame || cardCount === 0) {
-            return undefined;
-        }
-        const inputManager = this.mapViewer.inputManager;
-        for (let i = 0; i < cardCount; i++) {
-            if (inputManager.isKeyDownEvent(`Digit${i + 1}`)) {
-                return i;
-            }
-        }
-        if (!inputManager.isPressEvent()) {
-            return undefined;
-        }
-        const layout = computeHudLayout(
-            frame.screenSize.width,
-            frame.screenSize.height,
-            frame.abilities.length,
-            cardCount,
-        );
-        const region = hitTestHud(layout, inputManager.pressEventX, inputManager.pressEventY);
-        return region?.kind === HudRegionKind.UPGRADE_CARD ? region.index : undefined;
     }
 
     private buildMovementInput(): PlayerInput {
@@ -1589,6 +1564,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         if (
             !player ||
+            this.selectedInteractionId !== undefined ||
             this.isPointerOverHud() ||
             !inputManager.isDragging() ||
             this.getHoveredEnemy()
@@ -1627,7 +1603,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private buildCombatInput(): CombatInput {
         const player = this.mapViewer.world.player;
-        if (!player || this.hudFrame?.upgradeOffer) {
+        if (!player) {
             return { basicAttack: { held: false }, skills: [] };
         }
 
@@ -1672,6 +1648,61 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 );
             }),
         };
+    }
+
+    private buildInteractionCandidates(): InteractionScreenCandidate[] {
+        const candidates: InteractionScreenCandidate[] = [];
+        for (const interaction of this.mapViewer.world.activeInteractions) {
+            const position = interaction.target.poses[0].position;
+            const groundHeight = this.terrain.getHeight(position.level, position.x, position.y);
+            const screen = worldToScreen(
+                this.mapViewer.camera.viewProjMatrix,
+                position.x,
+                position.y,
+                groundHeight,
+                this.canvas.clientWidth,
+                this.canvas.clientHeight,
+            );
+            if (screen) {
+                candidates.push({ interactionId: interaction.id, x: screen.x, y: screen.y });
+            }
+        }
+        return candidates;
+    }
+
+    private hoveredInteractionId(): InteractionId | undefined {
+        const input = this.mapViewer.inputManager;
+        if (input.mouseX === -1 || input.mouseY === -1 || this.isPointerOverHud()) {
+            return undefined;
+        }
+        return pickInteractionNear(
+            { x: input.mouseX, y: input.mouseY },
+            this.buildInteractionCandidates(),
+            24,
+        );
+    }
+
+    private buildInteractionInput() {
+        const input = this.mapViewer.inputManager;
+        const activeIds = new Set(this.mapViewer.world.activeInteractions.map(({ id }) => id));
+        if (this.selectedInteractionId && !activeIds.has(this.selectedInteractionId)) {
+            this.selectedInteractionId = undefined;
+        }
+        if (!input.isPressEvent()) {
+            return undefined;
+        }
+        const hovered = this.hoveredInteractionId();
+        if (hovered) {
+            this.selectedInteractionId = hovered;
+            this.pickupTargetItemId = undefined;
+            return { kind: "START" as const, interactionId: hovered };
+        }
+        if (this.mapViewer.world.interactionState.kind !== "IDLE") {
+            this.selectedInteractionId = undefined;
+            return { kind: "CANCEL" as const };
+        }
+        this.selectedInteractionId = undefined;
+        return undefined;
     }
 
     private screenToGround(
@@ -1920,6 +1951,25 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
 
         const waveProgress = world.getWaveProgress();
+        const interactionCandidates = this.buildInteractionCandidates();
+        const hoveredInteractionId = this.hoveredInteractionId();
+        const interactions = world.activeInteractions.flatMap((interaction) => {
+            const candidate = interactionCandidates.find(
+                ({ interactionId }) => interactionId === interaction.id,
+            );
+            return candidate
+                ? [
+                      {
+                          interactionId: interaction.id,
+                          label: interaction.target.label,
+                          screenX: candidate.x,
+                          screenY: candidate.y,
+                          hovered: hoveredInteractionId === interaction.id,
+                          selected: this.selectedInteractionId === interaction.id,
+                      },
+                  ]
+                : [];
+        });
 
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
@@ -1958,6 +2008,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             godMode: world.godMode,
             splatEvents,
             groundItems,
+            interactions,
+            interactionActionText: hoveredInteractionId
+                ? `Interact: ${world.activeInteractions.find(
+                      ({ id }) => id === hoveredInteractionId,
+                  )?.target.label}`
+                : undefined,
             pickupFlashEvents,
             wave: waveProgress && {
                 index: waveProgress.index,
@@ -1970,15 +2026,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     ? WaveStatus.AWAITING_UPGRADE
                     : WaveStatus.ACTIVE,
                 modifiersSummary: player && summarizeModifiers(player.getModifiers()),
-            },
-            upgradeOffer: world.pendingUpgradeOffer && {
-                cards: world.pendingUpgradeOffer.map(
-                    (upgrade, index): UpgradeCardHudInfo => ({
-                        name: upgrade.name,
-                        description: upgrade.description,
-                        keyLabel: `${index + 1}`,
-                    }),
-                ),
             },
             previewSeqId: this.mapViewer.animPreview ? world.enemies[0]?.previewSeqId : undefined,
             boss,

@@ -10,12 +10,13 @@ import {
     drawGroundItemLabel,
     drawHealSplat,
     drawHealthGlobe,
+    drawInteractionActionText,
+    drawInteractionMarker,
     drawManaGlobe,
     drawPickupFlash,
     drawPreviewSeqLabel,
     drawStyleRow,
     drawTargetPlate,
-    drawUpgradeOverlay,
     drawWaveCounter,
 } from "./hudDraw";
 
@@ -42,13 +43,14 @@ export class Hud {
         ctx.clearRect(0, 0, width, height);
 
         this.drawGroundItemLabels(frame);
+        for (const interaction of frame.interactions) {
+            drawInteractionMarker(ctx, interaction);
+        }
+        if (frame.interactionActionText) {
+            drawInteractionActionText(ctx, frame.interactionActionText);
+        }
 
-        const layout = computeHudLayout(
-            width,
-            height,
-            frame.abilities.length,
-            frame.upgradeOffer?.cards.length ?? 0,
-        );
+        const layout = computeHudLayout(width, height, frame.abilities.length);
         drawBottomPanel(ctx, layout);
         drawAbilityBar(ctx, layout, frame.abilities);
         if (frame.activeStyle !== undefined) {
@@ -72,9 +74,6 @@ export class Hud {
         }
         this.drawSplats(frame);
         this.drawPickupFlashes(width);
-        if (frame.upgradeOffer) {
-            drawUpgradeOverlay(ctx, width, height, layout, frame.upgradeOffer.cards);
-        }
         if (frame.previewSeqId !== undefined) {
             drawPreviewSeqLabel(ctx, width, frame.previewSeqId);
         }

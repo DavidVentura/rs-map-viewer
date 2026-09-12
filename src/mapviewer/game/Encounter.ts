@@ -1,5 +1,17 @@
 import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 import { EnemyTypeId } from "./EnemyType";
+import {
+    Interaction,
+    InteractionPose,
+    createAuthoredLocationTarget,
+    createInteraction,
+    createInteractionId,
+    createInteractionPose,
+    createWorldPosition,
+} from "./Interaction";
+import { Phase, createPhase, createPhaseId } from "./Phase";
+import { createRewardId, createUpgradeChoiceReward } from "./Reward";
+import { UpgradeId } from "./upgrades";
 
 export type { MapSquareCoord };
 
@@ -63,17 +75,132 @@ export enum EncounterSpawnMode {
     PREVIEW = "preview",
 }
 
-export type Encounter = {
+type EncounterCommon = {
     readonly id: EncounterId;
     readonly mapSquares: readonly MapSquareCoord[];
     readonly playerSpawn: PlayerSpawn;
     readonly enemySpawns: readonly EnemySpawnPoint[];
     readonly enemyTypeIds: readonly EnemyTypeId[];
-    readonly spawnMode: EncounterSpawnMode;
     readonly waves: readonly Wave[];
     readonly ambientNpcs: boolean;
     readonly musicFile: string;
 };
+
+export type WaveEncounter = EncounterCommon & {
+    readonly spawnMode: EncounterSpawnMode.WAVES;
+    readonly phases: readonly [Phase, ...Phase[]];
+    readonly interactions: readonly Interaction[];
+};
+
+export type StaticRespawnEncounter = EncounterCommon & {
+    readonly spawnMode: EncounterSpawnMode.STATIC_RESPAWN;
+    readonly phases: readonly [];
+    readonly interactions: readonly [];
+};
+
+export type PreviewEncounter = EncounterCommon & {
+    readonly spawnMode: EncounterSpawnMode.PREVIEW;
+    readonly phases: readonly [];
+    readonly interactions: readonly [];
+};
+
+export type Encounter = WaveEncounter | StaticRespawnEncounter | PreviewEncounter;
+
+function assertUnique(values: readonly string[], description: string): void {
+    if (new Set(values).size !== values.length) {
+        throw new RangeError(`An encounter cannot contain duplicate ${description}`);
+    }
+}
+
+function poseKey(pose: InteractionPose): string {
+    return `${pose.position.x},${pose.position.y},${pose.position.level}`;
+}
+
+function validatePhaseInteractions(encounter: WaveEncounter): void {
+    const phaseIds = new Set(encounter.phases.map((phase) => phase.id));
+    const actionCounts = new Map<string, { start: number; rewards: number }>();
+    const interactionPositions: string[] = [];
+
+    for (const phase of encounter.phases) {
+        actionCounts.set(phase.id, { start: 0, rewards: 0 });
+    }
+    for (const interaction of encounter.interactions) {
+        for (const pose of interaction.target.poses) {
+            interactionPositions.push(poseKey(pose));
+        }
+        if (!phaseIds.has(interaction.action.phaseId)) {
+            throw new RangeError(
+                `Interaction ${interaction.id} references an unknown phase ${interaction.action.phaseId}`,
+            );
+        }
+        const counts = actionCounts.get(interaction.action.phaseId);
+        if (!counts) {
+            throw new Error(`Missing action counts for phase ${interaction.action.phaseId}`);
+        }
+        if (interaction.action.kind === "START_PHASE") {
+            counts.start++;
+        } else {
+            counts.rewards++;
+        }
+    }
+    assertUnique(interactionPositions, "interaction poses");
+
+    for (const phase of encounter.phases) {
+        const counts = actionCounts.get(phase.id);
+        if (!counts) {
+            throw new Error(`Missing action counts for phase ${phase.id}`);
+        }
+        if (counts.start !== 1) {
+            throw new RangeError(`Phase ${phase.id} requires exactly one start interaction`);
+        }
+        const expectedRewardInteractions = phase.rewards.length === 0 ? 0 : 1;
+        if (counts.rewards !== expectedRewardInteractions) {
+            throw new RangeError(
+                `Phase ${phase.id} requires ${expectedRewardInteractions} reward interaction`,
+            );
+        }
+    }
+}
+
+export function validateEncounter(encounter: Encounter): void {
+    assertUnique(encounter.enemyTypeIds, "enemy type ids");
+    for (const wave of encounter.waves) {
+        for (const group of wave.groups) {
+            if (!encounter.enemyTypeIds.includes(group.enemyTypeId)) {
+                throw new RangeError(`Wave references undeclared enemy type ${group.enemyTypeId}`);
+            }
+        }
+    }
+
+    if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
+        if (encounter.phases.length !== 0 || encounter.interactions.length !== 0) {
+            throw new RangeError("Only wave encounters can declare phases or interactions");
+        }
+        return;
+    }
+
+    assertUnique(
+        encounter.phases.map((phase) => phase.id),
+        "phase ids",
+    );
+    assertUnique(
+        encounter.interactions.map((interaction) => interaction.id),
+        "interaction ids",
+    );
+    assertUnique(
+        encounter.phases.flatMap((phase) => phase.rewards.map((reward) => reward.id)),
+        "reward ids",
+    );
+
+    const phaseWaves = encounter.phases.flatMap((phase) => phase.waves);
+    if (
+        phaseWaves.length !== encounter.waves.length ||
+        phaseWaves.some((wave, index) => wave !== encounter.waves[index])
+    ) {
+        throw new RangeError("Encounter phases must partition its waves in authored order");
+    }
+    validatePhaseInteractions(encounter);
+}
 
 function tileToWorld(tileX: number, tileY: number, tileCenter: boolean = false): [number, number] {
     const offset = tileCenter ? 64 : 0;
@@ -102,7 +229,7 @@ const LUMBRIDGE_MAP_SQUARES: readonly MapSquareCoord[] = [-1, 0, 1].flatMap((dx)
     })),
 );
 
-const LUMBRIDGE: Encounter = {
+const LUMBRIDGE: StaticRespawnEncounter = {
     id: EncounterId.LUMBRIDGE,
     mapSquares: LUMBRIDGE_MAP_SQUARES,
     playerSpawn: { x: lumbridgePlayerX, y: lumbridgePlayerY, level: 0 },
@@ -118,6 +245,8 @@ const LUMBRIDGE: Encounter = {
     spawnMode: EncounterSpawnMode.STATIC_RESPAWN,
     ambientNpcs: true,
     musicFile: "audio/harmony.opus",
+    phases: [],
+    interactions: [],
     waves: [
         {
             groups: [
@@ -162,7 +291,201 @@ const JAD_BOSS_WAVE: Wave = {
     boss: true,
 };
 
-const FIGHT_CAVES: Encounter = {
+const PROVISIONAL_UPGRADE_CHOICES = [
+    UpgradeId.DAMAGE_UP,
+    UpgradeId.SWIFT_STRIKES,
+    UpgradeId.QUICK_HANDS,
+];
+const INTERACTION_ANIMATION_SEQ_ID = 829;
+const INTERACTION_DURATION_SECONDS = 0.6;
+
+type PhaseDraft = {
+    readonly id: string;
+    readonly label: string;
+    readonly waves: readonly Wave[];
+    readonly grantsUpgrade: boolean;
+};
+
+function createEncounterPhases(
+    encounterPrefix: string,
+    drafts: readonly [PhaseDraft, ...PhaseDraft[]],
+): readonly [Phase, ...Phase[]] {
+    const phases = drafts.map((draft) =>
+        createPhase(
+            createPhaseId(`${encounterPrefix}_${draft.id}`),
+            draft.label,
+            draft.waves,
+            { kind: "ALL_WAVES_CLEARED" },
+            draft.grantsUpgrade
+                ? [
+                      createUpgradeChoiceReward(
+                          createRewardId(`${encounterPrefix}_${draft.id}_upgrade`),
+                          PROVISIONAL_UPGRADE_CHOICES,
+                      ),
+                  ]
+                : [],
+        ),
+    );
+    return [phases[0], ...phases.slice(1)];
+}
+
+function interactionPose(
+    playerSpawn: PlayerSpawn,
+    phaseIndex: number,
+    yOffsetTiles: number,
+    facingRadians: number,
+): InteractionPose {
+    return createInteractionPose(
+        createWorldPosition(
+            playerSpawn.x + (phaseIndex + 2) * 128,
+            playerSpawn.y + yOffsetTiles * 128,
+            playerSpawn.level,
+        ),
+        facingRadians,
+    );
+}
+
+function createPhaseInteractions(
+    encounterPrefix: string,
+    phases: readonly [Phase, ...Phase[]],
+    playerSpawn: PlayerSpawn,
+): readonly Interaction[] {
+    const interactions: Interaction[] = [];
+    for (const [phaseIndex, phase] of phases.entries()) {
+        interactions.push(
+            createInteraction(
+                createInteractionId(`${encounterPrefix}_${phase.id}_start`),
+                createAuthoredLocationTarget(`Start ${phase.label}`, [
+                    interactionPose(playerSpawn, phaseIndex, 2, Math.PI),
+                ]),
+                { kind: "START_PHASE", phaseId: phase.id },
+                INTERACTION_ANIMATION_SEQ_ID,
+                INTERACTION_DURATION_SECONDS,
+            ),
+        );
+        if (phase.rewards.length === 0) {
+            continue;
+        }
+        interactions.push(
+            createInteraction(
+                createInteractionId(`${encounterPrefix}_${phase.id}_rewards`),
+                createAuthoredLocationTarget(`Claim ${phase.label} reward`, [
+                    interactionPose(playerSpawn, phaseIndex, -2, 0),
+                ]),
+                { kind: "ACTIVATE_PHASE_REWARDS", phaseId: phase.id },
+                INTERACTION_ANIMATION_SEQ_ID,
+                INTERACTION_DURATION_SECONDS,
+            ),
+        );
+    }
+    return interactions;
+}
+
+const FIGHT_CAVES_WAVES: readonly Wave[] = [
+    {
+        groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 4 }],
+        startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
+    },
+    {
+        groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 6 }],
+        startCondition: FIGHT_CAVES_EARLY_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 8 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_EARLY_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_EARLY_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 18 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+            { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 20 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+            { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+    },
+    {
+        groups: [
+            { enemyTypeId: EnemyTypeId.TZ_KIH, count: 24 },
+            { enemyTypeId: EnemyTypeId.TZ_KEK, count: 4 },
+            { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
+            { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
+            { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
+        ],
+        startCondition: FIGHT_CAVES_LATE_START,
+        modifiers: { healthMultiplier: 1.15 },
+    },
+    JAD_BOSS_WAVE,
+];
+
+const FIGHT_CAVES_PHASES = createEncounterPhases("fight_caves", [
+    {
+        id: "opening",
+        label: "Opening skirmish",
+        waves: FIGHT_CAVES_WAVES.slice(0, 3),
+        grantsUpgrade: true,
+    },
+    {
+        id: "pressure",
+        label: "Rising pressure",
+        waves: FIGHT_CAVES_WAVES.slice(3, 6),
+        grantsUpgrade: true,
+    },
+    {
+        id: "gauntlet",
+        label: "The gauntlet",
+        waves: FIGHT_CAVES_WAVES.slice(6, 9),
+        grantsUpgrade: true,
+    },
+    { id: "finale", label: "TzTok-Jad", waves: FIGHT_CAVES_WAVES.slice(9), grantsUpgrade: false },
+]);
+
+const FIGHT_CAVES: WaveEncounter = {
     id: EncounterId.FIGHT_CAVES,
     mapSquares: [
         { mapX: 36, mapY: 78 },
@@ -195,87 +518,13 @@ const FIGHT_CAVES: Encounter = {
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
     musicFile: "audio/tzhaar.opus",
-    waves: [
-        {
-            groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 4 }],
-            startCondition: { maxPreviousAliveFraction: 1, maxElapsedSeconds: 0 },
-        },
-        {
-            groups: [{ enemyTypeId: EnemyTypeId.TZ_KIH, count: 6 }],
-            startCondition: FIGHT_CAVES_EARLY_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 8 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_EARLY_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_EARLY_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 10 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 14 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 2 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 18 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
-                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 20 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 3 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
-                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-        },
-        {
-            groups: [
-                { enemyTypeId: EnemyTypeId.TZ_KIH, count: 24 },
-                { enemyTypeId: EnemyTypeId.TZ_KEK, count: 4 },
-                { enemyTypeId: EnemyTypeId.TOK_XIL, count: 1 },
-                { enemyTypeId: EnemyTypeId.KET_ZEK, count: 1 },
-                { enemyTypeId: EnemyTypeId.YT_MEJKOT, count: 1 },
-            ],
-            startCondition: FIGHT_CAVES_LATE_START,
-            modifiers: { healthMultiplier: 1.15 },
-        },
-        JAD_BOSS_WAVE,
-    ],
+    waves: FIGHT_CAVES_WAVES,
+    phases: FIGHT_CAVES_PHASES,
+    interactions: createPhaseInteractions("fight_caves", FIGHT_CAVES_PHASES, {
+        x: fightCavesPlayerX,
+        y: fightCavesPlayerY,
+        level: 0,
+    }),
 };
 
 const QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS = [
@@ -289,17 +538,38 @@ const QUICK_CAVE_ENEMY_TYPE_IDS = [
     EnemyTypeId.YT_HURKOT,
 ];
 
-const QUICK_CAVE: Encounter = {
+const QUICK_CAVE_WAVES: readonly Wave[] = [
+    ...QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
+        groups: [{ enemyTypeId, count: 1 }],
+        startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
+    })),
+    JAD_BOSS_WAVE,
+];
+
+const QUICK_CAVE_PHASES = createEncounterPhases("quick_cave", [
+    {
+        id: "ranged",
+        label: "Ranged trial",
+        waves: QUICK_CAVE_WAVES.slice(0, 1),
+        grantsUpgrade: true,
+    },
+    {
+        id: "healing",
+        label: "Healing trial",
+        waves: QUICK_CAVE_WAVES.slice(1, 2),
+        grantsUpgrade: true,
+    },
+    { id: "mage", label: "Mage trial", waves: QUICK_CAVE_WAVES.slice(2, 3), grantsUpgrade: true },
+    { id: "jad", label: "TzTok-Jad", waves: QUICK_CAVE_WAVES.slice(3), grantsUpgrade: false },
+]);
+
+const QUICK_CAVE: WaveEncounter = {
     ...FIGHT_CAVES,
     id: EncounterId.QUICK_CAVE,
     enemyTypeIds: QUICK_CAVE_ENEMY_TYPE_IDS,
-    waves: [
-        ...QUICK_CAVE_REGULAR_ENEMY_TYPE_IDS.map((enemyTypeId) => ({
-            groups: [{ enemyTypeId, count: 1 }],
-            startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 600 },
-        })),
-        JAD_BOSS_WAVE,
-    ],
+    waves: QUICK_CAVE_WAVES,
+    phases: QUICK_CAVE_PHASES,
+    interactions: createPhaseInteractions("quick_cave", QUICK_CAVE_PHASES, FIGHT_CAVES.playerSpawn),
 };
 
 // The ranged, mage and boss roster at once, in a single wave with no gating: a sandbox for tuning
@@ -320,11 +590,17 @@ const SANDBOX_WAVE: Wave = {
     startCondition: { maxPreviousAliveFraction: 0, maxElapsedSeconds: 0 },
 };
 
-const SANDBOX: Encounter = {
+const SANDBOX_PHASES = createEncounterPhases("sandbox", [
+    { id: "assault", label: "Sandbox assault", waves: [SANDBOX_WAVE], grantsUpgrade: false },
+]);
+
+const SANDBOX: WaveEncounter = {
     ...FIGHT_CAVES,
     id: EncounterId.SANDBOX,
     enemyTypeIds: [...SANDBOX_WAVE_ENEMY_TYPE_IDS, EnemyTypeId.YT_HURKOT],
     waves: [SANDBOX_WAVE],
+    phases: SANDBOX_PHASES,
+    interactions: createPhaseInteractions("sandbox", SANDBOX_PHASES, FIGHT_CAVES.playerSpawn),
 };
 
 export const ENCOUNTERS: Readonly<Record<EncounterId, Encounter>> = {
@@ -351,7 +627,7 @@ const PREVIEW_ENEMY_TILE_OFFSET = 3;
 // music) that spawns nothing on its own: the renderer spawns the NPC_SEQS preview's one enemy (or,
 // for SPOT_ANIMS, nothing) directly, using enemySpawns[0] below purely as its fixed spot/to size
 // the actor buffer.
-export function buildPreviewEncounter(base: Encounter): Encounter {
+export function buildPreviewEncounter(base: Encounter): PreviewEncounter {
     const enemySpawn: EnemySpawnPoint = {
         x: base.playerSpawn.x,
         y: base.playerSpawn.y + PREVIEW_ENEMY_TILE_OFFSET * 128,
@@ -364,5 +640,7 @@ export function buildPreviewEncounter(base: Encounter): Encounter {
         enemyTypeIds: [EnemyTypeId.PREVIEW],
         enemySpawns: [enemySpawn],
         waves: [],
+        phases: [],
+        interactions: [],
     };
 }
