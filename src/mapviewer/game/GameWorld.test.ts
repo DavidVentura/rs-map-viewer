@@ -35,6 +35,7 @@ import { createPhase, createPhaseId } from "./Phase";
 import { Player, StanceSeqIdsByStance } from "./Player";
 import { createExperience } from "./Progression";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
+import { recordStationaryRangedHit } from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 import {
@@ -205,6 +206,36 @@ describe("GameWorld ability wiring", () => {
         expect(world.projectiles.length).toBe(2);
     });
 
+    it("fires two tracked arrows after five confirmed stationary ranged hits", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        const player = world.player!;
+        for (let hit = 0; hit < 5; hit++) {
+            player.stanceMechanics = recordStationaryRangedHit(player.stanceMechanics);
+        }
+
+        advanceSeconds(world, holdBasicAttack(point(100000, 0)), impactOf(BOW_SHOT) + 0.05);
+
+        expect(world.projectiles).toHaveLength(2);
+        expect(player.stanceMechanics.rangedConsecutiveHits).toBe(0);
+    });
+
+    it("counts a confirmed ranged hit and clears the sequence on movement", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(100, 0, 0, { ...makeEnemyType(1, 2, 3), maxHealth: 100 });
+        const player = world.player!;
+
+        advanceSeconds(world, holdBasicAttack(at(world.enemies[0])), impactOf(BOW_SHOT) + 0.2);
+        expect(player.stanceMechanics.rangedConsecutiveHits).toBe(1);
+
+        world.advance(1 / 120, {
+            ...idleInput(),
+            movement: { x: 1, y: 0, running: false },
+        });
+        expect(player.stanceMechanics.rangedConsecutiveHits).toBe(0);
+    });
+
     it("shares the ATTACK cooldown group across every style's basic attack", () => {
         for (const attack of [BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH]) {
             expect(attack.requires).toContain(CooldownGroup.ATTACK);
@@ -302,7 +333,7 @@ describe("Melee style", () => {
 
         advanceSeconds(world, holdBasicAttack(at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
 
-        expect(enemy.health).toBeLessThan(enemy.maxHealth);
+        expect(enemy.health).toBe(enemy.maxHealth - minDamage(SCIMITAR_SLASH) * 2);
     });
 
     it("Cleave hits an enemy in front of the player for double the basic slash damage", () => {
@@ -482,6 +513,20 @@ describe("Ranged style", () => {
 });
 
 describe("Magic style", () => {
+    it("refunds magic mana when a distinct enemy is hit", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(100, 0, 0, makeEnemyType(1, 2, 3));
+        const player = world.player!;
+        player.style = WeaponStyle.MAGIC;
+
+        advanceSeconds(world, holdBasicAttack(at(world.enemies[0])), impactOf(MAGIC_BOLT) + 0.01);
+        advanceSeconds(world, idleInput(), 0.2);
+
+        expect(player.mana).toBeGreaterThan(player.maxMana - MAGIC_BOLT.manaCost);
+        expect(player.mana).toBeLessThanOrEqual(player.maxMana);
+    });
+
     it("Ice Barrage damages and freezes enemies within its area", () => {
         const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
         world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
@@ -495,6 +540,21 @@ describe("Magic style", () => {
         expect(enemy.health).toBeLessThan(enemy.maxHealth);
         expect(enemy.isFrozen(world.timeSeconds)).toBe(true);
         expect(world.visualEffects.length).toBe(1);
+    });
+
+    it("refunds mana once per distinct enemy hit by a crowd spell", () => {
+        const world = new GameWorld(new FakeTerrain(), seqTypeLoader, seqFrameLoader, () => 0);
+        world.setGodMode(true);
+        world.spawnPlayer(0, 0, 0, STYLE_SEQ_IDS);
+        world.spawnEnemy(0, 100, 0, makeEnemyType(1, 2, 3));
+        world.spawnEnemy(50, 100, 0, makeEnemyType(1, 2, 3));
+        const player = world.player!;
+        player.style = WeaponStyle.MAGIC;
+        player.mana = 0;
+
+        advanceSeconds(world, holdSkill(0, point(0, 100)), impactOf(ICE_BARRAGE) + 0.05);
+
+        expect(player.mana).toBeGreaterThanOrEqual(8);
     });
 
     it("centers on the ground point when no enemy is targeted", () => {

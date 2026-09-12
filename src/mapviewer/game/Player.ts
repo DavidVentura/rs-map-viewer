@@ -22,6 +22,11 @@ import {
     initialProgression,
     levelAbilityModifiers,
 } from "./Progression";
+import {
+    INITIAL_STANCE_MECHANICS,
+    StanceMechanicsState,
+    applyStanceMechanicUpgrade,
+} from "./StanceMechanics";
 import { Terrain } from "./Terrain";
 import { PlayerLoadout, PlayerLoadoutsByStyle } from "./abilities";
 import { AbilitySlotReadiness, CastCosts, computeSlotReadiness } from "./abilityRules";
@@ -70,6 +75,7 @@ export class Player implements Combatant, ManaPool {
 
     private modifiers: AbilityModifiers = DEFAULT_ABILITY_MODIFIERS;
     progression: ProgressionState = initialProgression();
+    stanceMechanics: StanceMechanicsState = INITIAL_STANCE_MECHANICS;
     equipment: EquipmentState = DEFAULT_EQUIPMENT;
 
     get maxHealth(): number {
@@ -165,8 +171,16 @@ export class Player implements Combatant, ManaPool {
         const previousMaxHealth = this.maxHealth;
         const previousMaxMana = this.maxMana;
         this.modifiers = upgrade.apply(this.modifiers);
+        this.stanceMechanics = applyStanceMechanicUpgrade(this.stanceMechanics, upgrade.id);
         this.health = Math.min(this.maxHealth, this.health + (this.maxHealth - previousMaxHealth));
         this.mana = Math.min(this.maxMana, this.mana + (this.maxMana - previousMaxMana));
+    }
+
+    refundMana(amount: number): void {
+        if (!Number.isFinite(amount) || amount < 0) {
+            throw new RangeError(`Mana refund must be finite and non-negative: ${amount}`);
+        }
+        this.mana = Math.min(this.maxMana, this.mana + amount);
     }
 
     grantExperience(amount: Experience): LevelTransition {
@@ -196,6 +210,7 @@ export class Player implements Combatant, ManaPool {
     resetProgression(): void {
         this.modifiers = DEFAULT_ABILITY_MODIFIERS;
         this.progression = initialProgression();
+        this.stanceMechanics = INITIAL_STANCE_MECHANICS;
         this.equipment = DEFAULT_EQUIPMENT;
     }
 

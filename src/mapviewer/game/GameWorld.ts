@@ -16,7 +16,7 @@ import {
 import { AnimationPlayback } from "./Animation";
 import { CombatEvent, CombatEventKind } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
+import { HitEffect, Payload, PayloadKind, applyPayloads, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterSpawnMode } from "./Encounter";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
@@ -60,6 +60,12 @@ import {
 } from "./Projectile";
 import { Reward } from "./Reward";
 import { SpatialGrid } from "./SpatialGrid";
+import {
+    MAGIC_MANA_REFUND_PER_ENEMY,
+    consumeRangedDoubleShot,
+    recordStationaryRangedHit,
+    resetRangedHits,
+} from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
 import {
@@ -69,7 +75,7 @@ import {
     pickFarthestSpawnPoint,
     stepWaveDirector,
 } from "./WaveDirector";
-import { resolvePlayerLoadouts } from "./abilities";
+import { BOW_SHOT, resolvePlayerLoadouts } from "./abilities";
 import { RandomSource, isWithinMeleeReach } from "./abilityRules";
 import {
     FlightOrigin,
@@ -418,6 +424,9 @@ export class GameWorld {
         }
         this.processCombatInput(player, input.combat, this.timeSeconds);
         const movement = this.resolveMovementInput(player, input);
+        if (movement.x !== 0 || movement.y !== 0) {
+            player.stanceMechanics = resetRangedHits(player.stanceMechanics);
+        }
         player.update(
             movement,
             dtSeconds,
@@ -880,6 +889,15 @@ export class GameWorld {
                     outcome,
                 );
             }
+            if (outcome.kind === "HIT_COMBATANT" && projectile.impact.caster instanceof Player) {
+                if (projectile.impact.playerMechanic === "RANGED_BASIC") {
+                    projectile.impact.caster.stanceMechanics = recordStationaryRangedHit(
+                        projectile.impact.caster.stanceMechanics,
+                    );
+                } else if (projectile.impact.playerMechanic === "MAGIC") {
+                    projectile.impact.caster.refundMana(MAGIC_MANA_REFUND_PER_ENEMY);
+                }
+            }
         }
         this.projectiles = survivingProjectiles;
     }
@@ -945,13 +963,7 @@ export class GameWorld {
     }
 
     private processCombatInput(player: Player, combat: CombatInput, time: number): void {
-        this.tryBeginCast(
-            player,
-            player.basicAttack,
-            combat.basicAttack,
-            player.canUseBasicAttackIgnoringTarget(time),
-            time,
-        );
+        this.tryBeginBasicAttack(player, combat.basicAttack, time);
         const skillCount = Math.min(combat.skills.length, player.skills.length);
         for (let skillSlot = 0; skillSlot < skillCount; skillSlot++) {
             this.tryBeginCast(
@@ -962,6 +974,56 @@ export class GameWorld {
                 time,
             );
         }
+    }
+
+    private tryBeginBasicAttack(
+        player: Player,
+        abilityInput: AbilitySlotInput,
+        time: number,
+    ): void {
+        const basicAttack = player.basicAttack;
+        if (!abilityInput.held || !abilityInput.target) {
+            return;
+        }
+        if (
+            !player.canUseBasicAttackIgnoringTarget(time) ||
+            !this.canUseAbility(player, basicAttack, abilityInput.target)
+        ) {
+            return;
+        }
+        if (player.style === WeaponStyle.MELEE) {
+            const payloads = basicAttack.effect.payloads.reduce<Payload[]>(
+                (result, payload) => [
+                    ...result,
+                    payload,
+                    ...(payload.kind === PayloadKind.DAMAGE ? [payload] : []),
+                ],
+                [],
+            );
+            player.beginCast(
+                { ...basicAttack, effect: { ...basicAttack.effect, payloads } },
+                abilityInput.target,
+                time,
+            );
+            return;
+        }
+        if (
+            player.style === WeaponStyle.RANGED &&
+            basicAttack.effect.delivery.kind === DeliveryKind.PROJECTILE
+        ) {
+            const consumed = consumeRangedDoubleShot(player.stanceMechanics);
+            player.stanceMechanics = consumed.state;
+            const delivery = consumed.firesDouble
+                ? { ...basicAttack.effect.delivery, count: 2 }
+                : basicAttack.effect.delivery;
+            player.beginCast(
+                { ...basicAttack, effect: { ...basicAttack.effect, delivery } },
+                abilityInput.target,
+                time,
+            );
+            return;
+        }
+        player.beginCast(basicAttack, abilityInput.target, time);
     }
 
     private tryBeginCast(
@@ -1002,19 +1064,24 @@ export class GameWorld {
         if (!cast) {
             return;
         }
-        this.resolveEffect(caster, cast.definition.effect, cast.target);
+        this.resolveEffect(caster, cast.definition, cast.target);
     }
 
     // The one resolution path for every cast, player or enemy: the delivery picks who is affected
     // (or spawns projectiles, picked later on arrival), the payloads land on each of them, and the
     // hit graphic is anchored per combatant for combatant deliveries or at the landing point for
     // point deliveries (see AbilityEffect.hitEffect).
-    private resolveEffect(caster: Combatant, effect: AbilityEffect, target: AbilityTarget): void {
+    private resolveEffect(
+        caster: Combatant,
+        ability: ResolvedAbility,
+        target: AbilityTarget,
+    ): void {
+        const effect = ability.effect;
         const aim = liveAbilityTarget(target, caster.level);
         const delivery = effect.delivery;
         switch (delivery.kind) {
             case DeliveryKind.PROJECTILE:
-                this.spawnProjectiles(caster, effect, delivery, aim);
+                this.spawnProjectiles(caster, ability, delivery, aim);
                 return;
             case DeliveryKind.CONE:
                 this.landCone(caster, effect, delivery, aim);
@@ -1030,6 +1097,9 @@ export class GameWorld {
                 );
                 for (const hit of hits) {
                     this.landOnCombatant(hit, effect);
+                }
+                if (caster instanceof Player && caster.style === WeaponStyle.MAGIC) {
+                    caster.refundMana(hits.length * MAGIC_MANA_REFUND_PER_ENEMY);
                 }
                 return;
             }
@@ -1099,16 +1169,23 @@ export class GameWorld {
     // or lands where the aim stands at cast time.
     private spawnProjectiles(
         caster: Combatant,
-        effect: AbilityEffect,
+        ability: ResolvedAbility,
         delivery: ProjectileDelivery,
         aim: AbilityTarget,
     ): void {
+        const effect = ability.effect;
         const spec = delivery.spec;
         const impact: ProjectileImpact = {
             caster,
             affects: effect.affects,
             payloads: effect.payloads,
             hitEffect: effect.hitEffect,
+            playerMechanic:
+                caster instanceof Player && ability.id === BOW_SHOT.id
+                    ? "RANGED_BASIC"
+                    : caster instanceof Player && caster.style === WeaponStyle.MAGIC
+                    ? "MAGIC"
+                    : undefined,
         };
         const aimPoint = abilityTargetPoint(aim);
         if (spec.landing.kind === "FREE_FLIGHT") {
@@ -1137,14 +1214,6 @@ export class GameWorld {
             }
             return;
         }
-        if (delivery.count !== 1) {
-            throw new Error(
-                `A ${spec.landing.kind} projectile cannot be fired as a spread of ${delivery.count}`,
-            );
-        }
-        if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
-            return;
-        }
         const start = this.aimedLaunchPoint(caster, spec.landing, aimPoint);
         if (!start) {
             return;
@@ -1161,7 +1230,12 @@ export class GameWorld {
                 travelSeconds(spec.travelTime, distance),
             );
         }
-        this.projectiles.push(new Projectile(spec, impact, start, target));
+        for (let shot = 0; shot < delivery.count; shot++) {
+            if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+                return;
+            }
+            this.projectiles.push(new Projectile(spec, impact, start, target));
+        }
     }
 
     // Where an aimed shot spawns: above its landing point for a rock dropped from the sky, else a

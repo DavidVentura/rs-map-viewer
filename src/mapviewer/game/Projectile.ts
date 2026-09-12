@@ -262,6 +262,7 @@ export type ProjectileImpact = {
     readonly affects: Affects;
     readonly payloads: readonly Payload[];
     readonly hitEffect?: HitEffect;
+    readonly playerMechanic?: "RANGED_BASIC" | "MAGIC";
 };
 
 export class Projectile {
