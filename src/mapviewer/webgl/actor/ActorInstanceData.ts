@@ -13,11 +13,16 @@ export type ActorInstance = {
     pitch: number;
     matrixOffset: number;
     alphaOffset: number;
+    // Shrinks the posed model toward its feet, e.g. an enemy shrinking away as it dies.
+    scale: number;
 };
 
+// scale travels as 16.16 fixed point.
+const SCALE_ONE = 0x10000;
+
 // The first texel's 4 components (worldX, worldY, groundHeight, packed level/rotation/interactId/
-// interactType) already use all 32 bits of their packed component, so pitch spills into a second
-// texel rather than stealing bits from an already-full field.
+// interactType) already use all 32 bits of their packed component, so pitch, the skinning offsets
+// and scale spill into a second texel rather than stealing bits from an already-full field.
 export const ACTOR_INSTANCE_TEXELS = 2;
 export const ACTOR_INSTANCE_COMPONENTS = ACTOR_INSTANCE_TEXELS * 4;
 
@@ -37,7 +42,7 @@ export function encodeActorInfo(
         (Math.round(instance.pitch) & 0x7ff) >>> 0,
         instance.matrixOffset >>> 0,
         instance.alphaOffset >>> 0,
-        0,
+        Math.round(instance.scale * SCALE_ONE) >>> 0,
     ];
 }
 
@@ -49,6 +54,7 @@ export function decodeActorInfo(
     pitchR: number,
     matrixOffset: number,
     alphaOffset: number,
+    scale: number,
 ): ActorInstance {
     return {
         worldX: r >>> 0,
@@ -61,6 +67,7 @@ export function decodeActorInfo(
         pitch: pitchR & 0x7ff,
         matrixOffset: matrixOffset >>> 0,
         alphaOffset: alphaOffset >>> 0,
+        scale: (scale >>> 0) / SCALE_ONE,
     };
 }
 

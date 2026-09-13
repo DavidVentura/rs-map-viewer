@@ -73,6 +73,7 @@ struct ActorInfo {
     uint pitch;
     uint matrixOffset;
     uint alphaOffset;
+    float scale;
 };
 
 ivec2 getDataTexCoordFromIndex(int index) {
@@ -105,6 +106,7 @@ ActorInfo decodeActorInfo(int index) {
     info.pitch = data2.r & 0x7FFu;
     info.matrixOffset = data2.g;
     info.alphaOffset = data2.b;
+    info.scale = float(data2.a) / 65536.0;
 
     return info;
 }
@@ -143,7 +145,7 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     ActorInfo actorInfo = decodeActorInfo(DRAW_ID);
-    vertex.pos = skinPosition(vertex.pos, actorInfo.matrixOffset);
+    vertex.pos = skinPosition(vertex.pos, actorInfo.matrixOffset) * actorInfo.scale;
     vertex.color.a = skinAlpha(vertex.color.a, actorInfo.alphaOffset);
     v_color = vertex.color;
 

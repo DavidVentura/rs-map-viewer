@@ -353,6 +353,16 @@ export class Enemy implements Combatant, SteeringBody {
         this.animation.advance(deltaTimeSeconds);
     }
 
+    // How large the enemy is drawn: a type that shrinks away on death does so over the time left
+    // until it despawns.
+    renderScale(timeSeconds: number): number {
+        const shrinkSeconds = this.type.deathShrinkSeconds;
+        if (shrinkSeconds === undefined || this.despawnAt === undefined) {
+            return 1;
+        }
+        return Math.min(1, Math.max(0, (this.despawnAt - timeSeconds) / shrinkSeconds));
+    }
+
     // A type without a prayer rotation never prays, so it takes every attack without counting it.
     receiveStyledAttack(style: WeaponStyle): AttackOutcome {
         const rotation = this.type.protectionPrayers;

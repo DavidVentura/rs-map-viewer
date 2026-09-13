@@ -11,7 +11,7 @@ import {
     WeaponStyle,
     resolveAbility,
 } from "./Ability";
-import { Affects, DamageRoll, PayloadKind, damagePayload } from "./Effect";
+import { Affects, DamagePayload, DamageRoll, PayloadKind, damagePayload } from "./Effect";
 import {
     ARROW_SPEC,
     CRYSTAL_ARROW_SPEC,
@@ -591,6 +591,7 @@ function chaffMelee(
     name: string,
     castSeqId: number,
     contactFrame: number,
+    damage: DamagePayload,
 ): AbilityDefinition {
     return {
         id,
@@ -607,13 +608,25 @@ function chaffMelee(
         effect: {
             delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
             affects: Affects.HOSTILE,
-            payloads: [damagePayload(2, 5)],
+            payloads: [damage],
         },
     };
 }
 
-export const GOBLIN_MELEE = chaffMelee("goblin_melee", "Goblin Melee", GOBLIN_MELEE_SEQ_ID, 5);
-export const TZ_KIH_MELEE = chaffMelee("tz_kih_melee", "Tz-Kih Bite", TZ_KIH_MELEE_SEQ_ID, 9);
+export const GOBLIN_MELEE = chaffMelee(
+    "goblin_melee",
+    "Goblin Melee",
+    GOBLIN_MELEE_SEQ_ID,
+    5,
+    damagePayload(2, 5),
+);
+export const TZ_KIH_MELEE = chaffMelee(
+    "tz_kih_melee",
+    "Tz-Kih Bite",
+    TZ_KIH_MELEE_SEQ_ID,
+    9,
+    damagePayload(2, 5),
+);
 // The Energy Siphon npc has no attack of its own, so the skull bites on its idle.
 export const WARDENS_SKULL_BITE_SEQ_ID = 9736;
 export const WARDENS_SKULL_BITE = chaffMelee(
@@ -621,9 +634,16 @@ export const WARDENS_SKULL_BITE = chaffMelee(
     "Skull Bite",
     WARDENS_SKULL_BITE_SEQ_ID,
     1,
+    damagePayload(0, 2),
 );
 // Tz-Kek's mid-swing hold.
-export const TZ_KEK_MELEE = chaffMelee("tz_kek_melee", "Tz-Kek Melee", TZ_KEK_MELEE_SEQ_ID, 5);
+export const TZ_KEK_MELEE = chaffMelee(
+    "tz_kek_melee",
+    "Tz-Kek Melee",
+    TZ_KEK_MELEE_SEQ_ID,
+    5,
+    damagePayload(2, 5),
+);
 
 export const TOK_XIL_RANGED_SHOT_CAST_SEQ_ID = 2633;
 

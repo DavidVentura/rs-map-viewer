@@ -462,6 +462,7 @@ export type StaticEnemyTypeId = Exclude<EnemyTypeId, EnemyTypeId.PREVIEW>;
 export type EnemyTypeAssets = {
     readonly enemyTypeId: StaticEnemyTypeId;
     readonly npcTypeId: number;
+    readonly modelScale: number;
     readonly seqIds: readonly number[];
 };
 
@@ -608,6 +609,7 @@ export function actorAssets(encounter: Encounter, preview?: AnimPreviewParams): 
             return {
                 enemyTypeId,
                 npcTypeId: enemyType.npcTypeId,
+                modelScale: enemyType.modelScale ?? 1,
                 seqIds: [
                     ...new Set([
                         ...enemyTypeSeqIds(enemyType),

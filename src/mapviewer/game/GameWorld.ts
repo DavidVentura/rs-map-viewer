@@ -1,6 +1,6 @@
 import { sequenceTimeToLastFrameSeconds } from "./Animation";
 import { resolveReadyCast } from "./CastResolution";
-import { CombatEvent, CombatEventKind } from "./CombatEvent";
+import { CombatEvent, CombatEventKind, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { HitEffect } from "./Effect";
 import { Encounter, EncounterScriptKind, EncounterSpawnMode, ScriptedEncounter } from "./Encounter";
@@ -371,11 +371,16 @@ export class GameWorld implements WorldContext {
             } else {
                 this.waveEncounter?.recordEnemyDeath(enemy);
                 enemy.despawnAt =
-                    this.timeSeconds +
-                    sequenceTimeToLastFrameSeconds(enemy.type.seqs.death) +
-                    GameWorld.CORPSE_LINGER_SECONDS;
+                    enemy.type.deathShrinkSeconds !== undefined
+                        ? this.timeSeconds + enemy.type.deathShrinkSeconds
+                        : this.timeSeconds +
+                          sequenceTimeToLastFrameSeconds(enemy.type.seqs.death) +
+                          GameWorld.CORPSE_LINGER_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });
+            if (this.player && enemy.type.killHeal !== undefined) {
+                applyHeal(this.player, enemy.type.killHeal, this.events);
+            }
             this.grantPlayerExperience(enemy.type.experienceReward);
             this.maybeDropEquipment(enemy);
             return;

@@ -10,7 +10,7 @@ import {
 } from "../../../rs/model/CharacterLight";
 import { Model } from "../../../rs/model/Model";
 import { ModelLoader } from "../../../rs/model/ModelLoader";
-import { PoseSpace } from "../../../rs/model/animation/FramePalette";
+import { AffineTransform, PoseSpace } from "../../../rs/model/animation/FramePalette";
 import {
     ActorAssets,
     ArrowObjBake,
@@ -277,13 +277,16 @@ function createEnemyTypeAnimationSet(
     if (!rest) {
         throw new Error(`Enemy model is missing for enemy type ${assets.enemyTypeId}`);
     }
-    return {
-        ...skinning.addAnimationSet(
-            rest.model,
-            requireSeqs(skinning, assets.seqIds),
-            rest.poseSpace,
+    const scale = assets.modelScale;
+    const poseSpace = PoseSpace.between(
+        rest.poseSpace.toPose,
+        rest.poseSpace.fromPose.then(
+            AffineTransform.fromRows([scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0]),
         ),
-        modelHeight: idleModelHeight(npcModelLoader, npcType),
+    );
+    return {
+        ...skinning.addAnimationSet(rest.model, requireSeqs(skinning, assets.seqIds), poseSpace),
+        modelHeight: idleModelHeight(npcModelLoader, npcType) * scale,
     };
 }
 

@@ -254,7 +254,7 @@ type ActiveActor =
     | { kind: "collapsedFloorPiece"; piece: WardenP3VoidPiece }
     | { kind: "previewGfx" };
 
-type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset">;
+type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset" | "scale">;
 
 // Whichever of an enemy or an energy siphon sits under the cursor - the only two kinds of thing a
 // basic attack (or, for an enemy, a skill) can target.
@@ -2600,7 +2600,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const icons = this.mapViewer.hudAssets.prayerHeadIcons;
         return this.mapViewer.world.enemies.flatMap((enemy) => {
             const animSet = actorData.enemyTypes[enemy.type.id];
-            if (!animSet || enemy.state === EnemyState.DEAD) {
+            // One that shrinks away on death keeps its emptied bar until it's gone.
+            const lingersAsCorpse =
+                enemy.state === EnemyState.DEAD && enemy.type.deathShrinkSeconds === undefined;
+            if (!animSet || lingersAsCorpse) {
                 return [];
             }
             const frame = prayerHeadIconFrame(enemy.protectionPrayers.active);
@@ -3019,6 +3022,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 ...instance,
                 matrixOffset: frame.matrixOffset,
                 alphaOffset: frame.alphaOffset,
+                scale: actor.kind === "enemy" ? actor.enemy.renderScale(world.timeSeconds) : 1,
             });
             this.actorInstanceCount++;
             this.activeActorMeshes.push(pose.animation.mesh);

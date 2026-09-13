@@ -20,9 +20,12 @@ describe("actor instance encoding", () => {
             pitch: 0,
             matrixOffset: 120,
             alphaOffset: 900,
+            scale: 1,
         };
-        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset, scale] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset, scale)).toEqual(
+            instance,
+        );
     });
 
     it("round-trips zero and max field values", () => {
@@ -37,9 +40,12 @@ describe("actor instance encoding", () => {
             pitch: 0,
             matrixOffset: 0,
             alphaOffset: 0,
+            scale: 1,
         };
-        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset, scale] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset, scale)).toEqual(
+            instance,
+        );
 
         const maxInstance: ActorInstance = {
             worldX: 0x7fffffff,
@@ -52,11 +58,13 @@ describe("actor instance encoding", () => {
             pitch: 2047,
             matrixOffset: 0xffffffff,
             alphaOffset: 0xffffffff,
+            scale: 1,
         };
-        const [r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2] = encodeActorInfo(maxInstance);
-        expect(decodeActorInfo(r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2)).toEqual(
-            maxInstance,
-        );
+        const [r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2, scale2] =
+            encodeActorInfo(maxInstance);
+        expect(
+            decodeActorInfo(r2, g2, b2, a2, pitchR2, matrixOffset2, alphaOffset2, scale2),
+        ).toEqual(maxInstance);
     });
 
     it("round-trips a negative ground height", () => {
@@ -71,9 +79,12 @@ describe("actor instance encoding", () => {
             pitch: 0,
             matrixOffset: 1,
             alphaOffset: 2,
+            scale: 1,
         };
-        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset)).toEqual(instance);
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset, scale] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset, scale)).toEqual(
+            instance,
+        );
     });
 
     it("wraps a pitch already outside the 11-bit range rather than throwing", () => {
@@ -88,9 +99,10 @@ describe("actor instance encoding", () => {
             pitch: -300,
             matrixOffset: 0,
             alphaOffset: 0,
+            scale: 1,
         };
-        const [r, g, b, a, pitchR, matrixOffset, alphaOffset] = encodeActorInfo(instance);
-        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset).pitch).toBe(
+        const [r, g, b, a, pitchR, matrixOffset, alphaOffset, scale] = encodeActorInfo(instance);
+        expect(decodeActorInfo(r, g, b, a, pitchR, matrixOffset, alphaOffset, scale).pitch).toBe(
             2048 - 300,
         );
     });
@@ -108,6 +120,7 @@ describe("actor instance encoding", () => {
             pitch: 42,
             matrixOffset: 33,
             alphaOffset: 44,
+            scale: 1,
         };
         writeActorInstance(data, 1, instance);
         expect(data.slice(0, ACTOR_INSTANCE_COMPONENTS)).toEqual(
@@ -115,7 +128,16 @@ describe("actor instance encoding", () => {
         );
         const texel = data.slice(ACTOR_INSTANCE_COMPONENTS, ACTOR_INSTANCE_COMPONENTS * 2);
         expect(
-            decodeActorInfo(texel[0], texel[1], texel[2], texel[3], texel[4], texel[5], texel[6]),
+            decodeActorInfo(
+                texel[0],
+                texel[1],
+                texel[2],
+                texel[3],
+                texel[4],
+                texel[5],
+                texel[6],
+                texel[7],
+            ),
         ).toEqual(instance);
         expect(data.slice(ACTOR_INSTANCE_COMPONENTS * 2)).toEqual(
             new Uint32Array(ACTOR_INSTANCE_COMPONENTS),

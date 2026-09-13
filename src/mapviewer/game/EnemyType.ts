@@ -118,6 +118,13 @@ type EnemyTypeCommon<A extends AbilityDefinition> = {
     readonly phases?: readonly BossPhase[];
     readonly dropTier: DropTier;
     readonly protectionPrayers?: ProtectionPrayerRotation;
+    // Multiplies the npc's own cache scale when its actor is baked; hitRadius is set to match.
+    readonly modelScale?: number;
+    // For an npc with no death animation of its own, which would otherwise stand through its idle:
+    // it shrinks away to nothing over this long instead.
+    readonly deathShrinkSeconds?: number;
+    // What killing it heals the player.
+    readonly killHeal?: number;
 };
 
 export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
@@ -493,11 +500,14 @@ const WARDENS_SKULL: EnemyType = {
     walkSeqId: WARDENS_SKULL_BITE_SEQ_ID,
     deathSeqId: WARDENS_SKULL_BITE_SEQ_ID,
     attackSeqId: WARDENS_SKULL_BITE_SEQ_ID,
-    hitRadius: 64,
-    projectileLaunchHeight: 64,
+    hitRadius: 64 * 0.6,
+    projectileLaunchHeight: 64 * 0.6,
     maxHealth: 8,
     experienceReward: createExperience(0),
     walkSpeed: 480 * 1.6,
+    modelScale: 0.6,
+    deathShrinkSeconds: 1.8,
+    killHeal: 1,
     behaviour: EnemyBehaviour.RUSHER,
     abilities: [WARDENS_SKULL_BITE],
     dropTier: DropTier.NONE,
