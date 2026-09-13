@@ -2,7 +2,7 @@ import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
     canOccupyWardenP3ArenaTile,
-    destroyFurthestWardenP3ArenaRow,
+    pullWardenP3ArenaTile,
     wardenP3ArenaTile,
 } from "./WardenP3Arena";
 import { WardenP3Tile } from "./WardenP3Director";
@@ -16,10 +16,11 @@ function seededRandom(seed: number): () => number {
     };
 }
 
-function floorWithDestroyedRows(count: number): WardenP3ArenaFloor {
+function floorWithClearedRows(count: number): WardenP3ArenaFloor {
+    const random = seededRandom(count);
     let floor = WARDEN_P3_INITIAL_ARENA_FLOOR;
-    for (let index = 0; index < count; index++) {
-        floor = destroyFurthestWardenP3ArenaRow(floor)!.floor;
+    while (floor.clearedRowCount < count) {
+        floor = pullWardenP3ArenaTile(floor, random).floor;
     }
     return floor;
 }
@@ -28,7 +29,7 @@ const tileKey = (tile: WardenP3Tile): string => `${tile.x},${tile.y},${tile.leve
 
 describe("Ba-Ba phantom rock targets", () => {
     it("drops the first rock on the player's tile and the rest on distinct solid floor", () => {
-        const floor = floorWithDestroyedRows(4);
+        const floor = floorWithClearedRows(4);
         const playerTile = wardenP3ArenaTile(3936, 5160);
         for (let seed = 1; seed <= 20; seed++) {
             const targets = babaPhantomRockTargets(floor, playerTile, 6, seededRandom(seed));
@@ -46,7 +47,7 @@ describe("Ba-Ba phantom rock targets", () => {
     });
 
     it("strikes every remaining tile when there is less floor than rocks", () => {
-        const floor = floorWithDestroyedRows(8);
+        const floor = floorWithClearedRows(8);
         const playerTile = wardenP3ArenaTile(3936, 5157);
 
         const targets = babaPhantomRockTargets(floor, playerTile, 50, seededRandom(7));

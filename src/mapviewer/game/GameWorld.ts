@@ -89,6 +89,7 @@ import {
     ProjectileOutcome,
     ProjectileSpec,
     ProjectileTarget,
+    WARDENS_PULLED_TILE_FLIGHT,
     timedProjectileSpec,
     travelSeconds,
 } from "./Projectile";
@@ -112,31 +113,29 @@ import { WardenP3Animations } from "./WardenP3Animations";
 import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
-    destroyFurthestWardenP3ArenaRow,
+    nearestSolidWardenP3Tile,
+    pullWardenP3ArenaTile,
     wardenP3ArenaTerrain,
-    wardenP3DestroyedRowDistances,
-    wardenP3RowTiles,
 } from "./WardenP3Arena";
 import {
-    ParsedWardenP3Arena,
     ParsedWardenP3Timing,
     PhantomAttackRelease,
     WARDEN_P3_HAZARD_TIMING,
-    WardenP3Arena,
     WardenP3Command,
     WardenP3Intermission,
     WardenP3Phase,
+    WardenP3StartPhase,
     WardenP3State,
     WardenP3Tile,
     WardenPhantom,
     WardenSiphonStatus,
     WardenSlamTarget,
-    initialWardenP3State,
-    parseWardenP3Arena,
+    beginWardenP3,
     parseWardenP3Timing,
     stepWardenP3,
     wardenP3HealthFloorFraction,
 } from "./WardenP3Director";
+import { WARDEN_P3_LIGHTNING, wardenP3LightningTargets } from "./WardenP3Enrage";
 import {
     FloorSlam,
     floorSlamEndsAtSeconds,
@@ -212,15 +211,17 @@ export type WardenP3RenderState = {
     readonly resolvedSlamTarget: WardenSlamTarget | undefined;
     readonly activeIntermission: WardenP3Intermission | undefined;
     readonly activePhantoms: readonly WardenPhantom[];
-    readonly lightningWarningTarget: WardenP3Tile | undefined;
-    readonly lightningTarget: WardenP3Tile | undefined;
-    readonly removedArenaRows: readonly number[];
+    readonly arenaFloor: WardenP3ArenaFloor;
     readonly floorSlams: readonly FloorSlam[];
 };
 
-type PendingRockFall = {
+// A hit on one floor tile once its telegraph runs out. A Ba-Ba rock's graphic plays its whole fall
+// from the drop, so only a lightning bolt brings a graphic of its own to the strike.
+type PendingTileStrike = {
     readonly tile: WardenP3Tile;
-    readonly landsAtSeconds: number;
+    readonly strikesAtSeconds: number;
+    readonly damage: number;
+    readonly strikeEffect: VisualEffectKind | undefined;
 };
 
 // Opened when the Warden throws its siphons. The deadline counts from their landing, so the time
@@ -237,7 +238,6 @@ type PendingSiphonStrike = {
 
 type WardenP3Runtime = {
     readonly wardenId: number;
-    readonly arena: ParsedWardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
     readonly animations: WardenP3Animations;
     readonly timing: ParsedWardenP3Timing;
@@ -249,16 +249,26 @@ type WardenP3Runtime = {
     aimedSlamTarget: WardenSlamTarget | undefined;
     resolvedSlamTarget: WardenSlamTarget | undefined;
     activePhantoms: readonly WardenPhantom[];
-    lightningWarningTarget: WardenP3Tile | undefined;
-    lightningTarget: WardenP3Tile | undefined;
     floor: WardenP3ArenaFloor;
     // Slams whose front is still travelling or whose last tiles are still settling.
     floorSlams: readonly FloorSlam[];
     // Arrivals up to this time have already hit, so each tile's arrival is resolved exactly once
     // even when it lands on a step boundary.
     floorSlamsResolvedUntilSeconds: number;
-    rockFalls: readonly PendingRockFall[];
+    tileStrikes: readonly PendingTileStrike[];
 };
+
+function playerWardenTile(player: Player): WardenP3Tile {
+    return {
+        x: Math.floor(player.x / TILE_SIZE),
+        y: Math.floor(player.y / TILE_SIZE),
+        level: player.level,
+    };
+}
+
+function isSameWardenTile(a: WardenP3Tile, b: WardenP3Tile): boolean {
+    return a.x === b.x && a.y === b.y && a.level === b.level;
+}
 
 export class GameWorld {
     static readonly FIXED_STEP_SECONDS = 1 / 120;
@@ -318,9 +328,9 @@ export class GameWorld {
         private readonly random: RandomSource = Math.random,
     ) {}
 
-    // Wardens P3 destroys arena floor rows at runtime; composing that over the base terrain here
+    // Wardens P3 pulls arena floor tiles at runtime; composing that over the base terrain here
     // means every movement path that consults Terrain (pathing, chase steering, click-to-walk, the
-    // player's own movement) rejects destroyed rows without each caller knowing about the fight.
+    // player's own movement) rejects pulled tiles without each caller knowing about the fight.
     private get terrain(): Terrain {
         const runtime = this.wardenP3Runtime;
         return runtime ? wardenP3ArenaTerrain(this.baseTerrain, runtime.floor) : this.baseTerrain;
@@ -430,24 +440,25 @@ export class GameWorld {
                     ? runtime.state.intermission
                     : undefined,
             activePhantoms: runtime.activePhantoms,
-            lightningWarningTarget: runtime.lightningWarningTarget,
-            lightningTarget: runtime.lightningTarget,
-            removedArenaRows: wardenP3DestroyedRowDistances(runtime.floor),
+            arenaFloor: runtime.floor,
             floorSlams: runtime.floorSlams,
         };
     }
 
     startWardenP3Runtime(
         wardenId: number,
-        arena: WardenP3Arena,
         siphonLayout: WardenP3SiphonLayout,
+        startPhase: WardenP3StartPhase,
     ): void {
         const warden = this.findEnemy(wardenId);
         if (!warden) {
             throw new Error(`Cannot start Wardens P3 without Warden enemy ${wardenId}`);
         }
+        const player = this.player;
+        if (!player) {
+            throw new Error("Cannot start Wardens P3 without a player");
+        }
         validateWardenP3SiphonLayout(siphonLayout);
-        const parsedArena = parseWardenP3Arena(arena);
         const animations = this.animations.wardenP3();
         const timing = parseWardenP3Timing({
             ...WARDEN_P3_HAZARD_TIMING,
@@ -456,30 +467,32 @@ export class GameWorld {
             phantomAttacks: animations.phantoms.attacks,
             siphonLaunchSeconds: animations.siphons.launchSeconds,
         });
-        const state = initialWardenP3State(this.timeSeconds, parsedArena);
+        const opening = beginWardenP3(startPhase, this.timeSeconds, warden.maxHealth, timing);
         warden.invulnerable = false;
-        warden.healthFloor = wardenP3HealthFloorFraction(state) * warden.maxHealth;
-        this.wardenP3Runtime = {
+        warden.health = opening.wardenHealthFraction * warden.maxHealth;
+        warden.healthFloor = wardenP3HealthFloorFraction(opening.nextState) * warden.maxHealth;
+        const runtime: WardenP3Runtime = {
             wardenId,
-            arena: parsedArena,
             siphonLayout,
             animations,
             timing,
-            state,
+            state: opening.nextState,
             siphonStatus: WardenSiphonStatus.NONE,
             siphonWindow: undefined,
             siphonStrikes: [],
-            commands: [],
+            commands: opening.commands,
             aimedSlamTarget: undefined,
             resolvedSlamTarget: undefined,
             activePhantoms: [],
-            lightningWarningTarget: undefined,
-            lightningTarget: undefined,
             floor: WARDEN_P3_INITIAL_ARENA_FLOOR,
             floorSlams: [],
             floorSlamsResolvedUntilSeconds: this.timeSeconds,
-            rockFalls: [],
+            tileStrikes: [],
         };
+        this.wardenP3Runtime = runtime;
+        for (const command of opening.commands) {
+            this.dispatchWardenP3Command(runtime, warden, player, command);
+        }
     }
 
     resolveWardenP3Siphons(status: Exclude<WardenSiphonStatus, WardenSiphonStatus.NONE>): void {
@@ -605,7 +618,7 @@ export class GameWorld {
     private startScriptedEncounter(encounter: ScriptedEncounter): void {
         switch (encounter.script.kind) {
             case EncounterScriptKind.WARDENS_P3: {
-                const { wardenSpawn, phantomSpawns, arena, siphonLayout } = encounter.script;
+                const { wardenSpawn, phantomSpawns, startPhase, siphonLayout } = encounter.script;
                 const wardenId = this.spawnEnemyAtExactPosition(
                     wardenSpawn.x,
                     wardenSpawn.y,
@@ -626,7 +639,7 @@ export class GameWorld {
                         actor.rotation = platformFacing;
                     }
                 }
-                this.startWardenP3Runtime(wardenId, arena, siphonLayout);
+                this.startWardenP3Runtime(wardenId, siphonLayout, startPhase);
                 return;
             }
         }
@@ -1221,14 +1234,9 @@ export class GameWorld {
             {
                 timeSeconds: this.timeSeconds,
                 wardenHealth: { current: warden.health, maximum: warden.maxHealth },
-                playerTile: {
-                    x: Math.floor(player.x / TILE_SIZE),
-                    y: Math.floor(player.y / TILE_SIZE),
-                    level: player.level,
-                },
                 siphonStatus: this.wardenP3SiphonStatus(runtime),
+                arenaFloor: runtime.floor,
             },
-            runtime.arena,
             runtime.timing,
         );
         runtime.state = result.nextState;
@@ -1239,7 +1247,7 @@ export class GameWorld {
             this.dispatchWardenP3Command(runtime, warden, player, command);
         }
         this.resolveWardenFloorSlamArrivals(runtime);
-        this.resolveBabaRockFalls(runtime);
+        this.resolveWardenTileStrikes(runtime);
         this.resolveEnergySiphonStrikes(runtime, warden);
     }
 
@@ -1275,7 +1283,7 @@ export class GameWorld {
             if (siphon.siphon.state !== EnergySiphonState.HOSTILE) {
                 continue;
             }
-            this.launchSiphonFlight(
+            this.launchWardenFlight(
                 warden,
                 ENERGY_SIPHON_LEECH_SPEC,
                 this.siphonLaunchPoint(siphon),
@@ -1328,7 +1336,7 @@ export class GameWorld {
                 { state: EnergySiphonState.IN_FLIGHT, landsAtSeconds },
             );
             this.spawnWardenTileEffect(siphons.landingShadow, spawn, landsAtSeconds);
-            this.launchSiphonFlight(warden, launch, chest, {
+            this.launchWardenFlight(warden, launch, chest, {
                 kind: "POINT",
                 x: siphon.x,
                 y: siphon.y,
@@ -1349,7 +1357,7 @@ export class GameWorld {
         const recall = timedProjectileSpec(ENERGY_SIPHON_RECALL_FLIGHT, recallSeconds);
         const siphons = this.energySiphonActors();
         for (const siphon of siphons) {
-            this.launchSiphonFlight(warden, recall, this.siphonLaunchPoint(siphon), {
+            this.launchWardenFlight(warden, recall, this.siphonLaunchPoint(siphon), {
                 kind: "COMBATANT",
                 combatant: warden,
             });
@@ -1380,8 +1388,9 @@ export class GameWorld {
 
     // A siphon flight only pictures where the energy goes: landing, leeching, the deadline and the
     // strikes all run on the runtime's own timers, so a flight dropped at the projectile cap costs
-    // nothing but the picture.
-    private launchSiphonFlight(
+    // nothing but the picture. A pulled tile's flight is the same, the tile having left the floor
+    // the moment it was pulled.
+    private launchWardenFlight(
         warden: Enemy,
         spec: ProjectileSpec,
         start: FlightOrigin,
@@ -1420,13 +1429,18 @@ export class GameWorld {
         );
     }
 
-    private resolveBabaRockFalls(runtime: WardenP3Runtime): void {
-        const landed = runtime.rockFalls.filter((rock) => this.timeSeconds >= rock.landsAtSeconds);
-        for (const rock of landed) {
-            this.damagePlayerOnWardenTile(rock.tile, WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA]);
+    private resolveWardenTileStrikes(runtime: WardenP3Runtime): void {
+        const due = runtime.tileStrikes.filter(
+            (strike) => this.timeSeconds >= strike.strikesAtSeconds,
+        );
+        for (const strike of due) {
+            if (strike.strikeEffect !== undefined) {
+                this.spawnWardenTileEffect(strike.strikeEffect, strike.tile);
+            }
+            this.damagePlayerOnWardenTile(strike.tile, strike.damage);
         }
-        runtime.rockFalls = runtime.rockFalls.filter(
-            (rock) => this.timeSeconds < rock.landsAtSeconds,
+        runtime.tileStrikes = runtime.tileStrikes.filter(
+            (strike) => this.timeSeconds < strike.strikesAtSeconds,
         );
     }
 
@@ -1497,33 +1511,12 @@ export class GameWorld {
             case "ENTER_ENRAGE":
                 applyHeal(warden, command.healAmount, this.events);
                 return;
-            case "WARN_LIGHTNING":
-                runtime.lightningWarningTarget = command.target;
-                this.spawnWardenTileEffect(
-                    VisualEffectKind.WARDENS_LIGHTNING_WARNING,
-                    command.target,
-                );
+            case "CALL_LIGHTNING":
+                this.callWardenLightning(runtime);
                 return;
-            case "STRIKE_LIGHTNING":
-                runtime.lightningWarningTarget = undefined;
-                runtime.lightningTarget = command.target;
-                this.spawnWardenTileEffect(VisualEffectKind.WARDENS_LIGHTNING, command.target);
-                this.damagePlayerOnWardenTile(command.target, 20);
+            case "PULL_ARENA_TILE":
+                this.pullWardenArenaTile(runtime, warden, player);
                 return;
-            case "REMOVE_ARENA_ROW": {
-                const destroyed = destroyFurthestWardenP3ArenaRow(runtime.floor);
-                if (!destroyed || destroyed.row.distanceFromWarden !== command.distanceFromWarden) {
-                    throw new Error(
-                        `Wardens P3 director requested row ${command.distanceFromWarden} but the furthest remaining row is ${destroyed?.row.distanceFromWarden}`,
-                    );
-                }
-                runtime.floor = destroyed.floor;
-                for (const tile of wardenP3RowTiles(destroyed.row)) {
-                    this.spawnWardenTileEffect(VisualEffectKind.WARDENS_FALLING_TILE, tile);
-                    this.damagePlayerOnWardenTile(tile, 1000);
-                }
-                return;
-            }
             case "COMPLETE_ENCOUNTER":
                 this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
                 return;
@@ -1595,33 +1588,73 @@ export class GameWorld {
         const { rockFall } = runtime.animations.phantoms;
         const targets = babaPhantomRockTargets(
             runtime.floor,
-            {
-                x: Math.floor(player.x / TILE_SIZE),
-                y: Math.floor(player.y / TILE_SIZE),
-                level: player.level,
-            },
+            playerWardenTile(player),
             BABA_PHANTOM_ROCK_FALL.extraRockCount,
             this.random,
         );
-        const landsAtSeconds = this.timeSeconds + rockFall.landingSeconds;
+        const strikesAtSeconds = this.timeSeconds + rockFall.landingSeconds;
         for (const tile of targets) {
-            this.spawnWardenTileEffect(BABA_PHANTOM_ROCK_FALL.shadow.kind, tile, landsAtSeconds);
+            this.spawnWardenTileEffect(BABA_PHANTOM_ROCK_FALL.shadow.kind, tile, strikesAtSeconds);
             this.spawnWardenTileEffect(rockFall.effect, tile);
         }
-        runtime.rockFalls = [
-            ...runtime.rockFalls,
-            ...targets.map((tile) => ({ tile, landsAtSeconds })),
+        runtime.tileStrikes = [
+            ...runtime.tileStrikes,
+            ...targets.map((tile) => ({
+                tile,
+                strikesAtSeconds,
+                damage: WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA],
+                strikeEffect: undefined,
+            })),
         ];
+    }
+
+    // Each bolt's warning is held on its tile until the bolt strikes there.
+    private callWardenLightning(runtime: WardenP3Runtime): void {
+        const targets = wardenP3LightningTargets(
+            runtime.floor,
+            WARDEN_P3_LIGHTNING.boltCount,
+            this.random,
+        );
+        const strikesAtSeconds = this.timeSeconds + WARDEN_P3_LIGHTNING.warningSeconds;
+        for (const tile of targets) {
+            this.spawnWardenTileEffect(WARDEN_P3_LIGHTNING.warning, tile, strikesAtSeconds);
+        }
+        runtime.tileStrikes = [
+            ...runtime.tileStrikes,
+            ...targets.map((tile) => ({
+                tile,
+                strikesAtSeconds,
+                damage: WARDEN_P3_LIGHTNING.damage,
+                strikeEffect: WARDEN_P3_LIGHTNING.strike,
+            })),
+        ];
+    }
+
+    private pullWardenArenaTile(runtime: WardenP3Runtime, warden: Enemy, player: Player): void {
+        const pull = pullWardenP3ArenaTile(runtime.floor, this.random);
+        runtime.floor = pull.floor;
+        const x = (pull.tile.x + 0.5) * TILE_SIZE;
+        const y = (pull.tile.y + 0.5) * TILE_SIZE;
+        this.launchWardenFlight(
+            warden,
+            timedProjectileSpec(
+                WARDENS_PULLED_TILE_FLIGHT,
+                runtime.animations.pulledTileFlightSeconds,
+            ),
+            { x, y, height: this.terrain.getHeight(pull.tile.level, x, y) },
+            { kind: "COMBATANT", combatant: warden },
+        );
+        if (!isSameWardenTile(playerWardenTile(player), pull.tile)) {
+            return;
+        }
+        const refuge = nearestSolidWardenP3Tile(runtime.floor, pull.tile);
+        player.x = (refuge.x + 0.5) * TILE_SIZE;
+        player.y = (refuge.y + 0.5) * TILE_SIZE;
     }
 
     private damagePlayerOnWardenTile(tile: WardenP3Tile, damage: number): void {
         const player = this.player;
-        if (
-            player &&
-            player.level === tile.level &&
-            Math.floor(player.x / TILE_SIZE) === tile.x &&
-            Math.floor(player.y / TILE_SIZE) === tile.y
-        ) {
+        if (player && isSameWardenTile(playerWardenTile(player), tile)) {
             applyDamage(player, damage, this.events);
         }
     }

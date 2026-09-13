@@ -15,6 +15,7 @@ import { packRequest } from "./assets/cacheRoots";
 import { parseAnimPreviewParams } from "./game/AnimPreview";
 import { getEncounter, parseEncounterId } from "./game/Encounter";
 import { parseGearOverride } from "./game/Equipment";
+import { parseWardenP3StartPhase } from "./game/WardenP3Director";
 import { renderDataLoaderSerializer } from "./worker/RenderDataLoader";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
@@ -58,6 +59,7 @@ function MapViewerApp() {
             const animPreview = parseAnimPreviewParams(searchParams);
             const godMode = parseGodMode(searchParams);
             const gearOverride = parseGearOverride(searchParams);
+            const wardenP3StartPhase = parseWardenP3StartPhase(searchParams.get("phase"));
 
             // The base encounter even in the animation viewer: the actor loader bakes the preview
             // for it (see ActorRenderDataLoader), and the preview encounter maps its squares.
@@ -86,6 +88,7 @@ function MapViewerApp() {
                 animPreview,
                 godMode,
                 gearOverride,
+                wardenP3StartPhase,
             );
             (window as any).mapViewer = mapViewer;
             loadedMapViewer = mapViewer;

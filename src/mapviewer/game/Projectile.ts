@@ -41,6 +41,7 @@ export enum ProjectileKind {
     ENERGY_SIPHON_LAUNCH,
     ENERGY_SIPHON_LEECH,
     ENERGY_SIPHON_RECALL,
+    WARDENS_PULLED_TILE,
 }
 
 export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
@@ -337,6 +338,19 @@ export const ENERGY_SIPHON_RECALL_FLIGHT: TimedProjectileFlight = {
     range: 24 * TILE_SIZE,
     landing: INTO_WARDEN_LANDING,
     travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+// An enrage floor tile the Warden pulls lifts out of the floor and tumbles into it
+// (SpotAnimType 2228), playing its tumble once over the flight.
+export const WARDENS_PULLED_TILE_TRAVEL_SEQ_ID = 9722;
+
+export const WARDENS_PULLED_TILE_FLIGHT: TimedProjectileFlight = {
+    kind: ProjectileKind.WARDENS_PULLED_TILE,
+    launchAngleRadians: (50 * Math.PI) / 180,
+    range: 24 * TILE_SIZE,
+    landing: INTO_WARDEN_LANDING,
+    travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 

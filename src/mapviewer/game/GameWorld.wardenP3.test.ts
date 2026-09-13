@@ -8,15 +8,20 @@ import { ProjectileKind } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 import {
-    WARDEN_P3_ARENA_ROW_COUNT,
+    WARDEN_P3_FLOOR_DECORATIONS,
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WardenP3ArenaTile,
+    WardenP3ArenaTileOccupancy,
+    canOccupyWardenP3ArenaTile,
     wardenP3ArenaTile,
     wardenP3SolidFloorTiles,
+    wardenP3TileOccupancy,
 } from "./WardenP3Arena";
 import {
-    WardenP3Arena,
+    WardenP3Command,
+    WardenP3Intermission,
+    WardenP3StartPhase,
     WardenP3Tile,
     WardenPhantom,
     WardenSiphonStatus,
@@ -24,6 +29,7 @@ import {
     WardenSlamTempo,
     WardenStance,
 } from "./WardenP3Director";
+import { WARDEN_P3_LIGHTNING } from "./WardenP3Enrage";
 import { FloorSlam, floorSlamArrivalSeconds, floorSlamEndsAtSeconds } from "./WardenP3FloorSlam";
 import { WARDEN_P3_PHANTOM_DAMAGE, wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
 import { stubEncounterAnimations } from "./testLoaders";
@@ -73,9 +79,13 @@ function attackSiphon(siphon: EnergySiphonActor): SimInput {
 const ANIMATIONS = stubEncounterAnimations();
 const WARDEN_ANIMATIONS = ANIMATIONS.wardenP3();
 
-// Matches the real encounter definition (Encounter.ts), which always starts enrage's row removal
-// countdown from the full 9-row floor.
-const ARENA: WardenP3Arena = { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT };
+function seededRandom(seed: number): () => number {
+    let state = seed;
+    return () => {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        return state / 4294967296;
+    };
+}
 
 // The scripted encounter spawns both phantoms north of the floor; these tests start the runtime
 // on its own, so they place them the same way.
@@ -98,7 +108,10 @@ function addPhantoms(world: GameWorld): void {
     }
 }
 
-function createWardenWorld(random: () => number = Math.random): {
+function createWardenWorld(
+    random: () => number = Math.random,
+    startPhase = WardenP3StartPhase.OPENING,
+): {
     readonly world: GameWorld;
     readonly wardenId: number;
 } {
@@ -106,7 +119,7 @@ function createWardenWorld(random: () => number = Math.random): {
     world.spawnPlayer(0, 0, 0);
     const wardenId = world.spawnEnemy(128, 0, 0, ANIMATIONS.enemyType(EnemyTypeId.TUMEKENS_WARDEN));
     addPhantoms(world);
-    world.startWardenP3Runtime(wardenId, ARENA, WARDEN_P3_SOLO_SIPHON_LAYOUT);
+    world.startWardenP3Runtime(wardenId, WARDEN_P3_SOLO_SIPHON_LAYOUT, startPhase);
     return { world, wardenId };
 }
 
@@ -404,23 +417,18 @@ describe("Wardens P3 world runtime", () => {
         world.step(EMPTY_INPUT, 0.01);
     }
 
-    it("blocks the player from walking onto arena rows the enrage has destroyed", () => {
-        const { world, wardenId } = createWardenWorld();
-        // Row 8, the second-furthest row: still solid once the first (furthest, row 9) is
-        // destroyed, and adjacent to it so a short run north crosses the removed boundary.
+    it("blocks the player from walking onto floor the enrage has pulled", () => {
+        // Always pulls the edge row's west end, so row 8's centre outlasts row 9.
+        const { world } = createWardenWorld(() => 0, WardenP3StartPhase.ENRAGE);
+        // Row 8, the second-furthest row: still solid once the furthest (row 9) is pulled, and
+        // adjacent to it so a short run north crosses the pulled boundary.
         const solidTile = wardenP3ArenaTile(3936, 5164);
         world.player!.x = (solidTile.x + 0.5) * 128;
         world.player!.y = (solidTile.y + 0.5) * 128;
 
-        clearIntermission(world, wardenId, 0.8);
-        clearIntermission(world, wardenId, 0.6);
-        clearIntermission(world, wardenId, 0.4);
-        clearIntermission(world, wardenId, 0.2);
-        world.findEnemy(wardenId)!.health = 1;
-        world.step(EMPTY_INPUT, 0.01);
-        world.step(EMPTY_INPUT, 2.5);
-
-        expect(world.wardenP3RenderState?.removedArenaRows).toContain(9);
+        while (world.wardenP3RenderState!.arenaFloor.clearedRowCount === 0) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
 
         // Runs straight at the destroyed row (y+1): movement must stop at the row boundary
         // instead of crossing onto it.
@@ -591,5 +599,183 @@ describe("Wardens P3 world runtime", () => {
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
         expect(world.player!.health).toBe(startingHealth);
+    });
+
+    function playerTile(world: GameWorld): WardenP3ArenaTile {
+        return wardenP3ArenaTile(
+            Math.floor(world.player!.x / TILE_SIZE),
+            Math.floor(world.player!.y / TILE_SIZE),
+        );
+    }
+
+    function stepUntilCommand(world: GameWorld, kind: WardenP3Command["kind"]): void {
+        for (let step = 0; step < 5000; step++) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+            if (world.wardenP3RenderState?.commands.some((command) => command.kind === kind)) {
+                return;
+            }
+        }
+        throw new Error(`Expected the Warden to issue ${kind}`);
+    }
+
+    function pulledTiles(world: GameWorld): WardenP3ArenaTile[] {
+        const floor = world.wardenP3RenderState!.arenaFloor;
+        return WARDEN_P3_FLOOR_DECORATIONS.tiles
+            .map((tile) => wardenP3ArenaTile(tile.x, tile.y))
+            .filter(
+                (tile) =>
+                    wardenP3TileOccupancy(floor, tile) ===
+                    WardenP3ArenaTileOccupancy.DESTROYED_FLOOR,
+            );
+    }
+
+    it("starts enraged below every intermission threshold with both phantoms awake", () => {
+        const { world, wardenId } = createWardenWorld(Math.random, WardenP3StartPhase.ENRAGE);
+        const warden = world.findEnemy(wardenId)!;
+
+        expect(warden.animation.seqId).toBe(
+            WARDEN_ANIMATIONS.stances[WardenStance.ENRAGED].transition.seqId,
+        );
+        expect(warden.invulnerable).toBe(false);
+        expect(world.wardenP3RenderState).toMatchObject({
+            activeIntermission: undefined,
+            activePhantoms: [WardenPhantom.ZEBAK, WardenPhantom.BABA],
+        });
+        const enrage = world.wardenP3RenderState?.commands.find(
+            (command) => command.kind === "ENTER_ENRAGE",
+        );
+        if (enrage?.kind !== "ENTER_ENRAGE") {
+            throw new Error("Expected the Warden to enter its enrage");
+        }
+        const healthBeforeHeal = warden.health - enrage.healAmount;
+        expect(healthBeforeHeal).toBeGreaterThan(0);
+        expect(healthBeforeHeal).toBeLessThan(warden.maxHealth * 0.2);
+
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(world.wardenP3RenderState?.activeIntermission).toBeUndefined();
+    });
+
+    it.each([
+        [WardenP3StartPhase.SIPHON_1, WardenP3Intermission.FIRST, []],
+        [WardenP3StartPhase.SIPHON_2, WardenP3Intermission.SECOND, [WardenPhantom.ZEBAK]],
+        [
+            WardenP3StartPhase.SIPHON_3,
+            WardenP3Intermission.THIRD,
+            [WardenPhantom.ZEBAK, WardenPhantom.BABA],
+        ],
+        [
+            WardenP3StartPhase.SIPHON_4,
+            WardenP3Intermission.FOURTH,
+            [WardenPhantom.ZEBAK, WardenPhantom.BABA],
+        ],
+    ])(
+        "starts %s charging its intermission with the phantoms woken by then",
+        (startPhase, intermission, phantoms) => {
+            const { world, wardenId } = createWardenWorld(Math.random, startPhase);
+
+            expect(world.findEnemy(wardenId)!.invulnerable).toBe(true);
+            expect(world.wardenP3RenderState).toMatchObject({
+                activeIntermission: intermission,
+                activePhantoms: phantoms,
+            });
+            expect(stepUntilSiphonsThrown(world)).toHaveLength(4);
+        },
+    );
+
+    it("pulls the enrage floor a tile at a time from the furthest row, flying each into the Warden", () => {
+        const { world } = createWardenWorld(seededRandom(5), WardenP3StartPhase.ENRAGE);
+        placePlayerOn(world, wardenP3ArenaTile(3936, 5158));
+
+        for (let pull = 1; pull <= 3; pull++) {
+            stepUntilCommand(world, "PULL_ARENA_TILE");
+            const pulled = pulledTiles(world);
+            expect(pulled).toHaveLength(pull);
+            expect(pulled.every((tile) => tile.y === 5165)).toBe(true);
+        }
+        expect(
+            world.projectiles.filter(
+                (projectile) => projectile.spec.kind === ProjectileKind.WARDENS_PULLED_TILE,
+            ),
+        ).toHaveLength(3);
+    });
+
+    it("moves a player off a pulled tile onto the nearest solid floor without hurting them", () => {
+        // Always pulls the edge row's west end first.
+        const { world } = createWardenWorld(() => 0, WardenP3StartPhase.ENRAGE);
+        const doomed = wardenP3ArenaTile(3926, 5165);
+        placePlayerOn(world, doomed);
+        const startingHealth = world.player!.health;
+
+        stepUntilCommand(world, "PULL_ARENA_TILE");
+
+        expect(pulledTiles(world)).toEqual([doomed]);
+        const floor = world.wardenP3RenderState!.arenaFloor;
+        expect(canOccupyWardenP3ArenaTile(floor, playerTile(world))).toBe(true);
+        expect(playerTile(world)).toEqual(wardenP3ArenaTile(3926, 5164));
+        expect(world.player!.health).toBe(startingHealth);
+    });
+
+    function lightningWarningTiles(world: GameWorld): WardenP3ArenaTile[] {
+        return world.visualEffects
+            .filter((effect) => effect.kind === WARDEN_P3_LIGHTNING.warning)
+            .map((effect) =>
+                wardenP3ArenaTile(
+                    Math.floor(effect.x / TILE_SIZE),
+                    Math.floor(effect.y / TILE_SIZE),
+                ),
+            );
+    }
+
+    // Stands the player on a tile of the first enrage volley, or off every one when dodging, and
+    // steps just past the strike. Nothing else can land on the player this early in the enrage.
+    function standThroughFirstVolley(dodge: boolean): {
+        readonly world: GameWorld;
+        readonly startingHealth: number;
+        readonly struck: readonly WardenP3ArenaTile[];
+    } {
+        const { world } = createWardenWorld(seededRandom(9), WardenP3StartPhase.ENRAGE);
+        placePlayerOn(world, wardenP3ArenaTile(3936, 5158));
+        stepUntilCommand(world, "CALL_LIGHTNING");
+        const strikesAtSeconds = world.timeSeconds + WARDEN_P3_LIGHTNING.warningSeconds;
+        const struck = lightningWarningTiles(world);
+        const floor = world.wardenP3RenderState!.arenaFloor;
+        // Clear of the rows being pulled, so the tile stays under the player until the strike.
+        const standOn = dodge
+            ? wardenP3SolidFloorTiles(floor).find(
+                  (tile) => tile.y < 5163 && !struck.some((t) => t.x === tile.x && t.y === tile.y),
+              )!
+            : struck.find((tile) => tile.y < 5163)!;
+        placePlayerOn(world, standOn);
+        const startingHealth = world.player!.health;
+        while (world.timeSeconds + STEP_SECONDS < strikesAtSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(world.player!.health).toBe(startingHealth);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        return { world, startingHealth, struck };
+    }
+
+    it("calls several bolts onto solid floor at once, each warned before it strikes", () => {
+        const { world } = createWardenWorld(seededRandom(9), WardenP3StartPhase.ENRAGE);
+        stepUntilCommand(world, "CALL_LIGHTNING");
+        const floor = world.wardenP3RenderState!.arenaFloor;
+
+        const struck = lightningWarningTiles(world);
+        expect(struck).toHaveLength(WARDEN_P3_LIGHTNING.boltCount);
+        for (const tile of struck) {
+            expect(canOccupyWardenP3ArenaTile(floor, tile)).toBe(true);
+        }
+    });
+
+    it("hurts a player on a struck tile as its bolt strikes and spares one off every struck tile", () => {
+        const hit = standThroughFirstVolley(false);
+        expect(hit.world.player!.health).toBe(hit.startingHealth - WARDEN_P3_LIGHTNING.damage);
+        expect(
+            hit.world.visualEffects.filter((effect) => effect.kind === WARDEN_P3_LIGHTNING.strike),
+        ).toHaveLength(hit.struck.length);
+
+        const dodged = standThroughFirstVolley(true);
+        expect(dodged.world.player!.health).toBe(dodged.startingHealth);
     });
 });

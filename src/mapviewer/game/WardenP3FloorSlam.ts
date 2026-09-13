@@ -1,10 +1,12 @@
 import { LocTransform, REST_LOC_TRANSFORM } from "./LocTransform";
 import {
     WARDEN_P3_FRONT_CENTRE_TILE,
+    WardenP3ArenaFloor,
     WardenP3ArenaTile,
+    WardenP3ArenaTileOccupancy,
     wardenP3ArenaTile,
     wardenP3FloorSlamTiles,
-    wardenP3RowForTile,
+    wardenP3TileOccupancy,
 } from "./WardenP3Arena";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
 import { tileKey } from "./roofHiding";
@@ -200,12 +202,11 @@ export function floorTilePose(
 
 export function wardenP3FloorTilePose(
     slams: readonly FloorSlam[],
-    removedRows: readonly number[],
+    floor: WardenP3ArenaFloor,
     tile: WardenP3ArenaTile,
     timeSeconds: number,
 ): LocTransform {
-    const row = wardenP3RowForTile(tile);
-    if (row && removedRows.includes(row.distanceFromWarden)) {
+    if (wardenP3TileOccupancy(floor, tile) === WardenP3ArenaTileOccupancy.DESTROYED_FLOOR) {
         return { kind: "HIDDEN" };
     }
     return floorTilePose(slams, tile, timeSeconds);

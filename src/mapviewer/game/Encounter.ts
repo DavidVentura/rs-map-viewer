@@ -24,13 +24,12 @@ import {
     WardenSiphonAnimationIds,
 } from "./WardenP3Animations";
 import {
-    WARDEN_P3_ARENA_ROW_COUNT,
     WARDEN_P3_FLOOR_DECORATIONS,
     WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WARDEN_P3_SPAWN_TILE,
 } from "./WardenP3Arena";
 import {
-    WardenP3Arena,
+    WardenP3StartPhase,
     WardenPhantom,
     WardenSlamTarget,
     WardenSlamTempo,
@@ -162,7 +161,7 @@ export type WardensP3Script = {
     readonly kind: EncounterScriptKind.WARDENS_P3;
     readonly wardenSpawn: EnemySpawnPoint;
     readonly phantomSpawns: readonly WardenPhantomSpawn[];
-    readonly arena: WardenP3Arena;
+    readonly startPhase: WardenP3StartPhase;
     readonly siphonLayout: WardenP3SiphonLayout;
     readonly wardenAnimations: WardenP3AnimationIds;
     readonly phantomAnimations: WardenPhantomAnimationIds;
@@ -908,7 +907,7 @@ const WARDENS_P3: ScriptedEncounter = {
         kind: EncounterScriptKind.WARDENS_P3,
         wardenSpawn: { x: wardensP3WardenX, y: wardensP3WardenY, level: 0 },
         phantomSpawns: WARDENS_P3_PHANTOM_SPAWNS,
-        arena: { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT },
+        startPhase: WardenP3StartPhase.OPENING,
         siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
         phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
@@ -931,6 +930,26 @@ export function getEncounter(id: EncounterId): Encounter {
 export function parseEncounterId(value: string | null): EncounterId {
     const match = Object.values(EncounterId).find((id) => id === value);
     return match ?? EncounterId.LUMBRIDGE;
+}
+
+// The debug ?phase= start (see MapViewerApp): the Wardens P3 fight opened straight into a later
+// phase. Any other encounter has no phases to start in.
+export function encounterStartingAt(
+    encounter: Encounter,
+    startPhase: WardenP3StartPhase,
+): Encounter {
+    if (startPhase === WardenP3StartPhase.OPENING) {
+        return encounter;
+    }
+    if (
+        encounter.spawnMode !== EncounterSpawnMode.SCRIPTED ||
+        encounter.script.kind !== EncounterScriptKind.WARDENS_P3
+    ) {
+        throw new RangeError(
+            `Phase ${startPhase} only exists in the Wardens P3 encounter, not ${encounter.id}`,
+        );
+    }
+    return { ...encounter, script: { ...encounter.script, startPhase } };
 }
 
 // 3 tiles north of the player spawn: the fixed offset the animation viewer uses for its one

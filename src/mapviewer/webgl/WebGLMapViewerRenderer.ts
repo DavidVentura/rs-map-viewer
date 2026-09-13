@@ -2898,7 +2898,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     // The only encounter that moves its locs is Wardens P3, whose floor tiles follow its slams and
-    // row removals.
+    // tile pulls.
     private locTransformSource(): (tile: LocTile) => LocTransform {
         const world = this.mapViewer.world;
         const wardens = world.wardenP3RenderState;
@@ -2909,7 +2909,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return (tile) =>
             wardenP3FloorTilePose(
                 wardens.floorSlams,
-                wardens.removedArenaRows,
+                wardens.arenaFloor,
                 wardenP3ArenaTile(tile.x, tile.y),
                 timeSeconds,
             );

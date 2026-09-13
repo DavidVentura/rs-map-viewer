@@ -33,11 +33,18 @@ import { SeqSoundCatalog, loadSeqSoundCatalog, sfxClips, soundSeqIds } from "./a
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { SfxPlayer } from "./audio/SfxPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
-import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
+import {
+    Encounter,
+    EncounterId,
+    buildPreviewEncounter,
+    encounterStartingAt,
+    getEncounter,
+} from "./game/Encounter";
 import { EncounterAnimations } from "./game/EncounterAnimations";
 import { EquipmentChange } from "./game/Equipment";
 import { GameWorld } from "./game/GameWorld";
 import { SeqCatalog, loadSeqCatalog } from "./game/SeqCatalog";
+import { WardenP3StartPhase } from "./game/WardenP3Director";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
 const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 64;
@@ -104,6 +111,7 @@ export class MapViewer {
         readonly animPreview?: AnimPreviewParams,
         readonly godMode: boolean = false,
         readonly gearOverride: readonly EquipmentChange[] = [],
+        readonly wardenP3StartPhase: WardenP3StartPhase = WardenP3StartPhase.OPENING,
     ) {
         // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
         // camera over the encounter's squares, the only ones its pack holds.
@@ -145,7 +153,10 @@ export class MapViewer {
     }
 
     get encounter(): Encounter {
-        const encounter = getEncounter(this.encounterId);
+        const encounter = encounterStartingAt(
+            getEncounter(this.encounterId),
+            this.wardenP3StartPhase,
+        );
         return this.animPreview ? buildPreviewEncounter(encounter) : encounter;
     }
 

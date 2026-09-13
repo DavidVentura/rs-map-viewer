@@ -113,6 +113,8 @@ export type WardenP3Animations = {
     readonly stances: Readonly<Record<WardenStance, ResolvedWardenStance>>;
     readonly phantoms: WardenPhantomAnimations;
     readonly siphons: WardenSiphonAnimations;
+    // A pulled enrage tile's flight lasts its graphic's tumble.
+    readonly pulledTileFlightSeconds: number;
 };
 
 export function wardenP3AnimationSeqIds(ids: WardenP3AnimationIds): readonly number[] {

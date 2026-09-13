@@ -4,6 +4,7 @@ import {
     EncounterScriptKind,
     EncounterSpawnMode,
     WaveEncounter,
+    encounterStartingAt,
     getEncounter,
     parseEncounterId,
     validateEncounter,
@@ -11,6 +12,7 @@ import {
 import { ENEMY_TYPES, EnemyTypeId } from "./EnemyType";
 import { WorldObjectKind } from "./Interaction";
 import { createPhaseId } from "./Phase";
+import { WardenP3StartPhase } from "./WardenP3Director";
 
 function tileKey(x: number, y: number, level: number): string {
     return `${x >> 7},${y >> 7},${level}`;
@@ -73,7 +75,7 @@ describe("encounters", () => {
             enemySpawns: [{ x: 3936 * 128 + 64, y: 5154 * 128 + 64, level: 0 }],
             script: {
                 kind: EncounterScriptKind.WARDENS_P3,
-                arena: { furthestRowFromWarden: 9 },
+                startPhase: WardenP3StartPhase.OPENING,
             },
         });
         if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
@@ -90,6 +92,20 @@ describe("encounters", () => {
             ]),
         );
         expect(encounter.script.siphonLayout.spawns).toHaveLength(4);
+    });
+
+    it("opens Wardens P3 at a requested later phase and rejects one for any other encounter", () => {
+        const enraged = encounterStartingAt(
+            getEncounter(EncounterId.WARDENS_P3),
+            WardenP3StartPhase.ENRAGE,
+        );
+        expect(enraged).toMatchObject({ script: { startPhase: WardenP3StartPhase.ENRAGE } });
+
+        const fightCaves = getEncounter(EncounterId.FIGHT_CAVES);
+        expect(encounterStartingAt(fightCaves, WardenP3StartPhase.OPENING)).toBe(fightCaves);
+        expect(() => encounterStartingAt(fightCaves, WardenP3StartPhase.SIPHON_2)).toThrow(
+            /siphon2/,
+        );
     });
 
     it.each(Object.values(EncounterId))(

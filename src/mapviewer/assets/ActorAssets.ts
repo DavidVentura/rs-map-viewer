@@ -27,6 +27,7 @@ import {
     ProjectileKind,
     SWAMP_TRIDENT_TRAVEL_SEQ_ID,
     TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
+    WARDENS_PULLED_TILE_TRAVEL_SEQ_ID,
     WARPED_SCEPTRE_TRAVEL_SEQ_ID,
     ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID,
     ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
@@ -46,7 +47,6 @@ import {
     TUMEKENS_SHADOW_IMPACT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
-    WARDENS_FALLING_TILE_SEQ_ID,
     WARDENS_LIGHTNING_SEQ_ID,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
     ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID,
@@ -232,7 +232,7 @@ const FIRE_BOLT_CAST_SPOTANIM_ID = 126;
 
 const WARDENS_LIGHTNING_SPOTANIM_ID = 2197;
 const WARDENS_LIGHTNING_WARNING_SPOTANIM_ID = 2198;
-const WARDENS_FALLING_TILE_SPOTANIM_ID = 2228;
+const WARDENS_PULLED_TILE_SPOTANIM_ID = 2228;
 
 // Zebak's own projectiles (SpotAnimType ids): 2176 ZEBAK_MAGE_PROJANIM_INITIAL, a jug, and 2178
 // ZEBAK_RANGE_PROJANIM_INITIAL, a rock shard; 2186/2185 are the bursts they break into.
@@ -322,6 +322,10 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
         ENERGY_SIPHON_RECALL_SPOTANIM_ID,
         ENERGY_SIPHON_RECALL_TRAVEL_SEQ_ID,
     ),
+    [ProjectileKind.WARDENS_PULLED_TILE]: animatedSpotAnim(
+        WARDENS_PULLED_TILE_SPOTANIM_ID,
+        WARDENS_PULLED_TILE_TRAVEL_SEQ_ID,
+    ),
 };
 
 export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>> = {
@@ -384,10 +388,6 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
     [VisualEffectKind.WARDENS_LIGHTNING_WARNING]: animatedSpotAnim(
         WARDENS_LIGHTNING_WARNING_SPOTANIM_ID,
         WARDENS_LIGHTNING_SEQ_ID,
-    ),
-    [VisualEffectKind.WARDENS_FALLING_TILE]: animatedSpotAnim(
-        WARDENS_FALLING_TILE_SPOTANIM_ID,
-        WARDENS_FALLING_TILE_SEQ_ID,
     ),
     [VisualEffectKind.ZEBAK_PHANTOM_MAGIC_IMPACT]: animatedSpotAnim(
         ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID,

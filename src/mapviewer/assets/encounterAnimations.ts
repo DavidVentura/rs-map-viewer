@@ -4,6 +4,7 @@ import { Encounter, EncounterScriptKind, EncounterSpawnMode } from "../game/Enco
 import { EncounterAnimations } from "../game/EncounterAnimations";
 import { EnemyTypeId, ResolvedEnemyType, getEnemyType, resolveEnemyType } from "../game/EnemyType";
 import { Player, StanceSeqs } from "../game/Player";
+import { ProjectileKind } from "../game/Projectile";
 import { SeqCatalog } from "../game/SeqCatalog";
 import { VisualEffectKind } from "../game/VisualEffect";
 import {
@@ -85,15 +86,24 @@ function resolveWardenSiphonAnimations(
     };
 }
 
+function pulledTileFlightSeconds(bake: ProjectileBake, catalog: SeqCatalog): number {
+    const seqId = projectileTravelSeqId(bake);
+    if (seqId === undefined) {
+        throw new Error("A pulled Wardens P3 tile's graphic must animate its tumble");
+    }
+    return sequenceDurationSeconds(catalog.get(seqId));
+}
+
 // A slam's impact frame, a phantom attack's release frame, a rock's landing frame or a siphon beat
 // outside its sequence throws here, while the encounter loads.
 function resolveWardenP3Animations(
     wardenIds: WardenP3AnimationIds,
     phantomIds: WardenPhantomAnimationIds,
     siphonIds: WardenSiphonAnimationIds,
-    effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>,
+    assets: ActorAssets,
     catalog: SeqCatalog,
 ): WardenP3Animations {
+    const { effects } = assets;
     const resolveSlam = ({ seqId, impactFrame }: WardenSlamSeq): ResolvedWardenSlam => {
         const seq = catalog.get(seqId);
         return {
@@ -135,6 +145,10 @@ function resolveWardenP3Animations(
             },
         },
         siphons: resolveWardenSiphonAnimations(wardenIds, siphonIds, effects, catalog),
+        pulledTileFlightSeconds: pulledTileFlightSeconds(
+            assets.projectiles[ProjectileKind.WARDENS_PULLED_TILE],
+            catalog,
+        ),
     };
 }
 
@@ -152,7 +166,7 @@ function scriptAnimations(
                 encounter.script.wardenAnimations,
                 encounter.script.phantomAnimations,
                 encounter.script.siphonAnimations,
-                assets.effects,
+                assets,
                 catalog,
             );
     }

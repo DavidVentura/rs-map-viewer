@@ -1,3 +1,4 @@
+import { WardenP3ArenaFloor, wardenP3PullableTiles } from "./WardenP3Arena";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
 
 export { WardenSlamTarget } from "./WardenP3SlamTarget";
@@ -41,6 +42,17 @@ export enum WardenStance {
     ENRAGED = "enraged",
 }
 
+// Where the fight opens: at the start, or (for testing, see MapViewerApp's ?phase=) straight into
+// one of the siphon intermissions or the enrage.
+export enum WardenP3StartPhase {
+    OPENING = "opening",
+    SIPHON_1 = "siphon1",
+    SIPHON_2 = "siphon2",
+    SIPHON_3 = "siphon3",
+    SIPHON_4 = "siphon4",
+    ENRAGE = "enrage",
+}
+
 export enum WardenSiphonStatus {
     NONE = "none",
     ALL_REVERSED = "all_reversed",
@@ -61,8 +73,8 @@ export type WardenP3Tile = {
 export type WardenP3Snapshot = {
     readonly timeSeconds: number;
     readonly wardenHealth: WardenP3Health;
-    readonly playerTile: WardenP3Tile;
     readonly siphonStatus: WardenSiphonStatus;
+    readonly arenaFloor: WardenP3ArenaFloor;
 };
 
 export type WardenSlamTiming = {
@@ -85,9 +97,10 @@ export type WardenP3HazardTiming = {
     // From the end of a phantom's attack sequence to the start of its next one, so every attack
     // plays out in full before the phantom winds up again.
     readonly phantomAttackRestSeconds: number;
-    readonly lightningWarningSeconds: number;
-    readonly lightningWarningIntervalSeconds: number;
-    readonly rowRemovalIntervalSeconds: number;
+    // From one enrage lightning volley to the next.
+    readonly lightningIntervalSeconds: number;
+    // Short enough against a pulled tile's flight that a few are always in the air together.
+    readonly tilePullIntervalSeconds: number;
 };
 
 export type WardenP3Timing = WardenP3HazardTiming & {
@@ -99,13 +112,6 @@ export type WardenP3Timing = WardenP3HazardTiming & {
     // From the start of the Warden's charge to the frame it throws the siphons out.
     readonly siphonLaunchSeconds: number;
 };
-
-export type WardenP3Arena = {
-    readonly furthestRowFromWarden: number;
-};
-
-declare const parsedArenaBrand: unique symbol;
-export type ParsedWardenP3Arena = WardenP3Arena & { readonly [parsedArenaBrand]: true };
 
 declare const parsedTimingBrand: unique symbol;
 export type ParsedWardenP3Timing = WardenP3Timing & { readonly [parsedTimingBrand]: true };
@@ -151,11 +157,6 @@ type LaunchedSiphons = {
     readonly kind: "launched";
 };
 
-type PendingLightning = {
-    readonly target: WardenP3Tile;
-    readonly strikesAtSeconds: number;
-};
-
 type WardenP3CommonState = {
     readonly nextIntermission: WardenP3Intermission | undefined;
     readonly phantoms: readonly ActivePhantom[];
@@ -177,10 +178,8 @@ export type WardenP3EnrageState = {
     readonly phase: WardenP3Phase.ENRAGE;
     readonly phantoms: readonly ActivePhantom[];
     readonly slam: WardenSlamState;
-    readonly pendingLightning: PendingLightning | undefined;
-    readonly nextLightningWarningAtSeconds: number;
-    readonly nextRowRemovalAtSeconds: number;
-    readonly nextRowToRemove: number;
+    readonly nextLightningAtSeconds: number;
+    readonly nextTilePullAtSeconds: number;
 };
 
 export type WardenP3CompleteState = {
@@ -253,19 +252,14 @@ export type EnterEnrageCommand = {
     readonly healAmount: number;
 };
 
-export type StrikeLightningCommand = {
-    readonly kind: "STRIKE_LIGHTNING";
-    readonly target: WardenP3Tile;
+// Which tiles the volley strikes is the world's to pick (see wardenP3LightningTargets).
+export type CallLightningCommand = {
+    readonly kind: "CALL_LIGHTNING";
 };
 
-export type WarnLightningCommand = {
-    readonly kind: "WARN_LIGHTNING";
-    readonly target: WardenP3Tile;
-};
-
-export type RemoveArenaRowCommand = {
-    readonly kind: "REMOVE_ARENA_ROW";
-    readonly distanceFromWarden: number;
+// Which edge row tile goes is the world's to pick (see pullWardenP3ArenaTile).
+export type PullArenaTileCommand = {
+    readonly kind: "PULL_ARENA_TILE";
 };
 
 export type CompleteEncounterCommand = {
@@ -283,14 +277,18 @@ export type WardenP3Command =
     | BeginPhantomAttackCommand
     | ReleasePhantomAttackCommand
     | EnterEnrageCommand
-    | WarnLightningCommand
-    | StrikeLightningCommand
-    | RemoveArenaRowCommand
+    | CallLightningCommand
+    | PullArenaTileCommand
     | CompleteEncounterCommand;
 
 export type WardenP3Result = {
     readonly nextState: WardenP3State;
     readonly commands: readonly WardenP3Command[];
+};
+
+export type WardenP3Opening = WardenP3Result & {
+    // What the Warden's health is set to before the opening commands run.
+    readonly wardenHealthFraction: number;
 };
 
 const INTERMISSION_HEALTH_FRACTIONS: readonly number[] = [0.8, 0.6, 0.4, 0.2];
@@ -300,9 +298,8 @@ const SIPHON_REVERSAL_DAMAGE_FRACTION = 0.05;
 
 export const WARDEN_P3_HAZARD_TIMING: WardenP3HazardTiming = {
     phantomAttackRestSeconds: 2.4,
-    lightningWarningSeconds: 0.6,
-    lightningWarningIntervalSeconds: 1.2,
-    rowRemovalIntervalSeconds: 2.4,
+    lightningIntervalSeconds: 2.4,
+    tilePullIntervalSeconds: 0.3,
 };
 
 function assertFiniteNonNegative(value: number, description: string): void {
@@ -319,12 +316,8 @@ function assertFinitePositive(value: number, description: string): void {
 
 export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
     assertFinitePositive(timing.phantomAttackRestSeconds, "phantomAttackRestSeconds");
-    assertFinitePositive(timing.lightningWarningSeconds, "lightningWarningSeconds");
-    assertFinitePositive(timing.lightningWarningIntervalSeconds, "lightningWarningIntervalSeconds");
-    assertFinitePositive(timing.rowRemovalIntervalSeconds, "rowRemovalIntervalSeconds");
-    if (timing.lightningWarningIntervalSeconds < timing.lightningWarningSeconds) {
-        throw new RangeError("lightningWarningIntervalSeconds cannot overlap lightning warnings");
-    }
+    assertFinitePositive(timing.lightningIntervalSeconds, "lightningIntervalSeconds");
+    assertFinitePositive(timing.tilePullIntervalSeconds, "tilePullIntervalSeconds");
     for (const [tempo, slams] of Object.entries(timing.slams)) {
         for (const [target, slam] of Object.entries(slams)) {
             assertFinitePositive(slam.durationSeconds, `The ${tempo} ${target} slam's duration`);
@@ -355,11 +348,19 @@ export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timin
     return timing as ParsedWardenP3Timing;
 }
 
-export function parseWardenP3Arena(arena: WardenP3Arena): ParsedWardenP3Arena {
-    if (!Number.isInteger(arena.furthestRowFromWarden) || arena.furthestRowFromWarden < 2) {
-        throw new RangeError("The arena must have a removable row beyond the Warden-adjacent row");
+export function parseWardenP3StartPhase(value: string | null): WardenP3StartPhase {
+    if (value === null) {
+        return WardenP3StartPhase.OPENING;
     }
-    return arena as ParsedWardenP3Arena;
+    const phase = Object.values(WardenP3StartPhase).find((candidate) => candidate === value);
+    if (phase === undefined) {
+        throw new RangeError(
+            `Unknown Wardens P3 phase "${value}", expected one of ${Object.values(
+                WardenP3StartPhase,
+            ).join(", ")}`,
+        );
+    }
+    return phase;
 }
 
 function validateSnapshot(snapshot: WardenP3Snapshot): void {
@@ -371,11 +372,6 @@ function validateSnapshot(snapshot: WardenP3Snapshot): void {
         snapshot.wardenHealth.current > snapshot.wardenHealth.maximum
     ) {
         throw new RangeError("Warden health must be within a positive maximum");
-    }
-    for (const [name, coordinate] of Object.entries(snapshot.playerTile)) {
-        if (!Number.isFinite(coordinate)) {
-            throw new RangeError(`Player tile ${name} must be finite`);
-        }
     }
 }
 
@@ -602,8 +598,8 @@ function completeEncounter(): WardenP3Result {
 
 function enterEnrage(
     normal: WardenP3NormalState,
-    snapshot: WardenP3Snapshot,
-    arena: WardenP3Arena,
+    timeSeconds: number,
+    wardenMaximumHealth: number,
     timing: WardenP3Timing,
 ): WardenP3Result {
     return {
@@ -613,20 +609,14 @@ function enterEnrage(
             slam: slamAfterStanceChange(
                 WardenStance.ENRAGED,
                 activeSlamTarget(normal.slam),
-                snapshot.timeSeconds,
+                timeSeconds,
                 timing,
             ),
-            pendingLightning: undefined,
-            nextLightningWarningAtSeconds:
-                snapshot.timeSeconds + timing.lightningWarningIntervalSeconds,
-            nextRowRemovalAtSeconds: snapshot.timeSeconds + timing.rowRemovalIntervalSeconds,
-            nextRowToRemove: arena.furthestRowFromWarden,
+            nextLightningAtSeconds: timeSeconds + timing.lightningIntervalSeconds,
+            nextTilePullAtSeconds: timeSeconds + timing.tilePullIntervalSeconds,
         },
         commands: [
-            {
-                kind: "ENTER_ENRAGE",
-                healAmount: snapshot.wardenHealth.maximum * ENRAGE_HEAL_FRACTION,
-            },
+            { kind: "ENTER_ENRAGE", healAmount: wardenMaximumHealth * ENRAGE_HEAL_FRACTION },
             { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.ENRAGED },
         ],
     };
@@ -634,7 +624,7 @@ function enterEnrage(
 
 function beginIntermission(
     normal: WardenP3NormalState,
-    snapshot: WardenP3Snapshot,
+    timeSeconds: number,
     timing: WardenP3Timing,
 ): WardenP3Result {
     const intermission = normal.nextIntermission;
@@ -644,7 +634,7 @@ function beginIntermission(
     const activation = activateIntermissionPhantom(
         intermission,
         normal.phantoms,
-        snapshot.timeSeconds,
+        timeSeconds,
         timing,
     );
     const commands: WardenP3Command[] = [{ kind: "SET_WARDEN_VULNERABILITY", vulnerable: false }];
@@ -661,7 +651,7 @@ function beginIntermission(
             phantoms: activation.phantoms,
             siphons: {
                 kind: "charging",
-                launchesAtSeconds: snapshot.timeSeconds + timing.siphonLaunchSeconds,
+                launchesAtSeconds: timeSeconds + timing.siphonLaunchSeconds,
             },
         },
         commands,
@@ -710,7 +700,6 @@ function resumeAfterSiphons(
 function stepNormal(
     state: WardenP3NormalState,
     snapshot: WardenP3Snapshot,
-    arena: WardenP3Arena,
     timing: WardenP3Timing,
 ): WardenP3Result {
     if (snapshot.wardenHealth.current <= 0) {
@@ -722,7 +711,7 @@ function stepNormal(
         workingState.nextIntermission !== undefined &&
         intermissionIsDue(workingState.nextIntermission, snapshot.wardenHealth)
     ) {
-        const intermission = beginIntermission(workingState, snapshot, timing);
+        const intermission = beginIntermission(workingState, snapshot.timeSeconds, timing);
         return {
             nextState: intermission.nextState,
             commands: [...phantomStep.commands, ...intermission.commands],
@@ -732,7 +721,12 @@ function stepNormal(
         workingState.nextIntermission === undefined &&
         healthFraction(snapshot.wardenHealth) <= ENRAGE_HEALTH_FRACTION
     ) {
-        const enrage = enterEnrage(workingState, snapshot, arena, timing);
+        const enrage = enterEnrage(
+            workingState,
+            snapshot.timeSeconds,
+            snapshot.wardenHealth.maximum,
+            timing,
+        );
         return {
             nextState: enrage.nextState,
             commands: [...phantomStep.commands, ...enrage.commands],
@@ -791,70 +785,155 @@ function stepEnrage(
     if (snapshot.wardenHealth.current <= 0) {
         return completeEncounter();
     }
-    const phantomStep = stepPhantoms(state.phantoms, snapshot.timeSeconds, timing);
-    const slamStep = stepSlam(state.slam, snapshot.timeSeconds, WardenSlamTempo.FAST, timing);
-    const commands: WardenP3Command[] = [...phantomStep.commands, ...slamStep.commands];
-    const pendingLightningAtStart = state.pendingLightning;
-    const lightningStrikes =
-        pendingLightningAtStart !== undefined &&
-        snapshot.timeSeconds >= pendingLightningAtStart.strikesAtSeconds;
-    const pendingLightning = lightningStrikes ? undefined : state.pendingLightning;
-    if (lightningStrikes && pendingLightningAtStart !== undefined) {
-        commands.push({ kind: "STRIKE_LIGHTNING", target: pendingLightningAtStart.target });
-    }
-    const lightningWarningDue =
-        pendingLightning === undefined &&
-        snapshot.timeSeconds >= state.nextLightningWarningAtSeconds;
-    const nextPendingLightning = lightningWarningDue
-        ? {
-              target: snapshot.playerTile,
-              strikesAtSeconds: snapshot.timeSeconds + timing.lightningWarningSeconds,
-          }
-        : pendingLightning;
-    if (lightningWarningDue) {
-        commands.push({ kind: "WARN_LIGHTNING", target: snapshot.playerTile });
-    }
-    const rowRemovalDue =
-        snapshot.timeSeconds >= state.nextRowRemovalAtSeconds && state.nextRowToRemove > 1;
-    if (rowRemovalDue) {
-        commands.push({
-            kind: "REMOVE_ARENA_ROW",
-            distanceFromWarden: state.nextRowToRemove,
-        });
-    }
+    const { timeSeconds } = snapshot;
+    const phantomStep = stepPhantoms(state.phantoms, timeSeconds, timing);
+    const slamStep = stepSlam(state.slam, timeSeconds, WardenSlamTempo.FAST, timing);
+    const lightningDue = timeSeconds >= state.nextLightningAtSeconds;
+    // Once only the Warden-adjacent row is left the pulls stop for good.
+    const tilePullDue =
+        timeSeconds >= state.nextTilePullAtSeconds &&
+        wardenP3PullableTiles(snapshot.arenaFloor).length > 0;
+    const hazardCommands: readonly WardenP3Command[] = [
+        ...(lightningDue ? [{ kind: "CALL_LIGHTNING" } as const] : []),
+        ...(tilePullDue ? [{ kind: "PULL_ARENA_TILE" } as const] : []),
+    ];
     return {
         nextState: {
             phase: WardenP3Phase.ENRAGE,
             phantoms: phantomStep.phantoms,
             slam: slamStep.slam,
-            pendingLightning: nextPendingLightning,
-            nextLightningWarningAtSeconds: lightningWarningDue
-                ? snapshot.timeSeconds + timing.lightningWarningIntervalSeconds
-                : state.nextLightningWarningAtSeconds,
-            nextRowRemovalAtSeconds: rowRemovalDue
-                ? snapshot.timeSeconds + timing.rowRemovalIntervalSeconds
-                : state.nextRowRemovalAtSeconds,
-            nextRowToRemove: rowRemovalDue ? state.nextRowToRemove - 1 : state.nextRowToRemove,
+            nextLightningAtSeconds: lightningDue
+                ? timeSeconds + timing.lightningIntervalSeconds
+                : state.nextLightningAtSeconds,
+            nextTilePullAtSeconds: tilePullDue
+                ? timeSeconds + timing.tilePullIntervalSeconds
+                : state.nextTilePullAtSeconds,
         },
-        commands,
+        commands: [...phantomStep.commands, ...slamStep.commands, ...hazardCommands],
     };
 }
 
-export function initialWardenP3State(
+function normalState(
     beginsAtSeconds: number,
-    arena: ParsedWardenP3Arena,
+    nextIntermission: WardenP3Intermission | undefined,
+    phantoms: readonly ActivePhantom[],
 ): WardenP3NormalState {
-    assertFiniteNonNegative(beginsAtSeconds, "beginsAtSeconds");
     return {
         phase: WardenP3Phase.NORMAL,
-        nextIntermission: WardenP3Intermission.FIRST,
-        phantoms: [],
+        nextIntermission,
+        phantoms,
         slam: {
             kind: "ready",
             target: WardenSlamTarget.RIGHT,
             beginsAtSeconds,
         },
     };
+}
+
+export function initialWardenP3State(beginsAtSeconds: number): WardenP3NormalState {
+    assertFiniteNonNegative(beginsAtSeconds, "beginsAtSeconds");
+    return normalState(beginsAtSeconds, WardenP3Intermission.FIRST, []);
+}
+
+const ALL_INTERMISSIONS: readonly WardenP3Intermission[] = [
+    WardenP3Intermission.FIRST,
+    WardenP3Intermission.SECOND,
+    WardenP3Intermission.THIRD,
+    WardenP3Intermission.FOURTH,
+];
+
+// A later start wakes the phantoms of the intermissions it skips just as those intermissions would
+// have, so they are all awake and first attack after a rest.
+function openAfterSkipping(
+    skipped: readonly WardenP3Intermission[],
+    nextIntermission: WardenP3Intermission | undefined,
+    timeSeconds: number,
+    timing: WardenP3Timing,
+): WardenP3Result & { readonly nextState: WardenP3NormalState } {
+    const woken = skipped.reduce<{
+        readonly phantoms: readonly ActivePhantom[];
+        readonly commands: readonly ActivatePhantomCommand[];
+    }>(
+        (awake, intermission) => {
+            const activation = activateIntermissionPhantom(
+                intermission,
+                awake.phantoms,
+                timeSeconds,
+                timing,
+            );
+            return {
+                phantoms: activation.phantoms,
+                commands:
+                    activation.command === undefined
+                        ? awake.commands
+                        : [...awake.commands, activation.command],
+            };
+        },
+        { phantoms: [], commands: [] },
+    );
+    return {
+        nextState: normalState(timeSeconds, nextIntermission, woken.phantoms),
+        commands: woken.commands,
+    };
+}
+
+function openAtIntermission(
+    intermission: WardenP3Intermission,
+    timeSeconds: number,
+    timing: WardenP3Timing,
+): WardenP3Opening {
+    const skipped = ALL_INTERMISSIONS.filter((candidate) => candidate < intermission);
+    const opened = openAfterSkipping(skipped, intermission, timeSeconds, timing);
+    const charging = beginIntermission(opened.nextState, timeSeconds, timing);
+    return {
+        nextState: charging.nextState,
+        commands: [...opened.commands, ...charging.commands],
+        wardenHealthFraction: INTERMISSION_HEALTH_FRACTIONS[intermission],
+    };
+}
+
+function openAtEnrage(
+    timeSeconds: number,
+    wardenMaximumHealth: number,
+    timing: WardenP3Timing,
+): WardenP3Opening {
+    const opened = openAfterSkipping(ALL_INTERMISSIONS, undefined, timeSeconds, timing);
+    const enraged = enterEnrage(opened.nextState, timeSeconds, wardenMaximumHealth, timing);
+    return {
+        nextState: enraged.nextState,
+        commands: [...opened.commands, ...enraged.commands],
+        wardenHealthFraction: ENRAGE_HEALTH_FRACTION,
+    };
+}
+
+// The fight's first state and the commands that set the world up for it: a later start drops the
+// Warden to that phase's threshold and enters the phase the way crossing it would.
+export function beginWardenP3(
+    startPhase: WardenP3StartPhase,
+    timeSeconds: number,
+    wardenMaximumHealth: number,
+    timing: ParsedWardenP3Timing,
+): WardenP3Opening {
+    assertFiniteNonNegative(timeSeconds, "timeSeconds");
+    assertFinitePositive(wardenMaximumHealth, "The Warden's maximum health");
+    switch (startPhase) {
+        case WardenP3StartPhase.OPENING:
+            return {
+                nextState: initialWardenP3State(timeSeconds),
+                commands: [],
+                wardenHealthFraction: 1,
+            };
+        case WardenP3StartPhase.SIPHON_1:
+            return openAtIntermission(WardenP3Intermission.FIRST, timeSeconds, timing);
+        case WardenP3StartPhase.SIPHON_2:
+            return openAtIntermission(WardenP3Intermission.SECOND, timeSeconds, timing);
+        case WardenP3StartPhase.SIPHON_3:
+            return openAtIntermission(WardenP3Intermission.THIRD, timeSeconds, timing);
+        case WardenP3StartPhase.SIPHON_4:
+            return openAtIntermission(WardenP3Intermission.FOURTH, timeSeconds, timing);
+        case WardenP3StartPhase.ENRAGE:
+            return openAtEnrage(timeSeconds, wardenMaximumHealth, timing);
+    }
 }
 
 // The Warden's health is held at the next threshold until the director has entered that
@@ -875,13 +954,12 @@ export function wardenP3HealthFloorFraction(state: WardenP3State): number {
 export function stepWardenP3(
     state: WardenP3State,
     snapshot: WardenP3Snapshot,
-    arena: ParsedWardenP3Arena,
     timing: ParsedWardenP3Timing,
 ): WardenP3Result {
     validateSnapshot(snapshot);
     switch (state.phase) {
         case WardenP3Phase.NORMAL:
-            return stepNormal(state, snapshot, arena, timing);
+            return stepNormal(state, snapshot, timing);
         case WardenP3Phase.SIPHONS:
             return stepSiphons(state, snapshot, timing);
         case WardenP3Phase.ENRAGE:

@@ -1,10 +1,11 @@
 import { LocTransform, REST_LOC_TRANSFORM } from "./LocTransform";
 import {
+    WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaTile,
-    wardenP3ArenaRow,
+    pullWardenP3ArenaTile,
     wardenP3ArenaTile,
     wardenP3FloorSlamTiles,
-    wardenP3RowTiles,
+    wardenP3SolidFloorTiles,
 } from "./WardenP3Arena";
 import {
     FloorSlam,
@@ -165,13 +166,19 @@ describe("Wardens P3 floor slam", () => {
         expect([...hits.values()].every((count) => count === 1)).toBe(true);
     });
 
-    it("hides the tiles of removed rows and leaves the rest of the floor alone", () => {
-        const removedRows = [9];
-        for (const tile of wardenP3RowTiles(wardenP3ArenaRow(9))) {
-            expect(wardenP3FloorTilePose([], removedRows, tile, 0)).toEqual({ kind: "HIDDEN" });
+    it("hides pulled tiles, even under a slam, and leaves the rest of the floor alone", () => {
+        const first = pullWardenP3ArenaTile(WARDEN_P3_INITIAL_ARENA_FLOOR, () => 0.5);
+        const second = pullWardenP3ArenaTile(first.floor, () => 0.5);
+        const floor = second.floor;
+        const slam = slamAt(WardenSlamTarget.CENTRE, 0);
+        for (const pulled of [first.tile, second.tile]) {
+            const arrival = floorSlamArrivalSeconds(slam, pulled) ?? 0;
+            expect(wardenP3FloorTilePose([slam], floor, pulled, arrival + 0.05)).toEqual({
+                kind: "HIDDEN",
+            });
         }
-        for (const tile of wardenP3RowTiles(wardenP3ArenaRow(8))) {
-            expect(wardenP3FloorTilePose([], removedRows, tile, 0)).toBe(REST_LOC_TRANSFORM);
+        for (const tile of wardenP3SolidFloorTiles(floor)) {
+            expect(wardenP3FloorTilePose([], floor, tile, 0)).toBe(REST_LOC_TRANSFORM);
         }
     });
 });
