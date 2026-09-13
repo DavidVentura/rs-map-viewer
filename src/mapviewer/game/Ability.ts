@@ -42,7 +42,7 @@ export type TargetDelivery = {
 // POINT: the cone always swings toward the aimed ground point, ignoring any hovered combatant -
 // the right choice for a special that reads wrong when snapped onto a body (see aimModeFor).
 // TRACKED_TARGET: the cone is a basic attack's own ladder tier - it targets a combatant like
-// TargetDelivery (reach-gated, chased into range, see GameWorld.computeMeleeChaseInput/
+// TargetDelivery (reach-gated, chased into range, see PlayerOrders.computeMeleeChaseInput/
 // canUseAbility) and swings toward wherever that combatant now stands once in reach.
 export enum ConeAim {
     POINT = 0,
@@ -241,7 +241,7 @@ export function aimModeFor(delivery: Delivery): AimMode {
 // COMBATANT_OR_POINT and so can be aimed at one: TargetDelivery always, and a TRACKED_TARGET
 // ConeDelivery (a melee basic attack's own ladder tier). undefined for anything else - a
 // POINT_ONLY cone special (no combatant to chase) or a CIRCLE/PROJECTILE delivery, which have
-// their own aim/range rules. GameWorld's melee chase-to-target movement and its canUseAbility
+// their own aim/range rules. PlayerOrders' melee chase-to-target movement and its canUseAbility
 // reach check both derive their reach from this, rather than special-casing DeliveryKind.TARGET.
 export function trackedDeliveryReach(delivery: Delivery): number | undefined {
     switch (delivery.kind) {

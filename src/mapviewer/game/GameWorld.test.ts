@@ -24,13 +24,7 @@ import {
     resolveEnemyType,
 } from "./EnemyType";
 import { EquipmentPath } from "./Equipment";
-import {
-    AbilitySlotInput,
-    CombatInput,
-    GameWorld,
-    ScheduledVisualEffect,
-    SimInput,
-} from "./GameWorld";
+import { GameWorld } from "./GameWorld";
 import {
     WorldObjectKind,
     createInteraction,
@@ -41,11 +35,13 @@ import {
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
 import { Player } from "./Player";
+import { AbilitySlotInput, CombatInput, SimInput } from "./PlayerOrders";
 import { createExperience } from "./Progression";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { recordStationaryRangedHit } from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
+import { ScheduledVisualEffect } from "./WorldContext";
 import {
     BOW_SHOT,
     CLEAVE,
@@ -1144,7 +1140,7 @@ function bossTestEncounter(): Encounter {
 const STUB_INTERACTION_DURATION_SECONDS = STUB_FRAME_SECONDS * STUB_FRAME_COUNT;
 
 function startBossPhase(world: GameWorld): void {
-    const interaction = world.activeInteractions[0];
+    const interaction = world.waveEncounter!.activeInteractions[0];
     world.advance(1 / 120, {
         ...idleInput(),
         interaction: { kind: "START", interactionId: interaction.id },
@@ -1164,14 +1160,14 @@ describe("TzTok-Jad boss wave (integration)", () => {
 
         advanceSeconds(world, autoUpgradeInput(), 1);
         expect(world.enemies.some((enemy) => enemy.type.id === EnemyTypeId.TZTOK_JAD)).toBe(false);
-        expect(world.getWaveProgress()?.cleared).toBe(false);
+        expect(world.waveEncounter!.getWaveProgress().cleared).toBe(false);
 
         world.enemies[0].health = 0;
         advanceSeconds(world, autoUpgradeInput(), 0.1);
 
         const jad = world.enemies.find((enemy) => enemy.type.id === EnemyTypeId.TZTOK_JAD);
         expect(jad).toBeDefined();
-        expect(world.getWaveProgress()?.cleared).toBe(false);
+        expect(world.waveEncounter!.getWaveProgress().cleared).toBe(false);
         world.drainEvents();
 
         jad!.health = 0;
@@ -1179,7 +1175,7 @@ describe("TzTok-Jad boss wave (integration)", () => {
         const events = world.drainEvents();
 
         expect(events.some((event) => event.kind === CombatEventKind.ENCOUNTER_CLEARED)).toBe(true);
-        expect(world.getWaveProgress()?.cleared).toBe(true);
+        expect(world.waveEncounter!.getWaveProgress().cleared).toBe(true);
     });
 
     it("spawns two Yt-HurKot healers and emits BOSS_PHASE once, when Jad's health first crosses 50%", () => {

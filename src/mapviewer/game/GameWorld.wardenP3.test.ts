@@ -3,7 +3,8 @@ import { CombatEventKind, applyDamage } from "./CombatEvent";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
-import { GameWorld, SimInput } from "./GameWorld";
+import { GameWorld } from "./GameWorld";
+import { SimInput } from "./PlayerOrders";
 import { ProjectileKind } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
@@ -32,6 +33,7 @@ import {
 import { WARDEN_P3_LIGHTNING } from "./WardenP3Enrage";
 import { FloorSlam, floorSlamArrivalSeconds, floorSlamEndsAtSeconds } from "./WardenP3FloorSlam";
 import { WARDEN_P3_PHANTOM_DAMAGE, wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
+import { WardenP3Runtime } from "./WardenP3Runtime";
 import { stubEncounterAnimations } from "./testLoaders";
 
 class FlatTerrain implements Terrain {
@@ -114,13 +116,15 @@ function createWardenWorld(
 ): {
     readonly world: GameWorld;
     readonly wardenId: number;
+    readonly wardens: WardenP3Runtime;
 } {
     const world = new GameWorld(new FlatTerrain(), ANIMATIONS, random);
     world.spawnPlayer(0, 0, 0);
     const wardenId = world.spawnEnemy(128, 0, 0, ANIMATIONS.enemyType(EnemyTypeId.TUMEKENS_WARDEN));
     addPhantoms(world);
-    world.startWardenP3Runtime(wardenId, WARDEN_P3_SOLO_SIPHON_LAYOUT, startPhase);
-    return { world, wardenId };
+    const wardens = new WardenP3Runtime(world, wardenId, WARDEN_P3_SOLO_SIPHON_LAYOUT, startPhase);
+    world.encounterScript = wardens;
+    return { world, wardenId, wardens };
 }
 
 const STEP_SECONDS = 0.01;
@@ -158,7 +162,7 @@ function reverseSiphon(world: GameWorld, siphon: EnergySiphonActor): void {
 function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
     for (let step = 0; step < 2000; step++) {
         world.step(EMPTY_INPUT, STEP_SECONDS);
-        const slam = world.wardenP3RenderState?.floorSlams[0];
+        const slam = world.encounterScript?.renderState.floorSlams[0];
         if (slam) {
             return slam;
         }
@@ -191,7 +195,7 @@ describe("Wardens P3 world runtime", () => {
     });
 
     it("makes the Warden invulnerable for siphons and exposes the director commands to rendering", () => {
-        const { world, wardenId } = createWardenWorld();
+        const { world, wardenId, wardens } = createWardenWorld();
         const warden = world.findEnemy(wardenId)!;
         const charging = WARDEN_ANIMATIONS.stances[WardenStance.CHARGING];
         const standing = WARDEN_ANIMATIONS.stances[WardenStance.STANDING];
@@ -200,7 +204,7 @@ describe("Wardens P3 world runtime", () => {
         world.step(EMPTY_INPUT, 0.01);
 
         expect(warden.invulnerable).toBe(true);
-        expect(world.wardenP3RenderState).toMatchObject({
+        expect(world.encounterScript?.renderState).toMatchObject({
             activeIntermission: 0,
             commands: [
                 { kind: "SET_WARDEN_VULNERABILITY", vulnerable: false },
@@ -212,11 +216,11 @@ describe("Wardens P3 world runtime", () => {
         world.step(EMPTY_INPUT, STEP_SECONDS);
         expect(warden.animation.seqId).toBe(charging.hold.seqId);
 
-        world.resolveWardenP3Siphons(WardenSiphonStatus.ALL_REVERSED);
+        wardens.resolveSiphons(WardenSiphonStatus.ALL_REVERSED);
         world.step(EMPTY_INPUT, 0.01);
 
         expect(warden.invulnerable).toBe(false);
-        expect(world.wardenP3RenderState).toMatchObject({
+        expect(world.encounterScript?.renderState).toMatchObject({
             activeIntermission: undefined,
             commands: [
                 {
@@ -309,7 +313,7 @@ describe("Wardens P3 world runtime", () => {
         reverseSiphon(world, siphons.at(-1)!);
 
         expect(energySiphons(world)).toEqual([]);
-        expect(world.wardenP3RenderState?.commands).toContainEqual({
+        expect(world.encounterScript?.renderState.commands).toContainEqual({
             kind: "RESOLVE_ENERGY_SIPHONS",
             intermission: 0,
             status: WardenSiphonStatus.ALL_REVERSED,
@@ -348,13 +352,13 @@ describe("Wardens P3 world runtime", () => {
         }
 
         expect(world.timeSeconds).toBeLessThan(deadlineAtSeconds + 2 * STEP_SECONDS);
-        expect(world.wardenP3RenderState?.commands).toContainEqual({
+        expect(world.encounterScript?.renderState.commands).toContainEqual({
             kind: "RESOLVE_ENERGY_SIPHONS",
             intermission: 0,
             status: WardenSiphonStatus.DEADLINE_EXPIRED,
             reversalDamage: 5,
         });
-        expect(world.wardenP3RenderState?.floorSlams).toHaveLength(1);
+        expect(world.encounterScript?.renderState.floorSlams).toHaveLength(1);
     });
 
     // Reverses reversedCount of the first intermission's siphons, then lets the rest run out the
@@ -410,10 +414,13 @@ describe("Wardens P3 world runtime", () => {
 
     // Drives past one of the four scripted siphon intermissions (INTERMISSION_HEALTH_FRACTIONS in
     // WardenP3Director.ts) so a later health drop reaches enrage instead of retriggering siphons.
-    function clearIntermission(world: GameWorld, wardenId: number, healthFraction: number): void {
+    function clearIntermission(
+        { world, wardenId, wardens }: ReturnType<typeof createWardenWorld>,
+        healthFraction: number,
+    ): void {
         world.findEnemy(wardenId)!.health = healthFraction * 100;
         world.step(EMPTY_INPUT, 0.01);
-        world.resolveWardenP3Siphons(WardenSiphonStatus.ALL_REVERSED);
+        wardens.resolveSiphons(WardenSiphonStatus.ALL_REVERSED);
         world.step(EMPTY_INPUT, 0.01);
     }
 
@@ -426,7 +433,7 @@ describe("Wardens P3 world runtime", () => {
         world.player!.x = (solidTile.x + 0.5) * 128;
         world.player!.y = (solidTile.y + 0.5) * 128;
 
-        while (world.wardenP3RenderState!.arenaFloor.clearedRowCount === 0) {
+        while (world.encounterScript!.renderState.arenaFloor.clearedRowCount === 0) {
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
 
@@ -468,7 +475,7 @@ describe("Wardens P3 world runtime", () => {
         for (let step = 0; step < 5000; step++) {
             beforeStep();
             world.step(EMPTY_INPUT, STEP_SECONDS);
-            const release = world.wardenP3RenderState?.commands.find(
+            const release = world.encounterScript?.renderState.commands.find(
                 (command) =>
                     command.kind === "RELEASE_PHANTOM_ATTACK" &&
                     command.release.phantom === phantom,
@@ -482,9 +489,10 @@ describe("Wardens P3 world runtime", () => {
 
     // Leaves the Warden in its second siphon intermission, where Zebak's phantom has just woken.
     function createZebakWorld(): GameWorld {
-        const { world, wardenId } = createWardenWorld();
+        const wardenWorld = createWardenWorld();
+        const { world, wardenId } = wardenWorld;
         placePlayerOn(world, wardenP3ArenaTile(3936, 5162));
-        clearIntermission(world, wardenId, 0.8);
+        clearIntermission(wardenWorld, 0.8);
         world.findEnemy(wardenId)!.health = 60;
         return world;
     }
@@ -546,10 +554,11 @@ describe("Wardens P3 world runtime", () => {
         readonly world: GameWorld;
         readonly clearZebakShots: () => void;
     } {
-        const { world, wardenId } = createWardenWorld(() => 0.5);
+        const wardenWorld = createWardenWorld(() => 0.5);
+        const { world, wardenId } = wardenWorld;
         placePlayerOn(world, playerTile);
-        clearIntermission(world, wardenId, 0.8);
-        clearIntermission(world, wardenId, 0.6);
+        clearIntermission(wardenWorld, 0.8);
+        clearIntermission(wardenWorld, 0.6);
         world.findEnemy(wardenId)!.health = 40;
         const clearZebakShots = () => {
             world.projectiles = [];
@@ -611,7 +620,9 @@ describe("Wardens P3 world runtime", () => {
     function stepUntilCommand(world: GameWorld, kind: WardenP3Command["kind"]): void {
         for (let step = 0; step < 5000; step++) {
             world.step(EMPTY_INPUT, STEP_SECONDS);
-            if (world.wardenP3RenderState?.commands.some((command) => command.kind === kind)) {
+            if (
+                world.encounterScript?.renderState.commands.some((command) => command.kind === kind)
+            ) {
                 return;
             }
         }
@@ -619,7 +630,7 @@ describe("Wardens P3 world runtime", () => {
     }
 
     function pulledTiles(world: GameWorld): WardenP3ArenaTile[] {
-        const floor = world.wardenP3RenderState!.arenaFloor;
+        const floor = world.encounterScript!.renderState.arenaFloor;
         return WARDEN_P3_FLOOR_DECORATIONS.tiles
             .map((tile) => wardenP3ArenaTile(tile.x, tile.y))
             .filter(
@@ -637,11 +648,11 @@ describe("Wardens P3 world runtime", () => {
             WARDEN_ANIMATIONS.stances[WardenStance.ENRAGED].transition.seqId,
         );
         expect(warden.invulnerable).toBe(false);
-        expect(world.wardenP3RenderState).toMatchObject({
+        expect(world.encounterScript?.renderState).toMatchObject({
             activeIntermission: undefined,
             activePhantoms: [WardenPhantom.ZEBAK, WardenPhantom.BABA],
         });
-        const enrage = world.wardenP3RenderState?.commands.find(
+        const enrage = world.encounterScript?.renderState.commands.find(
             (command) => command.kind === "ENTER_ENRAGE",
         );
         if (enrage?.kind !== "ENTER_ENRAGE") {
@@ -652,7 +663,7 @@ describe("Wardens P3 world runtime", () => {
         expect(healthBeforeHeal).toBeLessThan(warden.maxHealth * 0.2);
 
         world.step(EMPTY_INPUT, STEP_SECONDS);
-        expect(world.wardenP3RenderState?.activeIntermission).toBeUndefined();
+        expect(world.encounterScript?.renderState.activeIntermission).toBeUndefined();
     });
 
     it.each([
@@ -674,7 +685,7 @@ describe("Wardens P3 world runtime", () => {
             const { world, wardenId } = createWardenWorld(Math.random, startPhase);
 
             expect(world.findEnemy(wardenId)!.invulnerable).toBe(true);
-            expect(world.wardenP3RenderState).toMatchObject({
+            expect(world.encounterScript?.renderState).toMatchObject({
                 activeIntermission: intermission,
                 activePhantoms: phantoms,
             });
@@ -709,7 +720,7 @@ describe("Wardens P3 world runtime", () => {
         stepUntilCommand(world, "PULL_ARENA_TILE");
 
         expect(pulledTiles(world)).toEqual([doomed]);
-        const floor = world.wardenP3RenderState!.arenaFloor;
+        const floor = world.encounterScript!.renderState.arenaFloor;
         expect(canOccupyWardenP3ArenaTile(floor, playerTile(world))).toBe(true);
         expect(playerTile(world)).toEqual(wardenP3ArenaTile(3926, 5164));
         expect(world.player!.health).toBe(startingHealth);
@@ -738,7 +749,7 @@ describe("Wardens P3 world runtime", () => {
         stepUntilCommand(world, "CALL_LIGHTNING");
         const strikesAtSeconds = world.timeSeconds + WARDEN_P3_LIGHTNING.warningSeconds;
         const struck = lightningWarningTiles(world);
-        const floor = world.wardenP3RenderState!.arenaFloor;
+        const floor = world.encounterScript!.renderState.arenaFloor;
         // Clear of the rows being pulled, so the tile stays under the player until the strike.
         const standOn = dodge
             ? wardenP3SolidFloorTiles(floor).find(
@@ -759,7 +770,7 @@ describe("Wardens P3 world runtime", () => {
     it("calls several bolts onto solid floor at once, each warned before it strikes", () => {
         const { world } = createWardenWorld(seededRandom(9), WardenP3StartPhase.ENRAGE);
         stepUntilCommand(world, "CALL_LIGHTNING");
-        const floor = world.wardenP3RenderState!.arenaFloor;
+        const floor = world.encounterScript!.renderState.arenaFloor;
 
         const struck = lightningWarningTiles(world);
         expect(struck).toHaveLength(WARDEN_P3_LIGHTNING.boltCount);

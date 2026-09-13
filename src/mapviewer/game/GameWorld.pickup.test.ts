@@ -1,7 +1,8 @@
 import { CombatEventKind } from "./CombatEvent";
 import { EquipmentPath } from "./Equipment";
-import { GameWorld, SimInput } from "./GameWorld";
+import { GameWorld } from "./GameWorld";
 import { GroundItem } from "./GroundItem";
+import { PICKUP_RADIUS, SimInput } from "./PlayerOrders";
 import { Terrain } from "./Terrain";
 import { stubEncounterAnimations } from "./testLoaders";
 
@@ -92,7 +93,7 @@ describe("ground item pickup", () => {
         expect(player.equipment[EquipmentPath.STAFF]).toBe(2);
         expect(world.groundItems.length).toBe(0);
         expect(Math.hypot(item.x - player.x, item.y - player.y)).toBeLessThanOrEqual(
-            GameWorld.PICKUP_RADIUS + 1,
+            PICKUP_RADIUS + 1,
         );
     });
 

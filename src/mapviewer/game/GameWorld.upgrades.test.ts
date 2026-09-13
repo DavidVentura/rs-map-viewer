@@ -3,7 +3,7 @@ import { EncounterId, EncounterSpawnMode, Wave, WaveEncounter } from "./Encounte
 import { EnemyState } from "./Enemy";
 import { EnemyTypeId } from "./EnemyType";
 import { EquipmentPath, styleSetGrant } from "./Equipment";
-import { GameWorld, SimInput } from "./GameWorld";
+import { GameWorld } from "./GameWorld";
 import {
     WorldObjectKind,
     createInteraction,
@@ -13,6 +13,7 @@ import {
     createWorldPosition,
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
+import { SimInput } from "./PlayerOrders";
 import {
     createNamedEquipmentGrantReward,
     createRewardId,
@@ -189,7 +190,7 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 }
 
 function startPhase(world: GameWorld): void {
-    const interaction = world.activeInteractions[0];
+    const interaction = world.waveEncounter!.activeInteractions[0];
     world.advance(1 / 120, {
         ...idleInput(),
         interaction: { kind: "START", interactionId: interaction.id },
@@ -204,12 +205,12 @@ describe("phased wave encounters", () => {
 
         world.advance(1, idleInput());
         expect(world.enemies).toEqual([]);
-        expect(world.phaseLifecycle?.kind).toBe("READY");
-        expect(world.activeInteractions).toHaveLength(1);
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("READY");
+        expect(world.waveEncounter!.activeInteractions).toHaveLength(1);
 
         startPhase(world);
 
-        expect(world.phaseLifecycle?.kind).toBe("ACTIVE");
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("ACTIVE");
         expect(world.enemies).toHaveLength(1);
     });
 
@@ -221,28 +222,28 @@ describe("phased wave encounters", () => {
         world.enemies[0].health = 0;
         world.advance(1 / 120, idleInput());
 
-        expect(world.interactionState.kind).toBe("IDLE");
-        expect(world.phaseLifecycle?.kind).toBe("ACTIVE");
+        expect(world.waveEncounter!.interactionState.kind).toBe("IDLE");
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("ACTIVE");
         expect(world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)).toHaveLength(1);
     });
 
     it("cancels an interaction when the player gives movement input", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.startEncounter(phaseEncounter([FIRST_WAVE]), 0, 0, 0);
-        const interaction = world.activeInteractions[0];
+        const interaction = world.waveEncounter!.activeInteractions[0];
         world.advance(1 / 120, {
             ...idleInput(),
             interaction: { kind: "START", interactionId: interaction.id },
         });
-        expect(world.interactionState.kind).toBe("EXECUTING");
+        expect(world.waveEncounter!.interactionState.kind).toBe("EXECUTING");
 
         world.advance(1 / 120, {
             ...idleInput(),
             movement: { x: 1, y: 0, running: false },
         });
 
-        expect(world.interactionState.kind).toBe("IDLE");
-        expect(world.phaseLifecycle?.kind).toBe("READY");
+        expect(world.waveEncounter!.interactionState.kind).toBe("IDLE");
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("READY");
     });
 
     it("opens an upgrade choice only after the reward interaction completes", () => {
@@ -252,16 +253,16 @@ describe("phased wave encounters", () => {
         world.enemies[0].health = 0;
         world.advance(1 / 120, idleInput());
 
-        expect(world.phaseLifecycle?.kind).toBe("REWARDS");
-        expect(world.pendingUpgradeOffer).toBeUndefined();
-        const rewardInteraction = world.activeInteractions[0];
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("REWARDS");
+        expect(world.waveEncounter!.pendingUpgradeOffer).toBeUndefined();
+        const rewardInteraction = world.waveEncounter!.activeInteractions[0];
         world.advance(1 / 120, {
             ...idleInput(),
             interaction: { kind: "START", interactionId: rewardInteraction.id },
         });
         advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 
-        expect(world.pendingUpgradeOffer?.map(({ id }) => id)).toEqual([
+        expect(world.waveEncounter!.pendingUpgradeOffer?.map(({ id }) => id)).toEqual([
             UpgradeId.DAMAGE_UP,
             UpgradeId.SWIFT_STRIKES,
             UpgradeId.QUICK_HANDS,
@@ -269,8 +270,8 @@ describe("phased wave encounters", () => {
         const previous = world.player!.getModifiers();
         world.advance(1 / 120, { ...idleInput(), chooseUpgrade: 0 });
         expect(world.player!.getModifiers()).not.toEqual(previous);
-        expect(world.pendingUpgradeOffer).toBeUndefined();
-        expect(world.phaseLifecycle?.kind).toBe("COMPLETE");
+        expect(world.waveEncounter!.pendingUpgradeOffer).toBeUndefined();
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("COMPLETE");
     });
 
     it("opening the chest bursts an equipment grant onto the floor as separate items instead of auto-equipping", () => {
@@ -279,10 +280,10 @@ describe("phased wave encounters", () => {
         startPhase(world);
         world.enemies[0].health = 0;
         world.advance(1 / 120, idleInput());
-        expect(world.phaseLifecycle?.kind).toBe("REWARDS");
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("REWARDS");
 
         const killDropIds = new Set(world.groundItems.map((item) => item.id));
-        const rewardInteraction = world.activeInteractions[0];
+        const rewardInteraction = world.waveEncounter!.activeInteractions[0];
         world.advance(1 / 120, {
             ...idleInput(),
             interaction: { kind: "START", interactionId: rewardInteraction.id },
@@ -299,6 +300,6 @@ describe("phased wave encounters", () => {
         expect(chestItems.every((item) => item.tierIndex === 2)).toBe(true);
         // Scattered onto distinct tiles rather than stacked on top of each other.
         expect(new Set(chestItems.map((item) => `${item.x},${item.y}`)).size).toBe(2);
-        expect(world.phaseLifecycle?.kind).toBe("COMPLETE");
+        expect(world.waveEncounter!.phaseLifecycle.kind).toBe("COMPLETE");
     });
 });

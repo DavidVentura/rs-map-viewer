@@ -37,7 +37,7 @@ import {
     sequenceDurationSeconds,
 } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
-import { Encounter, EncounterSpawnMode } from "../game/Encounter";
+import { Encounter, EncounterScriptKind, EncounterSpawnMode } from "../game/Encounter";
 import {
     EncounterActor,
     EncounterActorKind,
@@ -48,13 +48,7 @@ import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
 import { EnergySiphonState } from "../game/EnergySiphon";
 import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
-import {
-    AbilitySlotInput,
-    CombatInput,
-    GameWorld,
-    InteractionIntent,
-    PickupTarget,
-} from "../game/GameWorld";
+import { GameWorld } from "../game/GameWorld";
 import { GroundItem } from "../game/GroundItem";
 import {
     Interaction,
@@ -72,6 +66,12 @@ import {
     groundDecorationsInMapSquare,
 } from "../game/LocTransform";
 import { Player, PlayerInput } from "../game/Player";
+import {
+    AbilitySlotInput,
+    CombatInput,
+    InteractionIntent,
+    PickupTarget,
+} from "../game/PlayerOrders";
 import { createCharacterLevel, experienceForLevel } from "../game/Progression";
 import { Projectile } from "../game/Projectile";
 import { loadSeqCatalog } from "../game/SeqCatalog";
@@ -1871,14 +1871,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // The active interaction (if any) that operates a given world object - at most one, since a
     // lever/chest only ever has one live interaction (start XOR reward) at a time.
     private activeInteractionForObject(objectId: WorldObjectId): Interaction | undefined {
-        return this.mapViewer.world.activeInteractions.find(
+        return this.mapViewer.world.waveEncounter?.activeInteractions.find(
             (interaction) => interaction.objectId === objectId,
         );
     }
 
     private buildWorldObjectScreenCandidates(): EnemyScreenCandidate[] {
         const candidates: EnemyScreenCandidate[] = [];
-        for (const visual of this.mapViewer.world.worldObjectVisuals) {
+        for (const visual of this.mapViewer.world.waveEncounter?.worldObjectVisuals ?? []) {
             if (!visual.visible || !this.activeInteractionForObject(visual.object.id)) {
                 continue;
             }
@@ -1941,7 +1941,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (pickedId === undefined) {
             return undefined;
         }
-        return this.mapViewer.world.worldObjectVisuals.find(
+        return this.mapViewer.world.waveEncounter?.worldObjectVisuals.find(
             (visual) => visual.object.id === pickedId,
         );
     }
@@ -2024,7 +2024,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
         const worldObjectVisual =
             objectId !== undefined
-                ? this.mapViewer.world.worldObjectVisuals.find(
+                ? this.mapViewer.world.waveEncounter?.worldObjectVisuals.find(
                       (visual) => visual.object.id === objectId,
                   )
                 : undefined;
@@ -2198,7 +2198,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     private buildInteractionInput() {
         const input = this.mapViewer.inputManager;
-        const activeIds = new Set(this.mapViewer.world.activeInteractions.map(({ id }) => id));
+        const activeIds = new Set(
+            (this.mapViewer.world.waveEncounter?.activeInteractions ?? []).map(({ id }) => id),
+        );
         if (this.selectedInteractionId && !activeIds.has(this.selectedInteractionId)) {
             this.selectedInteractionId = undefined;
         }
@@ -2228,7 +2230,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.pickupTargetItemId = undefined;
             return { kind: "START" as const, interactionId: interaction.id };
         }
-        if (this.mapViewer.world.interactionState.kind !== "IDLE") {
+        const interactionState = this.mapViewer.world.waveEncounter?.interactionState;
+        if (interactionState !== undefined && interactionState.kind !== "IDLE") {
             this.selectedInteractionId = undefined;
             return { kind: "CANCEL" as const };
         }
@@ -2568,7 +2571,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             }
         }
 
-        const phaseProgress = world.getPhaseProgress();
+        const phaseProgress = world.waveEncounter?.getPhaseProgress();
 
         const targetEnemy = this.highlightedEnemy;
         const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
@@ -2619,8 +2622,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.menuState.kind === MenuStateKind.CLOSED
                     ? this.buildContextMenuTooltipInfo()
                     : undefined,
-            upgradeOffer: world.pendingUpgradeOffer && {
-                cards: world.pendingUpgradeOffer.map(
+            upgradeOffer: world.waveEncounter?.pendingUpgradeOffer && {
+                cards: world.waveEncounter.pendingUpgradeOffer.map(
                     (upgrade, index): UpgradeCardHudInfo => ({
                         name: upgrade.name,
                         description: upgrade.description,
@@ -2901,8 +2904,8 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // tile pulls.
     private locTransformSource(): (tile: LocTile) => LocTransform {
         const world = this.mapViewer.world;
-        const wardens = world.wardenP3RenderState;
-        if (!wardens) {
+        const wardens = world.encounterScript?.renderState;
+        if (wardens?.kind !== EncounterScriptKind.WARDENS_P3) {
             return () => REST_LOC_TRANSFORM;
         }
         const timeSeconds = world.timeSeconds;
@@ -2985,7 +2988,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             world.projectiles.length +
             world.visualEffects.length +
             world.groundItems.length +
-            world.worldObjectVisuals.length +
+            (world.waveEncounter?.worldObjectVisuals.length ?? 0) +
             (this.previewGfxId !== undefined ? 1 : 0);
 
         if (this.actorInstanceData.length / (4 * ACTOR_INSTANCE_TEXELS) < maxCount) {
@@ -3190,7 +3193,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             );
         }
 
-        for (const visual of world.worldObjectVisuals) {
+        for (const visual of world.waveEncounter?.worldObjectVisuals ?? []) {
             if (!visual.visible) {
                 continue;
             }
