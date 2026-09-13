@@ -45,6 +45,7 @@
         "export-textures": "npx tsx scripts/cache/export-textures.ts",
         "export-height-map": "npx tsx scripts/cache/export-height-map.ts",
         "render-music": "npx tsx scripts/cache/render-music.ts",
+        "render-sfx": "npx tsx scripts/cache/render-sfx.ts",
         "anim-table": "npx tsx scripts/cache/anim-table.ts",
         "gfx-table": "npx tsx scripts/cache/gfx-table.ts",
         "render-gfx": "npx tsx scripts/cache/render-gfx.ts",

@@ -28,7 +28,10 @@ import { HudAssets, loadHudAssets } from "./assets/HudAssets";
 import { declaredSeqIds } from "./assets/cacheRoots";
 import { resolveEncounterAnimations } from "./assets/encounterAnimations";
 import { AudioFeedback } from "./audio/AudioFeedback";
+import { FrameSoundDriver } from "./audio/FrameSoundDriver";
+import { SeqSoundCatalog, loadSeqSoundCatalog, sfxClips, soundSeqIds } from "./audio/FrameSounds";
 import { MusicPlayer } from "./audio/MusicPlayer";
+import { SfxPlayer } from "./audio/SfxPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
 import { Encounter, EncounterId, buildPreviewEncounter, getEncounter } from "./game/Encounter";
 import { EncounterAnimations } from "./game/EncounterAnimations";
@@ -59,6 +62,8 @@ export class MapViewer {
     seqFrameLoader!: SeqFrameLoader;
     skeletalSeqLoader!: SkeletalSeqLoader;
     seqCatalog!: SeqCatalog;
+    seqSounds!: SeqSoundCatalog;
+    frameSounds!: FrameSoundDriver;
     encounterAnimations!: EncounterAnimations;
     hudAssets!: HudAssets;
 
@@ -86,7 +91,9 @@ export class MapViewer {
     cameraSpeed: number = 1;
 
     readonly musicPlayer: MusicPlayer = new MusicPlayer();
-    readonly audioFeedback: AudioFeedback;
+    private readonly audioContext = new AudioContext();
+    readonly audioFeedback = new AudioFeedback(this.audioContext);
+    readonly sfxPlayer = new SfxPlayer(this.audioContext);
 
     constructor(
         readonly workerPool: RenderDataWorkerPool,
@@ -98,7 +105,6 @@ export class MapViewer {
         readonly godMode: boolean = false,
         readonly gearOverride: readonly EquipmentChange[] = [],
     ) {
-        this.audioFeedback = new AudioFeedback(new AudioContext());
         // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
         // camera over the encounter's squares, the only ones its pack holds.
         const encounter = getEncounter(encounterId);
@@ -143,8 +149,10 @@ export class MapViewer {
         return this.animPreview ? buildPreviewEncounter(encounter) : encounter;
     }
 
-    init(): void {
+    // The sound effect files are fetched while the encounter loads, so a missing one fails the load.
+    async init(): Promise<void> {
         this.syncMusicTrack();
+        await this.sfxPlayer.load(sfxClips(this.seqSounds));
     }
 
     // Sets the music player's track to the current encounter's, if it isn't already. Cheap to
@@ -156,7 +164,7 @@ export class MapViewer {
 
     dispose(): void {
         this.musicPlayer.dispose();
-        void this.audioFeedback.close();
+        void this.audioContext.close();
     }
 
     private initCache(cache: LoadedCache): void {
@@ -180,6 +188,12 @@ export class MapViewer {
         // packRequest), so its seq roots come from the same assets.
         const assets = actorAssets(getEncounter(this.encounterId), this.animPreview);
         this.seqCatalog = loadSeqCatalog(declaredSeqIds(assets), loaders);
+        this.seqSounds = loadSeqSoundCatalog(
+            soundSeqIds(getEncounter(this.encounterId)),
+            this.seqTypeLoader,
+            this.seqCatalog,
+        );
+        this.frameSounds = new FrameSoundDriver(this.seqSounds, this.sfxPlayer);
         this.encounterAnimations = resolveEncounterAnimations(
             this.encounter,
             assets,

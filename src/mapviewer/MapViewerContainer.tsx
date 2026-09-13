@@ -112,12 +112,15 @@ export function MapViewerContainer({ mapViewer }: MapViewerContainerProps): JSX.
 
     useEffect(() => {
         const canvas = renderer.canvas;
-        const unlockMusic = () => mapViewer.musicPlayer.unlock();
-        canvas.addEventListener("pointerdown", unlockMusic);
-        canvas.addEventListener("keydown", unlockMusic);
+        const unlockAudio = () => {
+            mapViewer.musicPlayer.unlock();
+            mapViewer.sfxPlayer.unlock();
+        };
+        canvas.addEventListener("pointerdown", unlockAudio);
+        canvas.addEventListener("keydown", unlockAudio);
         return () => {
-            canvas.removeEventListener("pointerdown", unlockMusic);
-            canvas.removeEventListener("keydown", unlockMusic);
+            canvas.removeEventListener("pointerdown", unlockAudio);
+            canvas.removeEventListener("keydown", unlockAudio);
         };
     }, [renderer, mapViewer]);
 

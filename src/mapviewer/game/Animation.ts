@@ -35,15 +35,30 @@ export function loadSeqTiming(seqId: number, loaders: SeqTimingLoaders): SeqTimi
     return { seqId, frameTicks };
 }
 
+// Where an animation is, for observers outside the sim: which play of its sequence it is on and
+// how many frames that play has entered. The nth frame entered is frame n % frameCount, so two
+// readings name every frame shown in between, including those a long step ran past.
+export type AnimationProgress = {
+    readonly seqId: number;
+    readonly play: number;
+    readonly framesEntered: number;
+};
+
 export class AnimationState {
     frame = 0;
 
     private frameTime = 0;
+    private play = 0;
+    private framesEntered = 0;
 
     constructor(private seq: SeqTiming) {}
 
     get seqId(): number {
         return this.seq.seqId;
+    }
+
+    get progress(): AnimationProgress {
+        return { seqId: this.seq.seqId, play: this.play, framesEntered: this.framesEntered };
     }
 
     setSequence(seq: SeqTiming): void {
@@ -57,6 +72,8 @@ export class AnimationState {
         this.seq = seq;
         this.frame = 0;
         this.frameTime = 0;
+        this.play++;
+        this.framesEntered = 0;
     }
 
     advance(
@@ -78,6 +95,7 @@ export class AnimationState {
             }
             this.frameTime -= frameTicks[this.frame];
             this.frame = (this.frame + 1) % frameTicks.length;
+            this.framesEntered++;
             completed ||= playback === AnimationPlayback.LOOP && this.frame === 0;
         }
         return completed;

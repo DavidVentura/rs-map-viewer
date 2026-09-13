@@ -48,6 +48,8 @@ export const MapViewerControls = memo(
 
         const [musicEnabled, setMusicEnabled] = useState(mapViewer.musicPlayer.isEnabled);
         const [musicVolume, setMusicVolume] = useState(mapViewer.musicPlayer.volume);
+        const [sfxEnabled, setSfxEnabled] = useState(mapViewer.sfxPlayer.isEnabled);
+        const [sfxVolume, setSfxVolume] = useState(mapViewer.sfxPlayer.volume);
 
         // The Animation folder's Seq Id field can change outside of leva's own store (the
         // Prev/Next/Restart buttons mutate the enemy directly). renderer.getControls() is only
@@ -346,6 +348,31 @@ export const MapViewerControls = memo(
                     },
                     { collapsed: true },
                 ),
+                "Sound Effects": folder(
+                    {
+                        // Leva keys are global across folders, so these only share the labels.
+                        "Sfx Enabled": {
+                            label: "Enabled",
+                            value: sfxEnabled,
+                            onChange: (v: boolean) => {
+                                mapViewer.sfxPlayer.setEnabled(v);
+                                setSfxEnabled(v);
+                            },
+                        },
+                        "Sfx Volume": {
+                            label: "Volume",
+                            value: sfxVolume,
+                            min: 0,
+                            max: 1,
+                            step: 0.01,
+                            onChange: (v: number) => {
+                                mapViewer.sfxPlayer.setVolume(v);
+                                setSfxVolume(v);
+                            },
+                        },
+                    },
+                    { collapsed: true },
+                ),
                 Vars: folder(
                     {
                         Type: {
@@ -398,6 +425,8 @@ export const MapViewerControls = memo(
                 varValue,
                 musicEnabled,
                 musicVolume,
+                sfxEnabled,
+                sfxVolume,
                 pointsControls,
                 isCameraRunning,
                 controlsRefreshTick,

@@ -88,9 +88,12 @@ function MapViewerApp() {
                 gearOverride,
             );
             (window as any).mapViewer = mapViewer;
-            mapViewer.init();
-
             loadedMapViewer = mapViewer;
+            await mapViewer.init();
+            if (signal.aborted) {
+                return;
+            }
+
             setMapViewer(mapViewer);
         };
 

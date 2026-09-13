@@ -1513,6 +1513,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 pickupTarget,
                 interaction,
             });
+            this.mapViewer.frameSounds.update(this.mapViewer.world);
             this.advancePreviewGfx(deltaTime / 1000);
             this.updateRoofHiding();
             this.pinCameraToPlayer();

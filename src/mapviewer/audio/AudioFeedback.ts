@@ -1,10 +1,6 @@
 export class AudioFeedback {
     constructor(private readonly context: AudioContext) {}
 
-    close(): Promise<void> {
-        return this.context.close();
-    }
-
     async playLevelUp(): Promise<void> {
         await this.context.resume();
         const now = this.context.currentTime;

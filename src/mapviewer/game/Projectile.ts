@@ -376,7 +376,7 @@ export class Projectile {
     rotation: number;
     pitch: number;
     // Undefined for a projectile whose model has no travel sequence: it stays on its one frame.
-    private readonly travelAnimation?: AnimationState;
+    readonly travelAnimation?: AnimationState;
 
     private flight: FlightState;
     private target: ProjectileTarget;
