@@ -9,6 +9,7 @@ import { ObjTypeLoader } from "../rs/config/objtype/ObjTypeLoader";
 import { SeqTypeLoader } from "../rs/config/seqtype/SeqTypeLoader";
 import { VarManager } from "../rs/config/vartype/VarManager";
 import { SeqFrameLoader } from "../rs/model/seq/SeqFrameLoader";
+import { SkeletalSeqLoader } from "../rs/model/skeletal/SkeletalSeqLoader";
 import { TextureLoader } from "../rs/texture/TextureLoader";
 
 export type ViewerLoaders = {
@@ -16,6 +17,7 @@ export type ViewerLoaders = {
     readonly textureLoader: TextureLoader;
     readonly seqTypeLoader: SeqTypeLoader;
     readonly seqFrameLoader: SeqFrameLoader;
+    readonly skeletalSeqLoader: SkeletalSeqLoader;
     readonly locTypeLoader: LocTypeLoader;
     readonly objTypeLoader: ObjTypeLoader;
     readonly npcTypeLoader: NpcTypeLoader;
@@ -38,6 +40,7 @@ export function createViewerLoaders(info: CacheInfo, cacheSystem: CacheSystem): 
         textureLoader: loaderFactory.getTextureLoader(),
         seqTypeLoader: loaderFactory.getSeqTypeLoader(),
         seqFrameLoader: loaderFactory.getSeqFrameLoader(),
+        skeletalSeqLoader: loaderFactory.getSkeletalSeqLoader(),
         locTypeLoader: loaderFactory.getLocTypeLoader(),
         objTypeLoader: loaderFactory.getObjTypeLoader(),
         npcTypeLoader: loaderFactory.getNpcTypeLoader(),

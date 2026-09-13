@@ -40,7 +40,7 @@ import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { EncounterActor, EncounterActorKind, EnergySiphonActor } from "../game/EncounterActor";
 import { Enemy, EnemyState } from "../game/Enemy";
-import { EnemyBehaviour, resolveEnemyType } from "../game/EnemyType";
+import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
 import { EnergySiphonState } from "../game/EnergySiphon";
 import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import {
@@ -996,10 +996,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // The animation viewer steps through arbitrary seq ids of its range, so it reads their timings
     // from the pack directly instead of through the game's catalog.
     private loadPreviewSeq(seqId: number): SeqTiming {
-        return loadSeqTiming(seqId, this.mapViewer.seqTypeLoader, this.mapViewer.seqFrameLoader);
+        return loadSeqTiming(seqId, this.mapViewer);
     }
 
     private previewSeqInfo(seqId: number): string {
+        const unposed = this.actorBuffer?.actorData.previewNpc?.unposedSeqs.get(seqId);
+        if (unposed !== undefined) {
+            return `not posed: ${unposed}`;
+        }
         const seq = this.loadPreviewSeq(seqId);
         const durationMs = Math.round(sequenceDurationSeconds(seq) * 1000);
         return `${seq.frameTicks.length} frames, ${durationMs} ms`;
@@ -1328,11 +1332,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 walkSeqId: npcType.walkSeqId,
                 size: npcType.size,
             }),
-            loadSeqCatalog(
-                [npcType.idleSeqId, npcType.walkSeqId],
-                this.mapViewer.seqTypeLoader,
-                this.mapViewer.seqFrameLoader,
-            ),
+            loadSeqCatalog([npcType.idleSeqId, npcType.walkSeqId], this.mapViewer),
         );
         const spawnPoint = this.encounter.enemySpawns[0];
         const enemyId = this.mapViewer.world.spawnEnemy(
@@ -3040,6 +3040,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         for (const enemy of world.enemies) {
             const animSet = actorData.enemyTypes[enemy.type.id];
             if (!animSet) {
+                continue;
+            }
+            if (
+                enemy.type.id === EnemyTypeId.PREVIEW &&
+                actorData.previewNpc?.unposedSeqs.has(enemy.animation.seqId)
+            ) {
                 continue;
             }
             const groundHeight = this.tryGetHeight(enemy.level, enemy.x, enemy.y);

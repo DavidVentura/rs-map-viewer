@@ -12,6 +12,7 @@ import { SeqTypeLoader } from "../rs/config/seqtype/SeqTypeLoader";
 import { VarManager } from "../rs/config/vartype/VarManager";
 import { getMapSquareId } from "../rs/map/MapFileIndex";
 import { SeqFrameLoader } from "../rs/model/seq/SeqFrameLoader";
+import { SkeletalSeqLoader } from "../rs/model/skeletal/SkeletalSeqLoader";
 import { Pathfinder } from "../rs/pathfinder/Pathfinder";
 import { TextureLoader } from "../rs/texture/TextureLoader";
 import { isWallpaperEngine } from "../util/DeviceUtil";
@@ -56,6 +57,7 @@ export class MapViewer {
     textureLoader!: TextureLoader;
     seqTypeLoader!: SeqTypeLoader;
     seqFrameLoader!: SeqFrameLoader;
+    skeletalSeqLoader!: SkeletalSeqLoader;
     seqCatalog!: SeqCatalog;
     encounterAnimations!: EncounterAnimations;
     hudAssets!: HudAssets;
@@ -165,6 +167,7 @@ export class MapViewer {
         this.textureLoader = loaders.textureLoader;
         this.seqTypeLoader = loaders.seqTypeLoader;
         this.seqFrameLoader = loaders.seqFrameLoader;
+        this.skeletalSeqLoader = loaders.skeletalSeqLoader;
         this.locTypeLoader = loaders.locTypeLoader;
         this.objTypeLoader = loaders.objTypeLoader;
         this.npcTypeLoader = loaders.npcTypeLoader;
@@ -176,11 +179,7 @@ export class MapViewer {
         // The pack was declared from the base encounter even in the animation viewer (see
         // packRequest), so its seq roots come from the same assets.
         const assets = actorAssets(getEncounter(this.encounterId), this.animPreview);
-        this.seqCatalog = loadSeqCatalog(
-            declaredSeqIds(assets),
-            loaders.seqTypeLoader,
-            loaders.seqFrameLoader,
-        );
+        this.seqCatalog = loadSeqCatalog(declaredSeqIds(assets), loaders);
         this.encounterAnimations = resolveEncounterAnimations(
             this.encounter,
             assets,

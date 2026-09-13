@@ -412,11 +412,11 @@ const TZTOK_JAD: EnemyType = {
 
 const TUMEKENS_WARDEN: EnemyType = {
     id: EnemyTypeId.TUMEKENS_WARDEN,
-    npcTypeId: 11760,
-    idleSeqId: 9654,
-    walkSeqId: 9654,
-    deathSeqId: 9654,
-    attackSeqId: 9654,
+    npcTypeId: 11762,
+    idleSeqId: 9657,
+    walkSeqId: 9657,
+    deathSeqId: 9662,
+    attackSeqId: 9657,
     hitRadius: 256,
     projectileLaunchHeight: 480,
     maxHealth: 100,

@@ -52,7 +52,7 @@ export class SkinTables {
 }
 
 function createUintTable(app: PicoApp, source: Uint32Array): Texture {
-    const height = Math.max(Math.ceil(source.length / SKIN_TABLE_WIDTH), 1);
+    const height = tableHeight(app, source.length, "influence");
     const data = new Uint32Array(SKIN_TABLE_WIDTH * height);
     data.set(source);
     return app.createTexture2D(data, SKIN_TABLE_WIDTH, height, {
@@ -64,8 +64,7 @@ function createUintTable(app: PicoApp, source: Uint32Array): Texture {
 }
 
 function createFloatTable(app: PicoApp, source: Float32Array): Texture {
-    const texelCount = Math.ceil(source.length / 4);
-    const height = Math.max(Math.ceil(texelCount / SKIN_TABLE_WIDTH), 1);
+    const height = tableHeight(app, Math.ceil(source.length / 4), "matrix");
     const data = new Float32Array(SKIN_TABLE_WIDTH * height * 4);
     data.set(source);
     return app.createTexture2D(data, SKIN_TABLE_WIDTH, height, {
@@ -74,4 +73,16 @@ function createFloatTable(app: PicoApp, source: Float32Array): Texture {
         minFilter: PicoGL.NEAREST,
         magFilter: PicoGL.NEAREST,
     });
+}
+
+function tableHeight(app: PicoApp, texelCount: number, table: string): number {
+    const height = Math.max(Math.ceil(texelCount / SKIN_TABLE_WIDTH), 1);
+    const maxHeight = app.gl.getParameter(app.gl.MAX_TEXTURE_SIZE) as number;
+    if (height > maxHeight) {
+        throw new Error(
+            `Skin ${table} table needs ${texelCount} texels, ${height} rows of ${SKIN_TABLE_WIDTH}; ` +
+                `this GPU allows ${maxHeight} rows`,
+        );
+    }
+    return height;
 }

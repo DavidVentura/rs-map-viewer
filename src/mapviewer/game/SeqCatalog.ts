@@ -1,6 +1,4 @@
-import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
-import { SeqTiming, loadSeqTiming } from "./Animation";
+import { SeqTiming, SeqTimingLoaders, loadSeqTiming } from "./Animation";
 
 // The timings of exactly the sequences an encounter declares (see ActorAssets), read from its pack
 // when it loads. Only the load-time composition asks it for timings, so a sequence the game uses
@@ -11,12 +9,11 @@ export type SeqCatalog = {
 
 export function loadSeqCatalog(
     declaredSeqIds: Iterable<number>,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
+    loaders: SeqTimingLoaders,
 ): SeqCatalog {
     const timings = new Map<number, SeqTiming>();
     for (const seqId of declaredSeqIds) {
-        timings.set(seqId, loadSeqTiming(seqId, seqTypeLoader, seqFrameLoader));
+        timings.set(seqId, loadSeqTiming(seqId, loaders));
     }
     return {
         get: (seqId) => {

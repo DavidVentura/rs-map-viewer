@@ -8,7 +8,7 @@ import { CollisionFlag } from "../../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../../rs/scene/CollisionMap";
 import { clamp } from "../../../util/MathUtil";
 import { SkinFrame } from "../skin/SkinAnimation";
-import { NpcAnimation } from "./NpcAnimation";
+import { NpcAnimation, NpcSeqAnimation } from "./NpcAnimation";
 
 export enum MovementType {
     CRAWL = 0,
@@ -294,7 +294,8 @@ export class Npc {
                 }
             } else if (seqType.isSkeletalSeq()) {
                 this.movementFrame++;
-                const frameCount = seqType.getSkeletalDuration();
+                // The baked frames, since a skeletal sequence's played length is trimmed.
+                const frameCount = this.movementAnimation().frames.length;
                 if (this.movementFrame >= frameCount) {
                     if (seqType.frameStep > 0) {
                         this.movementFrame -= seqType.frameStep;
@@ -304,7 +305,7 @@ export class Npc {
 
                         if (
                             this.movementFrame < 0 ||
-                            this.movementFrame >= seqType.frameIds.length ||
+                            this.movementFrame >= frameCount ||
                             (seqType.looping && this.movementLoop >= seqType.maxLoops)
                         ) {
                             this.movementFrameTick = 0;
@@ -454,8 +455,11 @@ export class Npc {
 
     // movementFrame always counts frames of movementSeqId, which is idle or the posed walk.
     currentFrame(): SkinFrame {
+        return this.movementAnimation().frames[this.movementFrame];
+    }
+
+    private movementAnimation(): NpcSeqAnimation {
         const { idle, walk } = this.animation;
-        const current = walk && this.movementSeqId === walk.seqId ? walk : idle;
-        return current.frames[this.movementFrame];
+        return walk && this.movementSeqId === walk.seqId ? walk : idle;
     }
 }

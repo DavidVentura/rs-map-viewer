@@ -12,6 +12,8 @@ import { Model } from "../../src/rs/model/Model";
 import { ModelData } from "../../src/rs/model/ModelData";
 import { ModelLoader } from "../../src/rs/model/ModelLoader";
 import { SeqFrameLoader } from "../../src/rs/model/seq/SeqFrameLoader";
+import { loadSkeletalPlayback } from "../../src/rs/model/skeletal/SkeletalPlayback";
+import { SkeletalSeqLoader } from "../../src/rs/model/skeletal/SkeletalSeqLoader";
 import { TextureLoader } from "../../src/rs/texture/TextureLoader";
 import { loadCache, loadCacheInfos, loadCacheList } from "./load-util";
 import { View, fitCamera, modelExtent, renderModel, unionExtent } from "./model-raster";
@@ -246,6 +248,7 @@ type Loaders = {
     readonly textureLoader: TextureLoader;
     readonly seqTypeLoader: SeqTypeLoader;
     readonly seqFrameLoader: SeqFrameLoader;
+    readonly skeletalSeqLoader: SkeletalSeqLoader;
     readonly npcModelLoader: NpcModelLoader;
 };
 
@@ -258,16 +261,28 @@ function openLoaders(): Loaders {
     const textureLoader = factory.getTextureLoader();
     const seqTypeLoader = factory.getSeqTypeLoader();
     const seqFrameLoader = factory.getSeqFrameLoader();
+    const skeletalSeqLoader = factory.getSkeletalSeqLoader();
+    if (!skeletalSeqLoader) {
+        throw new Error(`Cache ${cacheList.latest.name} has no skeletal sequences`);
+    }
     const npcModelLoader = new NpcModelLoader(
         factory.getNpcTypeLoader(),
         modelLoader,
         textureLoader,
         seqTypeLoader,
         seqFrameLoader,
-        factory.getSkeletalSeqLoader(),
+        skeletalSeqLoader,
         new VarManager(factory.getVarBitTypeLoader()),
     );
-    return { factory, modelLoader, textureLoader, seqTypeLoader, seqFrameLoader, npcModelLoader };
+    return {
+        factory,
+        modelLoader,
+        textureLoader,
+        seqTypeLoader,
+        seqFrameLoader,
+        skeletalSeqLoader,
+        npcModelLoader,
+    };
 }
 
 // Every frame the game would bake for one subject, in sequence order, plus what to print.
@@ -280,13 +295,13 @@ type PosedSubject = {
     readonly notes: readonly string[];
 };
 
-function frameDurationMs(seqType: SeqType, seqFrameLoader: SeqFrameLoader): number {
+function frameDurationMs(seqType: SeqType, loaders: Loaders): number {
     if (seqType.isSkeletalSeq()) {
-        return seqType.getSkeletalDuration() * CLIENT_TICK_MS;
+        return loadSkeletalPlayback(seqType, loaders.skeletalSeqLoader).frameCount * CLIENT_TICK_MS;
     }
     let ticks = 0;
     for (let frame = 0; frame < seqType.frameIds.length; frame++) {
-        ticks += seqType.getFrameLength(seqFrameLoader, frame);
+        ticks += seqType.getFrameLength(loaders.seqFrameLoader, frame);
     }
     return ticks * CLIENT_TICK_MS;
 }
@@ -297,29 +312,28 @@ type PosedFrames = {
     readonly notes: readonly string[];
 };
 
-// Poses a CPU copy per frame with Model.animate, the reference the game's GPU skinning
-// (Skinning.addAnimation) matches; the game renders skeletal sequences at rest pose, so only the
-// rest pose is shown for those.
+// Poses a CPU copy per frame with Model.animate (or Model.animateSkeletal), the reference the
+// game's GPU skinning (Skinning.addAnimation) matches, over the frames the game plays.
 function poseWithSequence(
     base: Model,
     seqType: SeqType,
     seqId: number,
-    seqFrameLoader: SeqFrameLoader,
+    loaders: Loaders,
 ): PosedFrames {
     if (seqType.isSkeletalSeq()) {
-        return {
-            frames: [base],
-            totalMs: 0,
-            notes: [
-                `skeletal sequence ${seqId}, ${seqType.getSkeletalDuration()} frames unavailable, rendering rest pose`,
-            ],
-        };
+        const { seq, frameCount } = loadSkeletalPlayback(seqType, loaders.skeletalSeqLoader);
+        const frames = Array.from({ length: frameCount }, (_, frame) => {
+            const posed = Model.copyAnimated(base, !seq.hasAlphaTransform, true);
+            posed.animateSkeletal(seq, frame);
+            return posed;
+        });
+        return { frames, totalMs: frameCount * CLIENT_TICK_MS, notes: [] };
     }
     if (!seqType.frameIds || seqType.frameIds.length === 0) {
         throw new Error(`Sequence ${seqId} has no frames`);
     }
     const frames = seqType.frameIds.map((frameId) => {
-        const seqFrame = seqFrameLoader.load(frameId);
+        const seqFrame = loaders.seqFrameLoader.load(frameId);
         if (!seqFrame) {
             return base;
         }
@@ -331,7 +345,7 @@ function poseWithSequence(
         posed.animate(seqFrame, undefined, seqType.op14);
         return posed;
     });
-    return { frames, totalMs: frameDurationMs(seqType, seqFrameLoader), notes: [] };
+    return { frames, totalMs: frameDurationMs(seqType, loaders), notes: [] };
 }
 
 // Ids without a model are ordinary in a range, so callers decide how to report them.
@@ -367,7 +381,7 @@ function poseGfx(loaders: Loaders, gfxId: number, spotAnim: SpotAnimType): Posed
                   base,
                   loaders.seqTypeLoader.load(spotAnim.sequenceId),
                   spotAnim.sequenceId,
-                  loaders.seqFrameLoader,
+                  loaders,
               );
     return {
         label: `gfx ${gfxId}`,
@@ -381,7 +395,7 @@ function poseNpc(loaders: Loaders, npcId: number, seqId: number): PosedSubject {
     const npcType = loaders.factory.getNpcTypeLoader().load(npcId);
     const seqType = loaders.seqTypeLoader.load(seqId);
     const frameCount = seqType.isSkeletalSeq()
-        ? seqType.getSkeletalDuration()
+        ? loadSkeletalPlayback(seqType, loaders.skeletalSeqLoader).frameCount
         : seqType.frameIds?.length ?? 0;
     if (frameCount === 0) {
         throw new Error(`Sequence ${seqId} has no frames`);
@@ -398,7 +412,7 @@ function poseNpc(loaders: Loaders, npcId: number, seqId: number): PosedSubject {
         modelIds: npcType.modelIds,
         seqId,
         frames,
-        totalMs: frameDurationMs(seqType, loaders.seqFrameLoader),
+        totalMs: frameDurationMs(seqType, loaders),
         notes: [],
     };
 }
@@ -419,12 +433,7 @@ function poseBareModel(loaders: Loaders, modelId: number, seqId: number | undefi
     const posed =
         seqId === undefined
             ? { frames: [base], totalMs: 0, notes: [] }
-            : poseWithSequence(
-                  base,
-                  loaders.seqTypeLoader.load(seqId),
-                  seqId,
-                  loaders.seqFrameLoader,
-              );
+            : poseWithSequence(base, loaders.seqTypeLoader.load(seqId), seqId, loaders);
     return { label: `model ${modelId}`, modelIds: [modelId], seqId: seqId ?? -1, ...posed };
 }
 

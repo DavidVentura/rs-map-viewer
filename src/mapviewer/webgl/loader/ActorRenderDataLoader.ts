@@ -37,14 +37,16 @@ import {
     PlayerActorData,
     PreviewGfxAnimationSet,
     PreviewGfxBake,
+    PreviewNpcBake,
     ProjectileActorData,
     WorldObjectActorData,
     WorldObjectMeshes,
 } from "../actor/ActorRenderData";
 import { SkinAnimation } from "../skin/SkinAnimation";
 import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
+import { PoseableSeq, describePoseRig, poseRigKey, samePoseRig } from "../skin/SkinRig";
 import { SkinFaceSelection, SkinnedMesh, SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
-import { SkinSeqFrames, Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
+import { Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
 import { ActorBufferData } from "./ActorBufferData";
 import { ActorLoaderInput } from "./ActorLoaderInput";
 import { brightenModel, buildSpotAnimModel } from "./ActorModels";
@@ -121,7 +123,7 @@ function createPlayerActorData(
                 selection: SkinFaceSelection.startingAt(bodyFaceCount),
             })),
         ],
-        requireAllFrames(skinning, assets.seqIds),
+        requireSeqs(skinning, assets.seqIds),
         PoseSpace.identity(),
     );
     const bodyMeshesByStyle = Object.fromEntries(
@@ -238,37 +240,48 @@ function createEnemyTypeAnimationSet(
     }
     return skinning.addAnimationSet(
         rest.model,
-        requireAllFrames(skinning, assets.seqIds),
+        requireSeqs(skinning, assets.seqIds),
         rest.poseSpace,
     );
 }
 
 // The animation viewer's preview enemy: bakes the npc's own idle/walk seqs plus every seq in the
-// requested range, so stepping through the range never needs a fresh actor buffer load.
-function createPreviewEnemyTypeAnimationSet(
+// requested range, so stepping through the range never needs a fresh actor buffer load. A range
+// can hold seqs of other npcs, and one rig poses only seqs of its idle's kind and skeleton, so the
+// others are reported instead of baked.
+function createPreviewNpcBake(
     npcModelLoader: NpcModelLoader,
     npcTypeLoader: WorkerState["npcTypeLoader"],
     skinning: Skinning,
     preview: Extract<PreviewAssets, { kind: "NPC_SEQS" }>,
-): EnemyTypeAnimationSet {
+): { readonly animations: EnemyTypeAnimationSet; readonly bake: PreviewNpcBake } {
     const npcType = npcTypeLoader.load(preview.npcTypeId);
     const seqIds = new Set<number>([npcType.idleSeqId, npcType.walkSeqId, ...preview.seqIds]);
     const rest = npcModelLoader.getRestModel(npcType);
     if (!rest) {
         throw new Error(`Preview NPC model is missing for ${preview.npcTypeId}`);
     }
-    return skinning.addAnimationSet(
-        rest.model,
-        requireAllFrames(skinning, [...seqIds]),
-        rest.poseSpace,
+    const seqs = requireSeqs(skinning, [...seqIds]);
+    const idleRig = poseRigKey(skinning.requireSeq(npcType.idleSeqId));
+    const posedSeqs = seqs.filter((seq) => samePoseRig(poseRigKey(seq), idleRig));
+    const unposedSeqs = new Map(
+        seqs
+            .filter((seq) => !samePoseRig(poseRigKey(seq), idleRig))
+            .map((seq) => [
+                seq.seqId,
+                `uses ${describePoseRig(poseRigKey(seq))}, idle ${
+                    npcType.idleSeqId
+                } uses ${describePoseRig(idleRig)}`,
+            ]),
     );
+    return {
+        animations: skinning.addAnimationSet(rest.model, posedSeqs, rest.poseSpace),
+        bake: { unposedSeqs },
+    };
 }
 
-function requireAllFrames(
-    skinning: Skinning,
-    seqIds: readonly number[],
-): ReadonlyMap<number, SkinSeqFrames> {
-    return new Map(seqIds.map((seqId) => [seqId, skinning.requireFrames(seqId)]));
+function requireSeqs(skinning: Skinning, seqIds: readonly number[]): PoseableSeq[] {
+    return seqIds.map((seqId) => skinning.requireSeq(seqId));
 }
 
 function requireSpotAnimTypeLoader(state: WorkerState): SpotAnimTypeLoader {
@@ -292,7 +305,6 @@ function createPreviewGfxAnimationSet(
 ): PreviewGfxAnimationSet {
     const modelLoader = state.cacheLoaderFactory.getModelLoader();
     const textureLoader = state.textureLoader;
-    const seqTypeLoader = state.seqTypeLoader;
     const spotAnimTypeLoader = requireSpotAnimTypeLoader(state);
 
     const bakesByGfxId = new Map<number, PreviewGfxBake>();
@@ -308,12 +320,8 @@ function createPreviewGfxAnimationSet(
             continue;
         }
         const seqId = spotAnim.sequenceId !== -1 ? spotAnim.sequenceId : undefined;
-        // Newer spot anims use skeletal sequences with no old-style frames, which this baker
-        // can't pose; the viewer shows their rest model (the Info line reports 0 frames) rather
-        // than one such id in the range aborting the whole actor buffer load.
-        const hasFrames =
-            seqId !== undefined && (seqTypeLoader.load(seqId).frameIds?.length ?? 0) > 0;
-        const anim = hasFrames ? skinning.addAnimation(model, seqId!) : skinning.addStatic(model);
+        const anim =
+            seqId !== undefined ? skinning.addAnimation(model, seqId) : skinning.addStatic(model);
         bakesByGfxId.set(gfxId, { modelId: spotAnim.modelId, seqId, anim });
     }
     return { bakesByGfxId };
@@ -423,6 +431,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
             new SkinPaletteBuilder(),
             state.seqTypeLoader,
             state.seqFrameLoader,
+            state.skeletalSeqLoader,
         );
 
         const playerModelLoader = new PlayerModelLoader(
@@ -450,13 +459,12 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                 enemyTypeAssets,
             );
         }
-        if (assets.preview?.kind === "NPC_SEQS") {
-            enemyTypes[EnemyTypeId.PREVIEW] = createPreviewEnemyTypeAnimationSet(
-                npcModelLoader,
-                npcTypeLoader,
-                skinning,
-                assets.preview,
-            );
+        const previewNpc =
+            assets.preview?.kind === "NPC_SEQS"
+                ? createPreviewNpcBake(npcModelLoader, npcTypeLoader, skinning, assets.preview)
+                : undefined;
+        if (previewNpc) {
+            enemyTypes[EnemyTypeId.PREVIEW] = previewNpc.animations;
         }
         const previewGfx =
             assets.preview?.kind === "SPOT_ANIMS"
@@ -500,6 +508,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                     groundItems,
                     worldObjects,
                     previewGfx,
+                    previewNpc: previewNpc?.bake,
                 },
 
                 loadedTextures,

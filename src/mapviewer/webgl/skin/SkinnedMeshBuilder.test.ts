@@ -3,7 +3,7 @@ import { SeqBase } from "../../../rs/model/seq/SeqBase";
 import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqTransformType } from "../../../rs/model/seq/SeqTransformType";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
-import { SkinRig } from "./SkinRig";
+import { OldStyleSkinRig } from "./SkinRig";
 import { SkinFaceSelection, SkinnedMeshBuilder } from "./SkinnedMeshBuilder";
 
 const textureLoader = {
@@ -60,7 +60,7 @@ function actorModel(): Model {
 describe("SkinnedMeshBuilder", () => {
     it("writes fixed opaque and transparent ranges with packed rig metadata", () => {
         const model = actorModel();
-        const rig = SkinRig.oldStyle([model], [alphaFrame(7), translateFrame(10, 20)]);
+        const rig = OldStyleSkinRig.create([model], [alphaFrame(7), translateFrame(10, 20)]);
         const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
 
         const mesh = builder.addModel(model, rig, SkinFaceSelection.all());
@@ -87,7 +87,7 @@ describe("SkinnedMeshBuilder", () => {
     it("keeps invisible alpha-animated faces and drops other invisible faces", () => {
         const model = actorModel();
         const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
-        const rig = SkinRig.oldStyle([model], [alphaFrame(7)]);
+        const rig = OldStyleSkinRig.create([model], [alphaFrame(7)]);
 
         const mesh = builder.addModel(model, rig, SkinFaceSelection.startingAt(2));
 
@@ -107,7 +107,7 @@ describe("SkinnedMeshBuilder", () => {
         model.faceLabels[7] = new Int32Array([0]);
         model.faceLabels[9] = new Int32Array([1]);
         const builder = new SkinnedMeshBuilder(textureLoader, new Map());
-        const rig = SkinRig.oldStyle([model], [alphaFrame(7, 9)]);
+        const rig = OldStyleSkinRig.create([model], [alphaFrame(7, 9)]);
 
         builder.addModel(model, rig, SkinFaceSelection.all());
         const data = builder.build();
@@ -119,7 +119,7 @@ describe("SkinnedMeshBuilder", () => {
         const model = actorModel();
         model.vertexLabels[10] = new Int32Array([0]);
         const builder = new SkinnedMeshBuilder(textureLoader, new Map([[5, 9]]));
-        const rig = SkinRig.oldStyle([model], []);
+        const rig = OldStyleSkinRig.create([model], []);
 
         builder.addModel(model, rig, SkinFaceSelection.all());
         expect(builder.build().influences).toContain(0x00ff0000);
@@ -127,17 +127,21 @@ describe("SkinnedMeshBuilder", () => {
 
     it("gives rows only to labels the rig's models have and its frames move or fade", () => {
         const model = actorModel();
-        const rig = SkinRig.oldStyle([model], [translateFrame(20, 40), alphaFrame(8, 50)]);
+        const rig = OldStyleSkinRig.create([model], [translateFrame(20, 40), alphaFrame(8, 50)]);
 
-        expect(rig.matrixSourceLabels).toEqual([SkinRig.REST_MATRIX_SOURCE_LABEL, 20]);
+        expect(rig.matrixSourceLabels).toEqual([OldStyleSkinRig.REST_MATRIX_SOURCE_LABEL, 20]);
         expect(rig.alphaSourceLabels).toEqual([8]);
-        expect(rig.matrixIndex(10)).toBe(0);
-        expect(rig.matrixIndex(20)).toBe(1);
+        const binding = rig.bind(model);
+        expect(binding.vertexInfluences(0)).toEqual([{ matrixIndex: 0, weight: 0xff }]);
+        expect(binding.vertexInfluences(2)).toEqual([{ matrixIndex: 1, weight: 0xff }]);
     });
 
     it("rejects vertex labels from models that are not part of the rig", () => {
-        const rig = SkinRig.oldStyle([actorModel()], [translateFrame(10)]);
+        const rig = OldStyleSkinRig.create([actorModel()], [translateFrame(10)]);
+        const stranger = actorModel();
+        stranger.vertexLabels = Array.from({ length: 31 }, () => new Int32Array());
+        stranger.vertexLabels[30] = new Int32Array([0]);
 
-        expect(() => rig.matrixIndex(30)).toThrow("Vertex label 30 is absent");
+        expect(() => rig.bind(stranger).vertexInfluences(0)).toThrow("Vertex label 30 is absent");
     });
 });

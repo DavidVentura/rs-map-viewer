@@ -320,7 +320,17 @@ export class SeqType extends Type {
         return this.skeletalId >= 0;
     }
 
-    getSkeletalDuration(): number {
-        return this.skeletalEnd - this.skeletalStart;
+    // Skeletal frame i is sampled at curve tick i, which only holds for sequences starting at 0;
+    // every skeletal sequence in the caches this viewer packs does.
+    skeletalFrameCount(): number {
+        if (!this.isSkeletalSeq()) {
+            throw new Error(`Seq ${this.id} is not skeletal`);
+        }
+        if (this.skeletalStart !== 0) {
+            throw new Error(
+                `Skeletal seq ${this.id} starts at tick ${this.skeletalStart}; only 0 is supported`,
+            );
+        }
+        return this.skeletalEnd;
     }
 }

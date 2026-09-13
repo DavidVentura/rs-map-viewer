@@ -30,7 +30,7 @@ export type WorkerState = {
 
     textureLoader: TextureLoader;
     seqFrameLoader: SeqFrameLoader;
-    skeletalSeqLoader: SkeletalSeqLoader | undefined;
+    skeletalSeqLoader: SkeletalSeqLoader;
 
     locModelLoader: LocModelLoader;
     objModelLoader: ObjModelLoader;

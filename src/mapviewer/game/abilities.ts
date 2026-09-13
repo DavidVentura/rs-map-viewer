@@ -264,9 +264,8 @@ export const WARPED_SCEPTRE_ATTACK_CAST_SEQ_ID = 10501;
 
 // Contact at the cast's peak hold (frame 9), castSpeed picked so the whole sequence lands at the
 // same wall-clock offset as the plain staff's own impact (413ms) - see MAGIC_BOLT.
-// No casterEffect: its own cast graphic (SpotAnimType 2567, VFX_WARPED_SCEPTRE_CAST) plays a
-// skeletal sequence, which the spot anim baker doesn't pose (see webgl/loader/ActorRenderDataLoader
-// ProjectileBaker.bakeSpotAnim), so it can't be baked into an AnimatedSpotAnimBake here.
+// No casterEffect for its own cast graphic (SpotAnimType 2567, VFX_WARPED_SCEPTRE_CAST), which plays
+// a skeletal sequence.
 export const WARPED_SCEPTRE_BOLT: AbilityDefinition = {
     id: "warped_sceptre_bolt",
     name: "Warped Sceptre Attack",

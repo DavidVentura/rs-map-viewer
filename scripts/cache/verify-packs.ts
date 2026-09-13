@@ -211,11 +211,11 @@ class HeadlessViewer {
 
     // What the game itself reads on the main thread by root id: type names and seq timings.
     loadMainThreadRoots(roots: CacheRoots) {
-        const { npcTypeLoader, objTypeLoader, seqTypeLoader, seqFrameLoader } = this.viewer;
+        const { npcTypeLoader, objTypeLoader } = this.viewer;
         return {
             npcTypes: roots.npcTypeIds.map((id) => npcTypeLoader.load(id)),
             objTypes: roots.objTypeIds.map((id) => objTypeLoader.load(id)),
-            seqTimings: roots.seqIds.map((id) => loadSeqTiming(id, seqTypeLoader, seqFrameLoader)),
+            seqTimings: roots.seqIds.map((id) => loadSeqTiming(id, this.viewer)),
         };
     }
 }

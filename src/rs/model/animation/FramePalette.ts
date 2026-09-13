@@ -111,6 +111,57 @@ export interface FramePalette {
     readonly alphaTransforms: readonly AlphaTransform[];
 }
 
+// Every matrix row at the rest transform and every alpha unchanged.
+export function restPalette(
+    space: PoseSpace,
+    matrixCount: number,
+    alphaCount: number,
+): FramePalette {
+    const restRows = space.restTransform().toRows();
+    const matrices = new Float64Array(matrixCount * AFFINE_VALUES);
+    for (let index = 0; index < matrixCount; index++) {
+        matrices.set(restRows, index * AFFINE_VALUES);
+    }
+    return { matrices, alphaTransforms: unchangedAlphas(alphaCount) };
+}
+
+// Face alphas fold per label into one delta and clamp range, so the shader reproduces the CPU's
+// clamp after every operation with a single clamp.
+export class AlphaFolder {
+    private readonly indices: ReadonlyMap<number, number>;
+
+    constructor(readonly labels: readonly number[]) {
+        this.indices = new Map(labels.map((label, index) => [label, index]));
+        if (this.indices.size !== labels.length) {
+            throw new Error(`Alpha labels must be unique, received ${labels.join(", ")}`);
+        }
+    }
+
+    unchanged(): AlphaTransform[] {
+        return unchangedAlphas(this.labels.length);
+    }
+
+    // Labels outside the folder's own have no alpha row, so their fades are dropped.
+    apply(transforms: AlphaTransform[], labels: readonly number[], delta: number): void {
+        for (const label of labels) {
+            const index = this.indices.get(label);
+            if (index === undefined) {
+                continue;
+            }
+            const transform = transforms[index];
+            transforms[index] = {
+                delta: transform.delta + delta,
+                lower: clampAlpha(transform.lower + delta),
+                upper: clampAlpha(transform.upper + delta),
+            };
+        }
+    }
+}
+
+function unchangedAlphas(count: number): AlphaTransform[] {
+    return new Array<AlphaTransform>(count).fill(UNCHANGED_ALPHA);
+}
+
 // Matrices map rest-mesh positions straight to posed positions: into the pose space, through the
 // frame, and back out.
 //
@@ -122,37 +173,30 @@ export class FramePoser {
     private readonly toPose: Float64Array;
     private readonly fromPose: Float64Array;
     private readonly restRows: Float64Array;
-    private readonly alphaIndices: ReadonlyMap<number, number>;
+    private readonly alphas: AlphaFolder;
 
     constructor(
         restStats: VertexLabelStats,
-        space: PoseSpace,
+        private readonly space: PoseSpace,
         private readonly matrixLabels: readonly number[],
-        private readonly alphaLabels: readonly number[],
+        alphaLabels: readonly number[],
     ) {
         this.poseStats = restStats.transformed(space.toPose);
         this.toPose = space.toPose.toRows();
         this.fromPose = space.fromPose.toRows();
         this.restRows = space.restTransform().toRows();
-        this.alphaIndices = new Map(alphaLabels.map((label, index) => [label, index]));
-        if (this.alphaIndices.size !== alphaLabels.length) {
-            throw new Error(`Alpha labels must be unique, received ${alphaLabels.join(", ")}`);
-        }
+        this.alphas = new AlphaFolder(alphaLabels);
     }
 
     rest(): FramePalette {
-        const matrices = new Float64Array(this.matrixLabels.length * AFFINE_VALUES);
-        for (let index = 0; index < this.matrixLabels.length; index++) {
-            matrices.set(this.restRows, index * AFFINE_VALUES);
-        }
-        return { matrices, alphaTransforms: this.alphaLabels.map(() => UNCHANGED_ALPHA) };
+        return restPalette(this.space, this.matrixLabels.length, this.alphas.labels.length);
     }
 
     pose(frame: SeqFrame): FramePalette {
         const slots = movedLabelSlots(frame);
         const moved = identities(slots.count);
         const operation = new Float64Array(OPERATION_SCRATCH_VALUES);
-        const alphaTransforms = this.alphaLabels.map(() => UNCHANGED_ALPHA);
+        const alphaTransforms = this.alphas.unchanged();
         let origin: [number, number, number] = [0, 0, 0];
 
         for (let index = 0; index < frame.transformCount; index++) {
@@ -186,7 +230,7 @@ export class FramePoser {
                     applyToLabels(slots, moved, labels, operation);
                     break;
                 case SeqTransformType.ALPHA:
-                    this.applyAlpha(alphaTransforms, labels, x * 8);
+                    this.alphas.apply(alphaTransforms, labels, x * 8);
                     break;
                 case SeqTransformType.LIGHT:
                     break;
@@ -246,25 +290,6 @@ export class FramePoser {
             y + Math.trunc(sumY / count),
             z + Math.trunc(sumZ / count),
         ];
-    }
-
-    private applyAlpha(
-        transforms: AlphaTransform[],
-        labels: readonly number[],
-        delta: number,
-    ): void {
-        for (const label of labels) {
-            const index = this.alphaIndices.get(label);
-            if (index === undefined) {
-                continue;
-            }
-            const transform = transforms[index];
-            transforms[index] = {
-                delta: transform.delta + delta,
-                lower: clampAlpha(transform.lower + delta),
-                upper: clampAlpha(transform.upper + delta),
-            };
-        }
     }
 }
 

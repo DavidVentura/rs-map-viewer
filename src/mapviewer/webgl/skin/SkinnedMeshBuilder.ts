@@ -2,15 +2,10 @@ import { Model } from "../../../rs/model/Model";
 import { TextureLoader } from "../../../rs/texture/TextureLoader";
 import { DrawRange, newDrawRange } from "../DrawRange";
 import { packVertex } from "../buffer/VertexBuffer";
-import { SkinRig } from "./SkinRig";
+import { SkinInfluence, SkinModelBinding, SkinRig } from "./SkinRig";
 
 const MAX_INFLUENCE_START = 2 ** 20 - 1;
 const MAX_INFLUENCE_COUNT = 16;
-
-interface SkinInfluence {
-    readonly matrixIndex: number;
-    readonly weight: number;
-}
 
 export interface SkinnedMesh {
     readonly opaque: DrawRange;
@@ -56,8 +51,7 @@ export class SkinnedMeshBuilder {
         if (selection.firstFace > model.faceCount) {
             throw new Error(`First actor face ${selection.firstFace} exceeds ${model.faceCount}`);
         }
-        const vertexLabels = sourceVertexLabels(model);
-        const faceLabels = sourceFaceLabels(model);
+        const binding = rig.bind(model);
         const opaqueFaces: number[] = [];
         const transparentFaces: number[] = [];
         for (let face = selection.firstFace; face < model.faceCount; face++) {
@@ -65,7 +59,7 @@ export class SkinnedMeshBuilder {
                 continue;
             }
             const textureId = model.faceTextures?.[face] ?? -1;
-            const alphaLabel = textureId === -1 ? rig.alphaIndex(faceLabels[face]) : 0;
+            const alphaLabel = textureId === -1 ? binding.faceAlphaIndex(face) : 0;
             const alpha = textureId === -1 ? 0xff - (model.faceAlphas?.[face] & 0xff) : 0xff;
             if ((alpha === 0 || alpha === 1) && alphaLabel === 0) {
                 continue;
@@ -77,8 +71,8 @@ export class SkinnedMeshBuilder {
             (isTransparent ? transparentFaces : opaqueFaces).push(face);
         }
         return {
-            opaque: this.addFaces(model, rig, vertexLabels, faceLabels, opaqueFaces),
-            transparent: this.addFaces(model, rig, vertexLabels, faceLabels, transparentFaces),
+            opaque: this.addFaces(model, binding, opaqueFaces),
+            transparent: this.addFaces(model, binding, transparentFaces),
         };
     }
 
@@ -92,13 +86,7 @@ export class SkinnedMeshBuilder {
         };
     }
 
-    private addFaces(
-        model: Model,
-        rig: SkinRig,
-        vertexLabels: Int32Array,
-        faceLabels: Int32Array,
-        faces: readonly number[],
-    ): DrawRange {
+    private addFaces(model: Model, binding: SkinModelBinding, faces: readonly number[]): DrawRange {
         const offset = this.indices.length * 4;
         for (const face of faces) {
             const textureId = model.faceTextures?.[face] ?? -1;
@@ -113,7 +101,7 @@ export class SkinnedMeshBuilder {
                 hslC = hslB = hslA;
             }
             const alpha = textureId === -1 ? 0xff - (model.faceAlphas?.[face] & 0xff) : 0xff;
-            const alphaLabel = textureId === -1 ? rig.alphaIndex(faceLabels[face]) : 0;
+            const alphaLabel = textureId === -1 ? binding.faceAlphaIndex(face) : 0;
             const textureCoordinates = model.uvs?.subarray(face * 6, face * 6 + 6);
             if (textureId !== -1 && !textureCoordinates) {
                 throw new Error("Actor model has face textures but no texture coordinates");
@@ -132,7 +120,7 @@ export class SkinnedMeshBuilder {
                         textureCoordinates?.[corner * 2 + 1] ?? 0,
                         textureIndex,
                         (model.faceRenderPriorities?.[face] ?? 0) + 1,
-                        [{ matrixIndex: rig.matrixIndex(vertexLabels[vertex]), weight: 0xff }],
+                        binding.vertexInfluences(vertex),
                         alphaLabel,
                     ),
                 );
@@ -210,33 +198,4 @@ export class SkinnedMeshBuilder {
         this.influenceLists.set(key, start);
         return start;
     }
-}
-
-function sourceVertexLabels(model: Model): Int32Array {
-    const labels = new Int32Array(model.verticesCount).fill(-1);
-    if (!model.vertexLabels || model.vertexLabels.length === 0) {
-        return labels;
-    }
-    for (let label = 0; label < model.vertexLabels.length; label++) {
-        for (const vertex of model.vertexLabels[label]) {
-            if (labels[vertex] !== -1) {
-                throw new Error(`Actor vertex ${vertex} has more than one label`);
-            }
-            labels[vertex] = label;
-        }
-    }
-    return labels;
-}
-
-function sourceFaceLabels(model: Model): Int32Array {
-    const labels = new Int32Array(model.faceCount).fill(-1);
-    for (let label = 0; label < (model.faceLabels?.length ?? 0); label++) {
-        for (const face of model.faceLabels[label]) {
-            if (labels[face] !== -1) {
-                throw new Error(`Actor face ${face} has more than one alpha label`);
-            }
-            labels[face] = label;
-        }
-    }
-    return labels;
 }

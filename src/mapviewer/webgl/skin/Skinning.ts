@@ -1,16 +1,15 @@
 import { SeqTypeLoader } from "../../../rs/config/seqtype/SeqTypeLoader";
 import { Model } from "../../../rs/model/Model";
 import { FramePoser, PoseSpace, VertexLabelStats } from "../../../rs/model/animation/FramePalette";
+import { SkeletalPoser } from "../../../rs/model/animation/SkeletalPalette";
 import { SeqFrame } from "../../../rs/model/seq/SeqFrame";
 import { SeqFrameLoader } from "../../../rs/model/seq/SeqFrameLoader";
+import { loadSkeletalPlayback } from "../../../rs/model/skeletal/SkeletalPlayback";
+import { SkeletalSeqLoader } from "../../../rs/model/skeletal/SkeletalSeqLoader";
 import { SkinAnimation, SkinAnimationSet, SkinFrame } from "./SkinAnimation";
 import { SkinPaletteBuilder } from "./SkinPaletteBuilder";
-import { SkinRig } from "./SkinRig";
+import { PoseableSeq, RiggedSeqs, SeqPoseKind, rigSeqs } from "./SkinRig";
 import { SkinFaceSelection, SkinnedMesh, SkinnedMeshBuilder } from "./SkinnedMeshBuilder";
-
-// One entry per frame of a sequence. Skeletal sequences are not posed yet, so each of their frames
-// is undefined and renders the rest pose.
-export type SkinSeqFrames = readonly (SeqFrame | undefined)[];
 
 export interface SkinMeshSource {
     readonly model: Model;
@@ -40,57 +39,45 @@ export interface SkinnedRig {
     readonly animationsBySeqId: ReadonlyMap<number, readonly SkinFrame[]>;
 }
 
+type RigFrames = Omit<SkinnedRig, "meshes">;
+
 export class Skinning {
     constructor(
         readonly meshes: SkinnedMeshBuilder,
         readonly palettes: SkinPaletteBuilder,
         private readonly seqTypes: SeqTypeLoader,
         private readonly seqFrames: SeqFrameLoader,
+        private readonly skeletalSeqs: SkeletalSeqLoader,
     ) {}
 
-    // Several meshes posed by one set of matrices, computed from poseModel's vertex labels. The
-    // player's items share the body's rig this way.
+    // Several meshes posed by one set of matrices, computed from poseModel's vertex labels (or its
+    // bones). The player's items share the body's rig this way.
     addRig(
         poseModel: Model,
         meshSources: readonly SkinMeshSource[],
-        framesBySeqId: ReadonlyMap<number, SkinSeqFrames>,
+        seqs: readonly PoseableSeq[],
         space: PoseSpace,
     ): SkinnedRig {
-        const rig = SkinRig.oldStyle(
-            [poseModel, ...meshSources.map((source) => source.model)],
-            [...framesBySeqId.values()].flat().filter((frame): frame is SeqFrame => !!frame),
-        );
-        const meshes = meshSources.map((source) =>
-            this.meshes.addModel(source.model, rig, source.selection),
-        );
-        const poser = new FramePoser(
-            VertexLabelStats.fromModel(poseModel),
-            space,
-            rig.matrixSourceLabels,
-            rig.alphaSourceLabels,
-        );
-        const restFrame = this.palettes.addFrame(poser.rest());
-        const animationsBySeqId = new Map<number, readonly SkinFrame[]>();
-        for (const [seqId, frames] of framesBySeqId) {
-            animationsBySeqId.set(
-                seqId,
-                frames.map((frame) =>
-                    frame ? this.palettes.addFrame(poser.pose(frame)) : restFrame,
-                ),
-            );
+        const seqIds = new Set(seqs.map((seq) => seq.seqId));
+        if (seqIds.size !== seqs.length) {
+            throw new Error(`A rig poses each seq once, received ${seqs.map((seq) => seq.seqId)}`);
         }
-        return { meshes, restFrame, animationsBySeqId };
+        const rigged = rigSeqs([poseModel, ...meshSources.map((source) => source.model)], seqs);
+        const meshes = meshSources.map((source) =>
+            this.meshes.addModel(source.model, rigged.rig, source.selection),
+        );
+        return { meshes, ...this.addFrames(poseModel, rigged, space) };
     }
 
     addAnimationSet(
         model: Model,
-        framesBySeqId: ReadonlyMap<number, SkinSeqFrames>,
+        seqs: readonly PoseableSeq[],
         space: PoseSpace,
     ): SkinAnimationSet {
         const rig = this.addRig(
             model,
             [{ model, selection: SkinFaceSelection.all() }],
-            framesBySeqId,
+            seqs,
             space,
         );
         return { mesh: rig.meshes[0], animationsBySeqId: rig.animationsBySeqId };
@@ -100,18 +87,14 @@ export class Skinning {
         const rig = this.addRig(
             model,
             [{ model, selection: SkinFaceSelection.all() }],
-            new Map(),
+            [],
             PoseSpace.identity(),
         );
         return { mesh: rig.meshes[0], frames: [rig.restFrame] };
     }
 
     addAnimation(model: Model, seqId: number): SkinAnimation {
-        const set = this.addAnimationSet(
-            model,
-            new Map([[seqId, this.requireFrames(seqId)]]),
-            PoseSpace.identity(),
-        );
+        const set = this.addAnimationSet(model, [this.requireSeq(seqId)], PoseSpace.identity());
         return { mesh: set.mesh, frames: set.animationsBySeqId.get(seqId)! };
     }
 
@@ -128,13 +111,15 @@ export class Skinning {
         };
     }
 
-    // Undefined when the cache has nothing poseable for the sequence: no frames, or a frame that
-    // fails to load.
-    loadFrames(seqId: number): SkinSeqFrames | undefined {
+    // Undefined when the cache has nothing poseable for the sequence: no frames, or an old-style
+    // frame that fails to load.
+    loadSeq(seqId: number): PoseableSeq | undefined {
         const sequence = this.seqTypes.load(seqId);
         if (sequence.isSkeletalSeq()) {
-            const duration = sequence.getSkeletalDuration();
-            return duration > 0 ? new Array<undefined>(duration).fill(undefined) : undefined;
+            const playback = loadSkeletalPlayback(sequence, this.skeletalSeqs);
+            return playback.frameCount > 0
+                ? { kind: SeqPoseKind.SKELETAL, seqId, ...playback }
+                : undefined;
         }
         if (!sequence.frameIds || sequence.frameIds.length === 0) {
             return undefined;
@@ -147,14 +132,51 @@ export class Skinning {
             }
             frames.push(frame);
         }
-        return frames;
+        return { kind: SeqPoseKind.FRAMES, seqId, frames };
     }
 
-    requireFrames(seqId: number): SkinSeqFrames {
-        const frames = this.loadFrames(seqId);
-        if (!frames) {
+    requireSeq(seqId: number): PoseableSeq {
+        const seq = this.loadSeq(seqId);
+        if (!seq) {
             throw new Error(`Sequence ${seqId} has no poseable frames`);
         }
-        return frames;
+        return seq;
+    }
+
+    private addFrames(poseModel: Model, rigged: RiggedSeqs, space: PoseSpace): RigFrames {
+        const animationsBySeqId = new Map<number, readonly SkinFrame[]>();
+        switch (rigged.kind) {
+            case SeqPoseKind.FRAMES: {
+                const poser = new FramePoser(
+                    VertexLabelStats.fromModel(poseModel),
+                    space,
+                    rigged.rig.matrixSourceLabels,
+                    rigged.rig.alphaSourceLabels,
+                );
+                for (const { seqId, frames } of rigged.seqs) {
+                    animationsBySeqId.set(
+                        seqId,
+                        frames.map((frame) => this.palettes.addFrame(poser.pose(frame))),
+                    );
+                }
+                return { restFrame: this.palettes.addFrame(poser.rest()), animationsBySeqId };
+            }
+            case SeqPoseKind.SKELETAL: {
+                const poser = new SkeletalPoser(
+                    space,
+                    rigged.rig.bones,
+                    rigged.rig.alphaSourceLabels,
+                );
+                for (const { seqId, seq, frameCount } of rigged.seqs) {
+                    animationsBySeqId.set(
+                        seqId,
+                        Array.from({ length: frameCount }, (_, frame) =>
+                            this.palettes.addFrame(poser.pose(seq, frame)),
+                        ),
+                    );
+                }
+                return { restFrame: this.palettes.addFrame(poser.rest()), animationsBySeqId };
+            }
+        }
     }
 }

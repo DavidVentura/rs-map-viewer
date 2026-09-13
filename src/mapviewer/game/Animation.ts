@@ -1,27 +1,36 @@
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { SeqFrameLoader } from "../../rs/model/seq/SeqFrameLoader";
+import { loadSkeletalPlayback } from "../../rs/model/skeletal/SkeletalPlayback";
+import { SkeletalSeqLoader } from "../../rs/model/skeletal/SkeletalSeqLoader";
 
 export enum AnimationPlayback {
     LOOP = 0,
     ONCE = 1,
 }
 
-// A sequence's frame lengths in client ticks (20 ms), read from the cache once. An empty list is a
-// sequence without frame data, which counts as already finished.
+// A sequence's frame lengths in client ticks (20 ms), read from the cache once. A skeletal
+// sequence's frames each last one tick. An empty list is a sequence without frame data, which
+// counts as already finished.
 export type SeqTiming = {
     readonly seqId: number;
     readonly frameTicks: readonly number[];
 };
 
-export function loadSeqTiming(
-    seqId: number,
-    seqTypeLoader: SeqTypeLoader,
-    seqFrameLoader: SeqFrameLoader,
-): SeqTiming {
-    const sequence = seqTypeLoader.load(seqId);
+export type SeqTimingLoaders = {
+    readonly seqTypeLoader: SeqTypeLoader;
+    readonly seqFrameLoader: SeqFrameLoader;
+    readonly skeletalSeqLoader: SkeletalSeqLoader;
+};
+
+export function loadSeqTiming(seqId: number, loaders: SeqTimingLoaders): SeqTiming {
+    const sequence = loaders.seqTypeLoader.load(seqId);
+    if (sequence.isSkeletalSeq()) {
+        const { frameCount } = loadSkeletalPlayback(sequence, loaders.skeletalSeqLoader);
+        return { seqId, frameTicks: new Array<number>(frameCount).fill(1) };
+    }
     const frameCount = sequence.frameIds?.length ?? 0;
     const frameTicks = Array.from({ length: frameCount }, (_, frame) =>
-        sequence.getFrameLength(seqFrameLoader, frame),
+        sequence.getFrameLength(loaders.seqFrameLoader, frame),
     );
     return { seqId, frameTicks };
 }

@@ -21,7 +21,7 @@ export class LocAnimated {
 
         if (randomStart && seqType.frameStep !== -1) {
             if (seqType.isSkeletalSeq()) {
-                this.frame = Math.floor(Math.random() * seqType.getSkeletalDuration());
+                this.frame = Math.floor(Math.random() * animation.frames.length);
             } else {
                 this.frame = Math.floor(Math.random() * seqType.frameIds.length);
                 this.cycleStart -= Math.floor(Math.random() * seqType.frameLengths[this.frame]);
@@ -45,12 +45,13 @@ export class LocAnimated {
         }
 
         if (this.seqType.isSkeletalSeq()) {
-            const duration = this.seqType.getSkeletalDuration();
+            // The baked frames, since a skeletal sequence's played length is trimmed.
+            const frameCount = this.animation.frames.length;
             this.frame += elapsed;
             elapsed = 0;
-            if (this.frame >= duration) {
-                this.frame = duration - this.seqType.frameStep;
-                if (this.frame < 0 || this.frame > duration) {
+            if (this.frame >= frameCount) {
+                this.frame = frameCount - this.seqType.frameStep;
+                if (this.frame < 0 || this.frame >= frameCount) {
                     this.frame = 0;
                     this.seqType = undefined;
                     return 0;

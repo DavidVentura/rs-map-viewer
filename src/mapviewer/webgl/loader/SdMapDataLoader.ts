@@ -269,15 +269,11 @@ function createLocAnimation(
     locType: LocType,
 ): SkinAnimation | undefined {
     const rest = locModelLoader.getRestModel(locType, entity.type, entity.rotation);
-    const frames = skinning.loadFrames(entity.seqId);
-    if (!rest || !frames) {
+    const seq = skinning.loadSeq(entity.seqId);
+    if (!rest || !seq) {
         return undefined;
     }
-    const set = skinning.addAnimationSet(
-        rest.model,
-        new Map([[entity.seqId, frames]]),
-        rest.poseSpace,
-    );
+    const set = skinning.addAnimationSet(rest.model, [seq], rest.poseSpace);
     return { mesh: set.mesh, frames: set.animationsBySeqId.get(entity.seqId)! };
 }
 
@@ -459,22 +455,22 @@ function createNpcAnimation(
         return undefined;
     }
     const rest = npcModelLoader.getRestModel(npcType);
-    const idleFrames = skinning.loadFrames(idleSeqId);
-    if (!rest || !idleFrames) {
+    const idleSeq = skinning.loadSeq(idleSeqId);
+    if (!rest || !idleSeq) {
         return undefined;
     }
-    const walkFrames =
-        walkSeqId !== -1 && walkSeqId !== idleSeqId ? skinning.loadFrames(walkSeqId) : undefined;
+    const walkSeq =
+        walkSeqId !== -1 && walkSeqId !== idleSeqId ? skinning.loadSeq(walkSeqId) : undefined;
 
-    const framesBySeqId = new Map([[idleSeqId, idleFrames]]);
-    if (walkFrames) {
-        framesBySeqId.set(walkSeqId, walkFrames);
-    }
-    const set = skinning.addAnimationSet(rest.model, framesBySeqId, rest.poseSpace);
+    const set = skinning.addAnimationSet(
+        rest.model,
+        walkSeq ? [idleSeq, walkSeq] : [idleSeq],
+        rest.poseSpace,
+    );
     return {
         mesh: set.mesh,
         idle: { seqId: idleSeqId, frames: set.animationsBySeqId.get(idleSeqId)! },
-        walk: walkFrames
+        walk: walkSeq
             ? { seqId: walkSeqId, frames: set.animationsBySeqId.get(walkSeqId)! }
             : undefined,
     };
@@ -534,6 +530,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             new SkinPaletteBuilder(),
             state.seqTypeLoader,
             state.seqFrameLoader,
+            state.skeletalSeqLoader,
         );
         sceneBuf.addTerrain(scene, borderSize, maxLevel);
 

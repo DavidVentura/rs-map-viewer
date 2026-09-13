@@ -74,6 +74,11 @@ export interface PreviewGfxAnimationSet {
     readonly bakesByGfxId: ReadonlyMap<number, PreviewGfxBake>;
 }
 
+// The npc seq preview's range seqs its rig cannot pose, each with the reason.
+export interface PreviewNpcBake {
+    readonly unposedSeqs: ReadonlyMap<number, string>;
+}
+
 // Ground items are baked oversized (ARPG-style loot rather than true OSRS scale), so they read
 // from the top-down camera; the renderer's pick box (see GROUND_ITEM_HALF_WIDTH_UNITS/
 // GROUND_ITEM_HEIGHT_UNITS in WebGLMapViewerRenderer) grows off this same factor.
@@ -118,4 +123,5 @@ export interface ActorRenderData {
     readonly groundItems: GroundItemActorData;
     readonly worldObjects: WorldObjectActorData;
     readonly previewGfx?: PreviewGfxAnimationSet;
+    readonly previewNpc?: PreviewNpcBake;
 }
