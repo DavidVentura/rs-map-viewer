@@ -1,6 +1,6 @@
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { ResolvedEnemyType } from "./EnemyType";
-import { EnergySiphon } from "./EnergySiphon";
+import { EnergySiphon, EnergySiphonState } from "./EnergySiphon";
 
 export enum EncounterActorKind {
     ENERGY_SIPHON = "energy_siphon",
@@ -79,6 +79,15 @@ export function createPhantomActor(
         rotation,
         animation: new AnimationState(type.seqs.idle),
     };
+}
+
+// A siphon in flight is drawn by its flight projectile, so its grounded model stays hidden, and
+// out of hover picking, until it lands.
+export function isEncounterActorVisible(actor: EncounterActor): boolean {
+    return (
+        actor.kind !== EncounterActorKind.ENERGY_SIPHON ||
+        actor.siphon.state !== EnergySiphonState.IN_FLIGHT
+    );
 }
 
 export function encounterActorProjectileLaunchHeight(actor: EncounterActor): number {

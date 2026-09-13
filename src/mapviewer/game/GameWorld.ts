@@ -46,8 +46,9 @@ import {
     EnergySiphonImpactKind,
     EnergySiphonImpactResult,
     EnergySiphonState,
-    HOSTILE_ENERGY_SIPHON,
+    energySiphonRecallStrikes,
     resolveEnergySiphonImpact,
+    settleEnergySiphon,
 } from "./EnergySiphon";
 import { EquipmentChange, EquipmentGrantId, createEquipmentGrant } from "./Equipment";
 import {
@@ -79,12 +80,16 @@ import { PhaseLifecycle, currentPhase, initialPhaseLifecycle, transitionPhase } 
 import { Player, PlayerInput } from "./Player";
 import { Experience, createExperience } from "./Progression";
 import {
+    ENERGY_SIPHON_LAUNCH_FLIGHT,
+    ENERGY_SIPHON_LEECH_SPEC,
+    ENERGY_SIPHON_RECALL_FLIGHT,
     Projectile,
     ProjectileImpact,
     ProjectileLanding,
     ProjectileOutcome,
     ProjectileSpec,
     ProjectileTarget,
+    timedProjectileSpec,
     travelSeconds,
 } from "./Projectile";
 import { Reward } from "./Reward";
@@ -217,6 +222,18 @@ type PendingRockFall = {
     readonly landsAtSeconds: number;
 };
 
+// Opened when the Warden throws its siphons. The deadline counts from their landing, so the time
+// they spend in flight, where they cannot be struck, never eats into the player's window.
+type SiphonWindow = {
+    readonly deadlineAtSeconds: number;
+    readonly nextLeechAtSeconds: number;
+};
+
+type PendingSiphonStrike = {
+    readonly arrivesAtSeconds: number;
+    readonly damage: number;
+};
+
 type WardenP3Runtime = {
     readonly wardenId: number;
     readonly arena: ParsedWardenP3Arena;
@@ -225,11 +242,11 @@ type WardenP3Runtime = {
     readonly timing: ParsedWardenP3Timing;
     state: WardenP3State;
     siphonStatus: WardenSiphonStatus;
-    siphonDeadlineAtSeconds: number | undefined;
+    siphonWindow: SiphonWindow | undefined;
+    siphonStrikes: readonly PendingSiphonStrike[];
     commands: readonly WardenP3Command[];
     aimedSlamTarget: WardenSlamTarget | undefined;
     resolvedSlamTarget: WardenSlamTarget | undefined;
-    activeIntermission: WardenP3Intermission | undefined;
     activePhantoms: readonly WardenPhantom[];
     lightningWarningTarget: WardenP3Tile | undefined;
     lightningTarget: WardenP3Tile | undefined;
@@ -407,7 +424,10 @@ export class GameWorld {
             commands: runtime.commands,
             aimedSlamTarget: runtime.aimedSlamTarget,
             resolvedSlamTarget: runtime.resolvedSlamTarget,
-            activeIntermission: runtime.activeIntermission,
+            activeIntermission:
+                runtime.state.phase === WardenP3Phase.SIPHONS
+                    ? runtime.state.intermission
+                    : undefined,
             activePhantoms: runtime.activePhantoms,
             lightningWarningTarget: runtime.lightningWarningTarget,
             lightningTarget: runtime.lightningTarget,
@@ -433,6 +453,7 @@ export class GameWorld {
             slams: animations.slams,
             stances: animations.stances,
             phantomAttacks: animations.phantoms.attacks,
+            siphonLaunchSeconds: animations.siphons.launchSeconds,
         });
         warden.invulnerable = false;
         this.wardenP3Runtime = {
@@ -443,11 +464,11 @@ export class GameWorld {
             timing,
             state: initialWardenP3State(this.timeSeconds, parsedArena),
             siphonStatus: WardenSiphonStatus.NONE,
-            siphonDeadlineAtSeconds: undefined,
+            siphonWindow: undefined,
+            siphonStrikes: [],
             commands: [],
             aimedSlamTarget: undefined,
             resolvedSlamTarget: undefined,
-            activeIntermission: undefined,
             activePhantoms: [],
             lightningWarningTarget: undefined,
             lightningTarget: undefined,
@@ -1187,6 +1208,7 @@ export class GameWorld {
         if (!warden) {
             throw new Error(`Wardens P3 lost Warden enemy ${runtime.wardenId}`);
         }
+        this.advanceEnergySiphons(runtime, warden);
         const result = stepWardenP3(
             runtime.state,
             {
@@ -1210,6 +1232,165 @@ export class GameWorld {
         }
         this.resolveWardenFloorSlamArrivals(runtime);
         this.resolveBabaRockFalls(runtime);
+        this.resolveEnergySiphonStrikes(runtime, warden);
+    }
+
+    private energySiphonActors(): EnergySiphonActor[] {
+        return this.encounterActors.filter(
+            (actor): actor is EnergySiphonActor => actor.kind === EncounterActorKind.ENERGY_SIPHON,
+        );
+    }
+
+    // A landing siphon's idle restarts so every leech pulse after it falls on the idle's leech frame.
+    private advanceEnergySiphons(runtime: WardenP3Runtime, warden: Enemy): void {
+        for (const siphon of this.energySiphonActors()) {
+            if (siphon.siphon.state !== EnergySiphonState.IN_FLIGHT) {
+                continue;
+            }
+            const settled = settleEnergySiphon(siphon.siphon, this.timeSeconds);
+            if (settled.state === EnergySiphonState.IN_FLIGHT) {
+                continue;
+            }
+            siphon.siphon = settled;
+            siphon.animation.restart(siphon.type.seqs.idle);
+        }
+        const window = runtime.siphonWindow;
+        if (!window || this.timeSeconds < window.nextLeechAtSeconds) {
+            return;
+        }
+        runtime.siphonWindow = {
+            ...window,
+            nextLeechAtSeconds:
+                window.nextLeechAtSeconds + runtime.animations.siphons.leech.intervalSeconds,
+        };
+        for (const siphon of this.energySiphonActors()) {
+            if (siphon.siphon.state !== EnergySiphonState.HOSTILE) {
+                continue;
+            }
+            this.launchSiphonFlight(
+                warden,
+                ENERGY_SIPHON_LEECH_SPEC,
+                this.siphonLaunchPoint(siphon),
+                {
+                    kind: "COMBATANT",
+                    combatant: warden,
+                },
+            );
+        }
+    }
+
+    private resolveEnergySiphonStrikes(runtime: WardenP3Runtime, warden: Enemy): void {
+        const arrived = runtime.siphonStrikes.filter(
+            (strike) => this.timeSeconds >= strike.arrivesAtSeconds,
+        );
+        for (const strike of arrived) {
+            applyDamage(warden, strike.damage, this.events);
+        }
+        runtime.siphonStrikes = runtime.siphonStrikes.filter(
+            (strike) => this.timeSeconds < strike.arrivesAtSeconds,
+        );
+    }
+
+    // The siphons leave the Warden's chest together and land together, each as its tile's shadow
+    // reaches the landing frame.
+    private throwEnergySiphons(runtime: WardenP3Runtime, warden: Enemy): void {
+        const { siphons } = runtime.animations;
+        const landsAtSeconds = this.timeSeconds + siphons.flightSeconds;
+        runtime.siphonWindow = {
+            deadlineAtSeconds: landsAtSeconds + runtime.siphonLayout.deadlineSeconds,
+            nextLeechAtSeconds: landsAtSeconds + siphons.leech.firstSeconds,
+        };
+        const siphonType = this.animations.enemyType(EnemyTypeId.ENERGY_SIPHON);
+        const launch = timedProjectileSpec(ENERGY_SIPHON_LAUNCH_FLIGHT, siphons.flightSeconds);
+        const chest: FlightOrigin = {
+            x: warden.x,
+            y: warden.y,
+            height:
+                this.terrain.getHeight(warden.level, warden.x, warden.y) +
+                warden.projectileLaunchHeight,
+        };
+        for (const spawn of runtime.siphonLayout.spawns) {
+            const siphon = createEnergySiphonActor(
+                this.nextActorId++,
+                (spawn.x + 0.5) * TILE_SIZE,
+                (spawn.y + 0.5) * TILE_SIZE,
+                spawn.level,
+                siphonType,
+                spawn.rotation,
+                { state: EnergySiphonState.IN_FLIGHT, landsAtSeconds },
+            );
+            this.spawnWardenTileEffect(siphons.landingShadow, spawn, landsAtSeconds);
+            this.launchSiphonFlight(warden, launch, chest, {
+                kind: "POINT",
+                x: siphon.x,
+                y: siphon.y,
+            });
+            this.encounterActors.push(siphon);
+        }
+    }
+
+    // Every siphon flies back into the Warden during its release, whether or not it was reversed;
+    // only the reversed ones strike it as they arrive.
+    private recallEnergySiphons(
+        runtime: WardenP3Runtime,
+        warden: Enemy,
+        reversalDamage: number,
+    ): void {
+        const { recallSeconds } = runtime.animations.siphons;
+        const arrivesAtSeconds = this.timeSeconds + recallSeconds;
+        const recall = timedProjectileSpec(ENERGY_SIPHON_RECALL_FLIGHT, recallSeconds);
+        const siphons = this.energySiphonActors();
+        for (const siphon of siphons) {
+            this.launchSiphonFlight(warden, recall, this.siphonLaunchPoint(siphon), {
+                kind: "COMBATANT",
+                combatant: warden,
+            });
+        }
+        const strikes = energySiphonRecallStrikes(
+            siphons.map((siphon) => siphon.siphon),
+            reversalDamage,
+        );
+        runtime.siphonStrikes = [
+            ...runtime.siphonStrikes,
+            ...strikes.map((damage) => ({ arrivesAtSeconds, damage })),
+        ];
+        runtime.siphonWindow = undefined;
+        this.encounterActors = this.encounterActors.filter(
+            (actor) => actor.kind !== EncounterActorKind.ENERGY_SIPHON,
+        );
+    }
+
+    private siphonLaunchPoint(siphon: EnergySiphonActor): FlightOrigin {
+        return {
+            x: siphon.x,
+            y: siphon.y,
+            height:
+                this.terrain.getHeight(siphon.level, siphon.x, siphon.y) +
+                encounterActorProjectileLaunchHeight(siphon),
+        };
+    }
+
+    // A siphon flight only pictures where the energy goes: landing, leeching, the deadline and the
+    // strikes all run on the runtime's own timers, so a flight dropped at the projectile cap costs
+    // nothing but the picture.
+    private launchSiphonFlight(
+        warden: Enemy,
+        spec: ProjectileSpec,
+        start: FlightOrigin,
+        target: ProjectileTarget,
+    ): void {
+        if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+            return;
+        }
+        this.projectiles.push(
+            new Projectile(
+                spec,
+                { caster: warden, affects: Affects.SELF, payloads: [] },
+                start,
+                target,
+                this.projectileTravelSeq(spec),
+            ),
+        );
     }
 
     // A tile hurts the player only as the front reaches it, so stepping onto tiles the front has
@@ -1246,8 +1427,8 @@ export class GameWorld {
             return runtime.siphonStatus;
         }
         if (
-            runtime.siphonDeadlineAtSeconds !== undefined &&
-            this.timeSeconds >= runtime.siphonDeadlineAtSeconds
+            runtime.siphonWindow !== undefined &&
+            this.timeSeconds >= runtime.siphonWindow.deadlineAtSeconds
         ) {
             return WardenSiphonStatus.DEADLINE_EXPIRED;
         }
@@ -1284,32 +1465,11 @@ export class GameWorld {
             case "SET_WARDEN_VULNERABILITY":
                 warden.invulnerable = !command.vulnerable;
                 return;
-            case "SPAWN_ENERGY_SIPHONS": {
-                runtime.activeIntermission = command.intermission;
-                runtime.siphonDeadlineAtSeconds =
-                    this.timeSeconds + runtime.siphonLayout.deadlineSeconds;
-                const siphonType = this.animations.enemyType(EnemyTypeId.ENERGY_SIPHON);
-                const siphons = runtime.siphonLayout.spawns.map((spawn) =>
-                    createEnergySiphonActor(
-                        this.nextActorId++,
-                        (spawn.x + 0.5) * TILE_SIZE,
-                        (spawn.y + 0.5) * TILE_SIZE,
-                        spawn.level,
-                        siphonType,
-                        spawn.rotation,
-                        HOSTILE_ENERGY_SIPHON,
-                    ),
-                );
-                this.encounterActors = [...this.encounterActors, ...siphons];
+            case "SPAWN_ENERGY_SIPHONS":
+                this.throwEnergySiphons(runtime, warden);
                 return;
-            }
             case "RESOLVE_ENERGY_SIPHONS":
-                runtime.activeIntermission = undefined;
-                runtime.siphonDeadlineAtSeconds = undefined;
-                warden.health = Math.max(0, warden.health - command.wardenDamage);
-                this.encounterActors = this.encounterActors.filter(
-                    (actor) => actor.kind !== EncounterActorKind.ENERGY_SIPHON,
-                );
+                this.recallEnergySiphons(runtime, warden, command.reversalDamage);
                 return;
             case "ACTIVATE_PHANTOM":
                 runtime.activePhantoms = [...runtime.activePhantoms, command.phantom];
@@ -1642,9 +1802,7 @@ export class GameWorld {
         }
         siphon.siphon = impact.siphon;
         siphon.rotation = siphon.reversedRotation;
-        const siphons = this.encounterActors.filter(
-            (actor): actor is EnergySiphonActor => actor.kind === EncounterActorKind.ENERGY_SIPHON,
-        );
+        const siphons = this.energySiphonActors();
         if (siphons.every((candidate) => candidate.siphon.state === EnergySiphonState.REVERSED)) {
             const runtime = this.wardenP3Runtime;
             if (!runtime || runtime.state.phase !== WardenP3Phase.SIPHONS) {

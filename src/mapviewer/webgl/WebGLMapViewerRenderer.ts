@@ -38,7 +38,12 @@ import {
 } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
-import { EncounterActor, EncounterActorKind, EnergySiphonActor } from "../game/EncounterActor";
+import {
+    EncounterActor,
+    EncounterActorKind,
+    EnergySiphonActor,
+    isEncounterActorVisible,
+} from "../game/EncounterActor";
 import { Enemy, EnemyState } from "../game/Enemy";
 import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
 import { EnergySiphonState } from "../game/EnergySiphon";
@@ -2293,7 +2298,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private buildInteractableScreenCandidates(): EnemyScreenCandidate[] {
         const candidates = this.buildEnemyScreenCandidates();
         for (const actor of this.mapViewer.world.encounterActors) {
-            if (actor.kind !== EncounterActorKind.ENERGY_SIPHON) {
+            if (
+                actor.kind !== EncounterActorKind.ENERGY_SIPHON ||
+                !isEncounterActorVisible(actor)
+            ) {
                 continue;
             }
             const rect = this.projectScreenRect(
@@ -3069,7 +3077,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         for (const actor of world.encounterActors) {
             const animSet = actorData.enemyTypes[actor.type.id];
-            if (!animSet) {
+            if (!animSet || !isEncounterActorVisible(actor)) {
                 continue;
             }
             const groundHeight = this.tryGetHeight(actor.level, actor.x, actor.y);

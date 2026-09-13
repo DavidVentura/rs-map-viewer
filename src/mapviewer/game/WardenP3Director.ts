@@ -96,6 +96,8 @@ export type WardenP3Timing = WardenP3HazardTiming & {
     >;
     readonly stances: Readonly<Record<WardenStance, WardenStanceTiming>>;
     readonly phantomAttacks: Readonly<Record<WardenPhantom, WardenPhantomAttackTiming>>;
+    // From the start of the Warden's charge to the frame it throws the siphons out.
+    readonly siphonLaunchSeconds: number;
 };
 
 export type WardenP3Arena = {
@@ -140,6 +142,15 @@ type ActivePhantom = {
     readonly releasedAttackCount: number;
 };
 
+type ChargingSiphons = {
+    readonly kind: "charging";
+    readonly launchesAtSeconds: number;
+};
+
+type LaunchedSiphons = {
+    readonly kind: "launched";
+};
+
 type PendingLightning = {
     readonly target: WardenP3Tile;
     readonly strikesAtSeconds: number;
@@ -159,6 +170,7 @@ export type WardenP3SiphonState = WardenP3CommonState & {
     readonly phase: WardenP3Phase.SIPHONS;
     readonly intermission: WardenP3Intermission;
     readonly suspendedSlamTarget: WardenSlamTarget;
+    readonly siphons: ChargingSiphons | LaunchedSiphons;
 };
 
 export type WardenP3EnrageState = {
@@ -211,7 +223,8 @@ export type ResolveEnergySiphonsCommand = {
     readonly kind: "RESOLVE_ENERGY_SIPHONS";
     readonly intermission: WardenP3Intermission;
     readonly status: Exclude<WardenSiphonStatus, WardenSiphonStatus.NONE>;
-    readonly wardenDamage: number;
+    // What reversing every siphon deals the Warden, shared out between the siphons as they fly back.
+    readonly reversalDamage: number;
 };
 
 export type ActivatePhantomCommand = {
@@ -283,6 +296,7 @@ export type WardenP3Result = {
 const INTERMISSION_HEALTH_FRACTIONS: readonly number[] = [0.8, 0.6, 0.4, 0.2];
 const ENRAGE_HEALTH_FRACTION = 0.05;
 const ENRAGE_HEAL_FRACTION = 0.2;
+const SIPHON_REVERSAL_DAMAGE_FRACTION = 0.05;
 
 export const WARDEN_P3_HAZARD_TIMING: WardenP3HazardTiming = {
     phantomAttackRestSeconds: 2.4,
@@ -324,6 +338,10 @@ export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timin
     }
     for (const [stance, { transitionSeconds }] of Object.entries(timing.stances)) {
         assertFiniteNonNegative(transitionSeconds, `The ${stance} stance's transition`);
+    }
+    assertFiniteNonNegative(timing.siphonLaunchSeconds, "siphonLaunchSeconds");
+    if (timing.siphonLaunchSeconds >= timing.stances[WardenStance.CHARGING].transitionSeconds) {
+        throw new RangeError("The Warden must throw its siphons before its charge ends");
     }
     for (const [phantom, attack] of Object.entries(timing.phantomAttacks)) {
         assertFinitePositive(attack.durationSeconds, `The ${phantom} phantom attack's duration`);
@@ -633,7 +651,6 @@ function beginIntermission(
     if (activation.command !== undefined) {
         commands.push(activation.command);
     }
-    commands.push({ kind: "SPAWN_ENERGY_SIPHONS", intermission });
     commands.push({ kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING });
     return {
         nextState: {
@@ -642,6 +659,10 @@ function beginIntermission(
             nextIntermission: nextIntermission(intermission),
             suspendedSlamTarget: activeSlamTarget(normal.slam),
             phantoms: activation.phantoms,
+            siphons: {
+                kind: "charging",
+                launchesAtSeconds: snapshot.timeSeconds + timing.siphonLaunchSeconds,
+            },
         },
         commands,
     };
@@ -655,16 +676,16 @@ function resumeAfterSiphons(
     if (snapshot.siphonStatus === WardenSiphonStatus.NONE) {
         throw new Error("Cannot resolve siphons without a result");
     }
-    const reversed = snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED;
     const resolution: ResolveEnergySiphonsCommand = {
         kind: "RESOLVE_ENERGY_SIPHONS",
         intermission: state.intermission,
         status: snapshot.siphonStatus,
-        wardenDamage: reversed ? snapshot.wardenHealth.maximum * 0.05 : 0,
+        reversalDamage: snapshot.wardenHealth.maximum * SIPHON_REVERSAL_DAMAGE_FRACTION,
     };
-    const failurePunishment: readonly WardenP3Command[] = reversed
-        ? []
-        : [{ kind: "RESOLVE_FLOOR_SLAM", target: WardenSlamTarget.CENTRE }];
+    const failurePunishment: readonly WardenP3Command[] =
+        snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED
+            ? []
+            : [{ kind: "RESOLVE_FLOOR_SLAM", target: WardenSlamTarget.CENTRE }];
     return {
         nextState: {
             phase: WardenP3Phase.NORMAL,
@@ -729,6 +750,18 @@ function stepNormal(
     };
 }
 
+// The siphons exist only once the Warden's charge reaches its throw, so they spawn there rather than
+// as the intermission opens.
+function launchDueSiphons(state: WardenP3SiphonState, timeSeconds: number): WardenP3Result {
+    if (state.siphons.kind === "launched" || timeSeconds < state.siphons.launchesAtSeconds) {
+        return { nextState: state, commands: [] };
+    }
+    return {
+        nextState: { ...state, siphons: { kind: "launched" } },
+        commands: [{ kind: "SPAWN_ENERGY_SIPHONS", intermission: state.intermission }],
+    };
+}
+
 function stepSiphons(
     state: WardenP3SiphonState,
     snapshot: WardenP3Snapshot,
@@ -737,7 +770,11 @@ function stepSiphons(
     const phantomStep = stepPhantoms(state.phantoms, snapshot.timeSeconds, timing);
     const workingState = { ...state, phantoms: phantomStep.phantoms };
     if (snapshot.siphonStatus === WardenSiphonStatus.NONE) {
-        return { nextState: workingState, commands: phantomStep.commands };
+        const launch = launchDueSiphons(workingState, snapshot.timeSeconds);
+        return {
+            nextState: launch.nextState,
+            commands: [...phantomStep.commands, ...launch.commands],
+        };
     }
     const resumed = resumeAfterSiphons(workingState, snapshot, timing);
     return {

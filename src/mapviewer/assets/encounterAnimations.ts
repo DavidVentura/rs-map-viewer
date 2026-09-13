@@ -13,8 +13,11 @@ import {
     WardenP3Animations,
     WardenPhantomAnimationIds,
     WardenPhantomAttackSeq,
+    WardenSiphonAnimationIds,
+    WardenSiphonAnimations,
     WardenSlamSeq,
 } from "../game/WardenP3Animations";
+import { WardenStance } from "../game/WardenP3Director";
 import { resolvePlayerLoadouts } from "../game/abilities";
 import { ActorAssets, AnimatedSpotAnimBake, ProjectileBake } from "./ActorAssets";
 
@@ -41,11 +44,53 @@ function lookup<K, V>(
     };
 }
 
-// A slam's impact frame, a phantom attack's release frame or a rock's landing frame outside its
-// sequence throws here, while the encounter loads.
+// A siphon flight runs from its sequence's start to the given frame, so the first frame would leave
+// it no time to fly.
+function flightFrameSeconds(seq: SeqTiming, frame: number, description: string): number {
+    const seconds = sequenceTimeToFrameSeconds(seq, frame);
+    if (seconds <= 0) {
+        throw new RangeError(`${description} must come after sequence ${seq.seqId} starts`);
+    }
+    return seconds;
+}
+
+function resolveWardenSiphonAnimations(
+    wardenIds: WardenP3AnimationIds,
+    siphonIds: WardenSiphonAnimationIds,
+    effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>,
+    catalog: SeqCatalog,
+): WardenSiphonAnimations {
+    const siphonIdle = catalog.get(getEnemyType(EnemyTypeId.ENERGY_SIPHON).idleSeqId);
+    const { landingShadow } = siphonIds;
+    return {
+        launchSeconds: sequenceTimeToFrameSeconds(
+            catalog.get(wardenIds.stances[WardenStance.CHARGING].transitionSeqId),
+            siphonIds.launchFrame,
+        ),
+        landingShadow: landingShadow.effect,
+        flightSeconds: flightFrameSeconds(
+            catalog.get(effects[landingShadow.effect].seq.seqId),
+            landingShadow.landingFrame,
+            "A siphon's landing",
+        ),
+        leech: {
+            firstSeconds: sequenceTimeToFrameSeconds(siphonIdle, siphonIds.leechFrame),
+            intervalSeconds: sequenceDurationSeconds(siphonIdle),
+        },
+        recallSeconds: flightFrameSeconds(
+            catalog.get(wardenIds.stances[WardenStance.STANDING].transitionSeqId),
+            siphonIds.recallFrame,
+            "A siphon's recall",
+        ),
+    };
+}
+
+// A slam's impact frame, a phantom attack's release frame, a rock's landing frame or a siphon beat
+// outside its sequence throws here, while the encounter loads.
 function resolveWardenP3Animations(
     wardenIds: WardenP3AnimationIds,
     phantomIds: WardenPhantomAnimationIds,
+    siphonIds: WardenSiphonAnimationIds,
     effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>,
     catalog: SeqCatalog,
 ): WardenP3Animations {
@@ -89,6 +134,7 @@ function resolveWardenP3Animations(
                 ),
             },
         },
+        siphons: resolveWardenSiphonAnimations(wardenIds, siphonIds, effects, catalog),
     };
 }
 
@@ -105,6 +151,7 @@ function scriptAnimations(
             return resolveWardenP3Animations(
                 encounter.script.wardenAnimations,
                 encounter.script.phantomAnimations,
+                encounter.script.siphonAnimations,
                 assets.effects,
                 catalog,
             );

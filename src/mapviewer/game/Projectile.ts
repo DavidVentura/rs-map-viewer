@@ -38,6 +38,9 @@ export enum ProjectileKind {
     TUMEKENS_SHADOW,
     ZEBAK_PHANTOM_MAGIC,
     ZEBAK_PHANTOM_RANGED,
+    ENERGY_SIPHON_LAUNCH,
+    ENERGY_SIPHON_LEECH,
+    ENERGY_SIPHON_RECALL,
 }
 
 export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
@@ -286,6 +289,55 @@ export const ZEBAK_PHANTOM_MAGIC_SPEC: ProjectileSpec = {
 export const ZEBAK_PHANTOM_RANGED_SPEC: ProjectileSpec = {
     ...ZEBAK_PHANTOM_MAGIC_SPEC,
     kind: ProjectileKind.ZEBAK_PHANTOM_RANGED,
+};
+
+// A flight whose duration is not its own but whatever the encounter's sequences leave it, so it
+// becomes a ProjectileSpec only once those are resolved (see timedProjectileSpec).
+export type TimedProjectileFlight = Omit<ProjectileSpec, "travelTime">;
+
+export function timedProjectileSpec(
+    flight: TimedProjectileFlight,
+    travelSeconds: number,
+): ProjectileSpec {
+    return { ...flight, travelTime: { baseSeconds: travelSeconds, secondsPerTile: 0 } };
+}
+
+// The Warden throws its siphons out as red skulls (FX_WARDENS_BOMB01), leeches through them with
+// Warden phase flames (SPOTANIM_WARDENS_PHASE01_BALL02) and pulls them back in as phase orbs
+// (SPOTANIM_WARDENS_PHASE01_BALL01).
+export const ENERGY_SIPHON_LAUNCH_TRAVEL_SEQ_ID = 7571;
+export const ENERGY_SIPHON_LEECH_TRAVEL_SEQ_ID = 7614;
+export const ENERGY_SIPHON_RECALL_TRAVEL_SEQ_ID = 8144;
+
+// Siphon energy enters and leaves the Warden at its chest rather than its feet.
+const INTO_WARDEN_LANDING: ProjectileLanding = { kind: "TRACKED_COMBATANT", endHeight: 400 };
+
+export const ENERGY_SIPHON_LAUNCH_FLIGHT: TimedProjectileFlight = {
+    kind: ProjectileKind.ENERGY_SIPHON_LAUNCH,
+    launchAngleRadians: (40 * Math.PI) / 180,
+    range: 24 * TILE_SIZE,
+    landing: { kind: "FIXED_POINT", endHeight: 0, hitRadius: 0, origin: { kind: "CASTER" } },
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+export const ENERGY_SIPHON_LEECH_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.ENERGY_SIPHON_LEECH,
+    launchAngleRadians: (15 * Math.PI) / 180,
+    travelTime: { baseSeconds: 0.3, secondsPerTile: 1 / 10 },
+    range: 24 * TILE_SIZE,
+    landing: INTO_WARDEN_LANDING,
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+export const ENERGY_SIPHON_RECALL_FLIGHT: TimedProjectileFlight = {
+    kind: ProjectileKind.ENERGY_SIPHON_RECALL,
+    launchAngleRadians: (25 * Math.PI) / 180,
+    range: 24 * TILE_SIZE,
+    landing: INTO_WARDEN_LANDING,
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
 export function travelSeconds(travelTime: ProjectileTravelTime, distance: number): number {

@@ -40,6 +40,7 @@ const timing = parseWardenP3Timing({
         [WardenPhantom.ZEBAK]: { releaseSeconds: 1.25, durationSeconds: 2 },
         [WardenPhantom.BABA]: { releaseSeconds: 0.5, durationSeconds: 1 },
     },
+    siphonLaunchSeconds: 1.5,
     phantomAttackRestSeconds: 3,
     lightningWarningSeconds: 0.5,
     lightningWarningIntervalSeconds: 1,
@@ -174,18 +175,26 @@ describe("Wardens P3 director", () => {
         expect(opened.nextState.phase).toBe(WardenP3Phase.SIPHONS);
         expect(opened.commands).toEqual([
             { kind: "SET_WARDEN_VULNERABILITY", vulnerable: false },
-            { kind: "SPAWN_ENERGY_SIPHONS", intermission: WardenP3Intermission.FIRST },
             { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING },
         ]);
 
-        const resolved = step(opened.nextState, 1, 80, WardenSiphonStatus.ALL_REVERSED);
+        const charging = step(opened.nextState, timing.siphonLaunchSeconds - 0.01, 80);
+        expect(charging.commands).toEqual([]);
+        const thrown = step(opened.nextState, timing.siphonLaunchSeconds, 80);
+        expect(thrown.commands).toEqual([
+            { kind: "SPAWN_ENERGY_SIPHONS", intermission: WardenP3Intermission.FIRST },
+        ]);
+        const thrownOnce = step(thrown.nextState, timing.siphonLaunchSeconds + 1, 80);
+        expect(thrownOnce.commands).toEqual([]);
+
+        const resolved = step(thrownOnce.nextState, 3, 80, WardenSiphonStatus.ALL_REVERSED);
         expect(resolved.nextState.phase).toBe(WardenP3Phase.NORMAL);
         expect(resolved.commands).toEqual([
             {
                 kind: "RESOLVE_ENERGY_SIPHONS",
                 intermission: WardenP3Intermission.FIRST,
                 status: WardenSiphonStatus.ALL_REVERSED,
-                wardenDamage: 5,
+                reversalDamage: 5,
             },
             { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
             { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
@@ -354,9 +363,10 @@ describe("Wardens P3 director", () => {
         const opened = step(initialWardenP3State(0, arena), 0, 80);
         const failed = step(opened.nextState, 1, 80, WardenSiphonStatus.DEADLINE_EXPIRED);
 
-        expect(commandOfKind(failed.commands, "RESOLVE_ENERGY_SIPHONS").status).toBe(
-            WardenSiphonStatus.DEADLINE_EXPIRED,
-        );
+        expect(commandOfKind(failed.commands, "RESOLVE_ENERGY_SIPHONS")).toMatchObject({
+            status: WardenSiphonStatus.DEADLINE_EXPIRED,
+            reversalDamage: 5,
+        });
         expect(commandOfKind(failed.commands, "RESOLVE_FLOOR_SLAM").target).toBe(
             WardenSlamTarget.CENTRE,
         );

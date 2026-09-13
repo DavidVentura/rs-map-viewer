@@ -4,6 +4,7 @@ import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./Enc
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
 import { GameWorld, SimInput } from "./GameWorld";
+import { ProjectileKind } from "./Projectile";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 import {
@@ -111,6 +112,36 @@ function createWardenWorld(random: () => number = Math.random): {
 
 const STEP_SECONDS = 0.01;
 
+// Steps from the opening of a siphon intermission to the Warden's throw, leaving the siphons just
+// thrown and still in flight.
+function stepUntilSiphonsThrown(world: GameWorld): EnergySiphonActor[] {
+    for (let step = 0; step < 5000; step++) {
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        const siphons = energySiphons(world);
+        if (siphons.length > 0) {
+            return siphons;
+        }
+    }
+    throw new Error("Expected the Warden to throw its siphons");
+}
+
+function stepUntilSiphonsLand(world: GameWorld): EnergySiphonActor[] {
+    const landsAtSeconds = world.timeSeconds + WARDEN_ANIMATIONS.siphons.flightSeconds;
+    while (world.timeSeconds < landsAtSeconds + STEP_SECONDS) {
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+    }
+    const siphons = energySiphons(world);
+    expect(siphons.every((siphon) => siphon.siphon.state === EnergySiphonState.HOSTILE)).toBe(true);
+    return siphons;
+}
+
+function reverseSiphon(world: GameWorld, siphon: EnergySiphonActor): void {
+    world.player!.style = WeaponStyle.MELEE;
+    world.player!.x = siphon.x;
+    world.player!.y = siphon.y;
+    world.step(attackSiphon(siphon), STEP_SECONDS);
+}
+
 function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
     for (let step = 0; step < 2000; step++) {
         world.step(EMPTY_INPUT, STEP_SECONDS);
@@ -160,7 +191,6 @@ describe("Wardens P3 world runtime", () => {
             activeIntermission: 0,
             commands: [
                 { kind: "SET_WARDEN_VULNERABILITY", vulnerable: false },
-                { kind: "SPAWN_ENERGY_SIPHONS", intermission: 0 },
                 { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING },
             ],
         });
@@ -180,7 +210,7 @@ describe("Wardens P3 world runtime", () => {
                     kind: "RESOLVE_ENERGY_SIPHONS",
                     intermission: 0,
                     status: WardenSiphonStatus.ALL_REVERSED,
-                    wardenDamage: 5,
+                    reversalDamage: 5,
                 },
                 { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
                 { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
@@ -229,49 +259,118 @@ describe("Wardens P3 world runtime", () => {
     it("spawns mechanic-only siphons and resolves their intermission after basic melee reverses each", () => {
         const { world, wardenId } = createWardenWorld();
         world.findEnemy(wardenId)!.health = 80;
-        world.step(EMPTY_INPUT, 0.01);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(energySiphons(world)).toEqual([]);
 
-        expect(energySiphons(world)).toHaveLength(4);
-        world.player!.style = WeaponStyle.MELEE;
-        for (let index = 0; index < energySiphons(world).length - 1; index++) {
-            const siphon = energySiphons(world)[index];
-            world.player!.x = siphon.x;
-            world.player!.y = siphon.y;
-            world.step(attackSiphon(siphon), 0.01);
+        expect(stepUntilSiphonsThrown(world)).toHaveLength(4);
+        const siphons = stepUntilSiphonsLand(world);
+        for (const siphon of siphons.slice(0, -1)) {
+            reverseSiphon(world, siphon);
             expect(world.findEnergySiphon(siphon.id)?.siphon.state).toBe(
                 EnergySiphonState.REVERSED,
             );
         }
 
-        const finalSiphon = energySiphons(world).at(-1)!;
-        world.player!.x = finalSiphon.x;
-        world.player!.y = finalSiphon.y;
-        world.step(attackSiphon(finalSiphon), 0.01);
+        reverseSiphon(world, siphons.at(-1)!);
 
         expect(energySiphons(world)).toEqual([]);
         expect(world.wardenP3RenderState?.commands).toContainEqual({
             kind: "RESOLVE_ENERGY_SIPHONS",
             intermission: 0,
             status: WardenSiphonStatus.ALL_REVERSED,
-            wardenDamage: 5,
+            reversalDamage: 5,
         });
     });
 
-    it("resolves a siphon intermission when its authored deadline expires", () => {
+    it("lets no siphon be reversed until it has landed on its tile", () => {
         const { world, wardenId } = createWardenWorld();
         world.findEnemy(wardenId)!.health = 80;
-        world.step(EMPTY_INPUT, 0.01);
+        const [thrown] = stepUntilSiphonsThrown(world);
 
-        world.step(EMPTY_INPUT, WARDEN_P3_SOLO_SIPHON_LAYOUT.deadlineSeconds);
+        reverseSiphon(world, thrown);
+        expect(world.findEnergySiphon(thrown.id)?.siphon.state).toBe(EnergySiphonState.IN_FLIGHT);
 
-        expect(energySiphons(world)).toEqual([]);
+        stepUntilSiphonsLand(world);
+        reverseSiphon(world, thrown);
+        expect(world.findEnergySiphon(thrown.id)?.siphon.state).toBe(EnergySiphonState.REVERSED);
+    });
+
+    it("resolves a siphon intermission when its authored deadline expires after the siphons land", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        stepUntilSiphonsThrown(world);
+        const deadlineAtSeconds =
+            world.timeSeconds +
+            WARDEN_ANIMATIONS.siphons.flightSeconds +
+            WARDEN_P3_SOLO_SIPHON_LAYOUT.deadlineSeconds;
+
+        while (world.timeSeconds + STEP_SECONDS < deadlineAtSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(energySiphons(world)).toHaveLength(4);
+        while (energySiphons(world).length > 0) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+
+        expect(world.timeSeconds).toBeLessThan(deadlineAtSeconds + 2 * STEP_SECONDS);
         expect(world.wardenP3RenderState?.commands).toContainEqual({
             kind: "RESOLVE_ENERGY_SIPHONS",
             intermission: 0,
             status: WardenSiphonStatus.DEADLINE_EXPIRED,
-            wardenDamage: 0,
+            reversalDamage: 5,
         });
         expect(world.wardenP3RenderState?.floorSlams).toHaveLength(1);
+    });
+
+    // Reverses reversedCount of the first intermission's siphons, then lets the rest run out the
+    // deadline (or resolves at once when all are reversed), returning when the siphons fly back.
+    function recallSiphons(reversedCount: number): {
+        readonly world: GameWorld;
+        readonly wardenId: number;
+        readonly arrivesAtSeconds: number;
+    } {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        stepUntilSiphonsThrown(world);
+        const siphons = stepUntilSiphonsLand(world);
+        for (const siphon of siphons.slice(0, reversedCount)) {
+            reverseSiphon(world, siphon);
+        }
+        world.player!.x = 0;
+        world.player!.y = 0;
+        while (energySiphons(world).length > 0) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        return {
+            world,
+            wardenId,
+            arrivesAtSeconds: world.timeSeconds + WARDEN_ANIMATIONS.siphons.recallSeconds,
+        };
+    }
+
+    it("flies every siphon back into the Warden, striking with the reversed ones only as they arrive", () => {
+        const { world, wardenId, arrivesAtSeconds } = recallSiphons(4);
+        const warden = world.findEnemy(wardenId)!;
+        const recallFlights = world.projectiles.filter(
+            (projectile) => projectile.spec.kind === ProjectileKind.ENERGY_SIPHON_RECALL,
+        );
+        expect(recallFlights).toHaveLength(4);
+
+        while (world.timeSeconds + STEP_SECONDS < arrivesAtSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(warden.health).toBe(80);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(warden.health).toBe(75);
+    });
+
+    it("still strikes with the siphons reversed before the deadline expired", () => {
+        const { world, wardenId, arrivesAtSeconds } = recallSiphons(2);
+        while (world.timeSeconds < arrivesAtSeconds + STEP_SECONDS) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(world.findEnemy(wardenId)!.health).toBe(77.5);
     });
 
     // Drives past one of the four scripted siphon intermissions (INTERMISSION_HEALTH_FRACTIONS in
@@ -314,7 +413,7 @@ describe("Wardens P3 world runtime", () => {
     it("never counts phantoms or siphons as combatants", () => {
         const { world, wardenId } = createWardenWorld();
         world.findEnemy(wardenId)!.health = 80;
-        world.step(EMPTY_INPUT, 0.01);
+        stepUntilSiphonsThrown(world);
         world.encounterActors.push(
             createPhantomActor(9999, 0, 0, 0, world.findEnemy(wardenId)!.type, 0),
         );
@@ -360,8 +459,17 @@ describe("Wardens P3 world runtime", () => {
         return world;
     }
 
+    // The siphons thrown during the intermission fly and leech alongside Zebak's shots.
+    function zebakShots(world: GameWorld) {
+        return world.projectiles.filter(
+            (projectile) =>
+                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_MAGIC ||
+                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_RANGED,
+        );
+    }
+
     function stepUntilShotLands(world: GameWorld): void {
-        while (world.projectiles.length > 0) {
+        while (zebakShots(world).length > 0) {
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
     }
@@ -377,7 +485,7 @@ describe("Wardens P3 world runtime", () => {
         expect(zebak.animation.seqId).toBe(
             WARDEN_ANIMATIONS.phantoms.attacks[WardenPhantom.ZEBAK].seq.seqId,
         );
-        expect(world.projectiles).toHaveLength(1);
+        expect(zebakShots(world)).toHaveLength(1);
         stepUntilShotLands(world);
         expect(world.player!.health).toBe(
             startingHealth - WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.ZEBAK],

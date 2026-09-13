@@ -16,6 +16,9 @@ import {
 import { WorldObjectKind } from "../game/Interaction";
 import { Player } from "../game/Player";
 import {
+    ENERGY_SIPHON_LAUNCH_TRAVEL_SEQ_ID,
+    ENERGY_SIPHON_LEECH_TRAVEL_SEQ_ID,
+    ENERGY_SIPHON_RECALL_TRAVEL_SEQ_ID,
     FIRE_BOLT_HIT_SEQ_ID,
     FIRE_BOLT_TRAVEL_SEQ_ID,
     JAD_FIRE_SEQ_ID,
@@ -239,6 +242,12 @@ const ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID = 2186;
 const ZEBAK_PHANTOM_RANGED_IMPACT_SPOTANIM_ID = 2185;
 const BABA_ROCK_FALL_SPOTANIM_ID = 2252;
 
+// Energy siphon flights (SpotAnimType ids): 2224 FX_WARDENS_BOMB01 flies out, 2238
+// SPOTANIM_WARDENS_PHASE01_BALL02 leeches and 2237 SPOTANIM_WARDENS_PHASE01_BALL01 flies back.
+const ENERGY_SIPHON_LAUNCH_SPOTANIM_ID = 2224;
+const ENERGY_SIPHON_LEECH_SPOTANIM_ID = 2238;
+const ENERGY_SIPHON_RECALL_SPOTANIM_ID = 2237;
+
 export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> = {
     [ProjectileKind.ARROW]: {
         kind: "ARROW_OBJ",
@@ -300,6 +309,18 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
     [ProjectileKind.ZEBAK_PHANTOM_RANGED]: animatedSpotAnim(
         ZEBAK_PHANTOM_RANGED_PROJECTILE_SPOTANIM_ID,
         ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ENERGY_SIPHON_LAUNCH]: animatedSpotAnim(
+        ENERGY_SIPHON_LAUNCH_SPOTANIM_ID,
+        ENERGY_SIPHON_LAUNCH_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ENERGY_SIPHON_LEECH]: animatedSpotAnim(
+        ENERGY_SIPHON_LEECH_SPOTANIM_ID,
+        ENERGY_SIPHON_LEECH_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ENERGY_SIPHON_RECALL]: animatedSpotAnim(
+        ENERGY_SIPHON_RECALL_SPOTANIM_ID,
+        ENERGY_SIPHON_RECALL_TRAVEL_SEQ_ID,
     ),
 };
 

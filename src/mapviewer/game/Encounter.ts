@@ -18,7 +18,11 @@ import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
 import { VisualEffectKind } from "./VisualEffect";
-import { WardenP3AnimationIds, WardenPhantomAnimationIds } from "./WardenP3Animations";
+import {
+    WardenP3AnimationIds,
+    WardenPhantomAnimationIds,
+    WardenSiphonAnimationIds,
+} from "./WardenP3Animations";
 import {
     WARDEN_P3_ARENA_ROW_COUNT,
     WARDEN_P3_FLOOR_DECORATIONS,
@@ -162,6 +166,7 @@ export type WardensP3Script = {
     readonly siphonLayout: WardenP3SiphonLayout;
     readonly wardenAnimations: WardenP3AnimationIds;
     readonly phantomAnimations: WardenPhantomAnimationIds;
+    readonly siphonAnimations: WardenSiphonAnimationIds;
 };
 
 export type ScriptedEncounter = EncounterCommon & {
@@ -867,6 +872,17 @@ const WARDENS_P3_PHANTOM_ANIMATIONS: WardenPhantomAnimationIds = {
     rockFall: { effect: VisualEffectKind.BABA_ROCK_FALL, landingFrame: 53 },
 };
 
+// The Warden throws its siphons on NPC_WARDENS_CHARGE01's three-sound burst and pulls them back
+// in on NPC_WARDENS_RELEASE01's second sound. They land as the Grotesque Guardians' debris shadow
+// (the same model and sequence as SPOTANIM_AMASCUT01_STRIKE01_HIGHLIGHT01) nears full size, and
+// leech right after the long opening hold of FX_WARDENS_ENERGY_GROUNDED01.
+const WARDENS_P3_SIPHON_ANIMATIONS: WardenSiphonAnimationIds = {
+    launchFrame: 84,
+    landingShadow: { effect: VisualEffectKind.FALLING_SHADOW, landingFrame: 10 },
+    leechFrame: 1,
+    recallFrame: 52,
+};
+
 const WARDENS_P3: ScriptedEncounter = {
     id: EncounterId.WARDENS_P3,
     mapSquares: [{ mapX: 61, mapY: 80 }],
@@ -896,6 +912,7 @@ const WARDENS_P3: ScriptedEncounter = {
         siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
         phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
+        siphonAnimations: WARDENS_P3_SIPHON_ANIMATIONS,
     },
 };
 
