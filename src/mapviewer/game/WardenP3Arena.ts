@@ -164,6 +164,13 @@ export function wardenP3TileOccupancy(
     return WardenP3ArenaTileOccupancy.SOLID_FLOOR;
 }
 
+export function wardenP3SolidFloorTiles(floor: WardenP3ArenaFloor): readonly WardenP3ArenaTile[] {
+    assertDestroyedRowCount(floor);
+    return WARDEN_P3_FLOOR_ROWS.filter(
+        (row) => row.distanceFromWarden <= ARENA_ROW_COUNT - floor.destroyedRowCount,
+    ).flatMap(wardenP3RowTiles);
+}
+
 export function canOccupyWardenP3ArenaTile(
     floor: WardenP3ArenaFloor,
     tile: WardenP3ArenaTile,

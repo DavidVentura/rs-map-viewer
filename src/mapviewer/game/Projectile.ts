@@ -36,6 +36,8 @@ export enum ProjectileKind {
     WARPED_SCEPTRE,
     SWAMP_TRIDENT,
     TUMEKENS_SHADOW,
+    ZEBAK_PHANTOM_MAGIC,
+    ZEBAK_PHANTOM_RANGED,
 }
 
 export const FIRE_BOLT_TRAVEL_SEQ_ID = 661;
@@ -259,6 +261,31 @@ export const SWAMP_TRIDENT_SPEC: ProjectileSpec = {
 export const TUMEKENS_SHADOW_SPEC: ProjectileSpec = {
     ...MAGIC_SPEC,
     kind: ProjectileKind.TUMEKENS_SHADOW,
+};
+
+// Zebak's phantom lobs Zebak's own jug (magic) or rock (ranged) at where the player stood when it
+// let go. The landing point is fixed at release, so moving off it before the shot lands dodges it.
+export const ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID = 9642;
+export const ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID = 9639;
+
+export const ZEBAK_PHANTOM_MAGIC_SPEC: ProjectileSpec = {
+    kind: ProjectileKind.ZEBAK_PHANTOM_MAGIC,
+    launchAngleRadians: (35 * Math.PI) / 180,
+    travelTime: { baseSeconds: 0.3, secondsPerTile: 1 / 10 },
+    range: 24 * TILE_SIZE,
+    landing: {
+        kind: "FIXED_POINT",
+        endHeight: 0,
+        hitRadius: 0.5 * TILE_SIZE,
+        origin: { kind: "CASTER" },
+    },
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+export const ZEBAK_PHANTOM_RANGED_SPEC: ProjectileSpec = {
+    ...ZEBAK_PHANTOM_MAGIC_SPEC,
+    kind: ProjectileKind.ZEBAK_PHANTOM_RANGED,
 };
 
 export function travelSeconds(travelTime: ProjectileTravelTime, distance: number): number {

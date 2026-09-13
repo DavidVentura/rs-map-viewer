@@ -5,14 +5,18 @@ import { EncounterAnimations } from "../game/EncounterAnimations";
 import { EnemyTypeId, ResolvedEnemyType, getEnemyType, resolveEnemyType } from "../game/EnemyType";
 import { Player, StanceSeqs } from "../game/Player";
 import { SeqCatalog } from "../game/SeqCatalog";
+import { VisualEffectKind } from "../game/VisualEffect";
 import {
+    ResolvedWardenPhantomAttack,
     ResolvedWardenSlam,
     WardenP3AnimationIds,
     WardenP3Animations,
+    WardenPhantomAnimationIds,
+    WardenPhantomAttackSeq,
     WardenSlamSeq,
 } from "../game/WardenP3Animations";
 import { resolvePlayerLoadouts } from "../game/abilities";
-import { ActorAssets, ProjectileBake } from "./ActorAssets";
+import { ActorAssets, AnimatedSpotAnimBake, ProjectileBake } from "./ActorAssets";
 
 function mapRecord<K extends string | number, A, B>(
     record: Readonly<Record<K, A>>,
@@ -37,9 +41,12 @@ function lookup<K, V>(
     };
 }
 
-// A slam's impact frame outside its sequence throws here, while the encounter loads.
+// A slam's impact frame, a phantom attack's release frame or a rock's landing frame outside its
+// sequence throws here, while the encounter loads.
 function resolveWardenP3Animations(
-    ids: WardenP3AnimationIds,
+    wardenIds: WardenP3AnimationIds,
+    phantomIds: WardenPhantomAnimationIds,
+    effects: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBake>>,
     catalog: SeqCatalog,
 ): WardenP3Animations {
     const resolveSlam = ({ seqId, impactFrame }: WardenSlamSeq): ResolvedWardenSlam => {
@@ -50,9 +57,21 @@ function resolveWardenP3Animations(
             durationSeconds: sequenceDurationSeconds(seq),
         };
     };
+    const resolvePhantomAttack = ({
+        seqId,
+        releaseFrame,
+    }: WardenPhantomAttackSeq): ResolvedWardenPhantomAttack => {
+        const seq = catalog.get(seqId);
+        return {
+            seq,
+            releaseSeconds: sequenceTimeToFrameSeconds(seq, releaseFrame),
+            durationSeconds: sequenceDurationSeconds(seq),
+        };
+    };
+    const { rockFall } = phantomIds;
     return {
-        slams: mapRecord(ids.slams, (slams) => mapRecord(slams, resolveSlam)),
-        stances: mapRecord(ids.stances, ({ transitionSeqId, holdSeqId }) => {
+        slams: mapRecord(wardenIds.slams, (slams) => mapRecord(slams, resolveSlam)),
+        stances: mapRecord(wardenIds.stances, ({ transitionSeqId, holdSeqId }) => {
             const transition = catalog.get(transitionSeqId);
             return {
                 transition,
@@ -60,11 +79,22 @@ function resolveWardenP3Animations(
                 transitionSeconds: sequenceDurationSeconds(transition),
             };
         }),
+        phantoms: {
+            attacks: mapRecord(phantomIds.attacks, resolvePhantomAttack),
+            rockFall: {
+                effect: rockFall.effect,
+                landingSeconds: sequenceTimeToFrameSeconds(
+                    catalog.get(effects[rockFall.effect].seq.seqId),
+                    rockFall.landingFrame,
+                ),
+            },
+        },
     };
 }
 
 function scriptAnimations(
     encounter: Encounter,
+    assets: ActorAssets,
     catalog: SeqCatalog,
 ): WardenP3Animations | undefined {
     if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
@@ -72,7 +102,12 @@ function scriptAnimations(
     }
     switch (encounter.script.kind) {
         case EncounterScriptKind.WARDENS_P3:
-            return resolveWardenP3Animations(encounter.script.wardenAnimations, catalog);
+            return resolveWardenP3Animations(
+                encounter.script.wardenAnimations,
+                encounter.script.phantomAnimations,
+                assets.effects,
+                catalog,
+            );
     }
 }
 
@@ -100,7 +135,7 @@ export function resolveEncounterAnimations(
             resolveEnemyType(getEnemyType(enemyTypeId), catalog),
         ]),
     );
-    const wardenP3 = scriptAnimations(encounter, catalog);
+    const wardenP3 = scriptAnimations(encounter, assets, catalog);
     const interactionSeqs = new Map(
         encounter.interactions.map((interaction) => [
             interaction.id,

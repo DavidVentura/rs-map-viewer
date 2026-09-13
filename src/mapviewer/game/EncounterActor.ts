@@ -88,15 +88,17 @@ export function encounterActorProjectileLaunchHeight(actor: EncounterActor): num
 // Tells the actor to play a sequence once - e.g. a phantom's attack windup, whose launch
 // position/timing a caller can then read straight off the actor (x/y/projectileLaunchHeight) in
 // step with this animation, rather than needing a separate command/state channel.
+// Restarts even when the same sequence is already playing, so the release a caller times from this
+// call always lines up with the frame the actor shows.
 export function playEncounterActorSeq(actor: EncounterActor, seq: SeqTiming): void {
     actor.activeSeq = seq;
+    actor.animation.restart(seq);
 }
 
 // Advances the actor's animation for one tick: whatever activeSeq was last set to plays once and
 // then falls back to idle, otherwise idle loops continuously.
 export function updateEncounterActor(actor: EncounterActor, deltaTimeSeconds: number): void {
     if (actor.activeSeq) {
-        actor.animation.setSequence(actor.activeSeq);
         if (actor.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE)) {
             actor.activeSeq = undefined;
         }

@@ -25,9 +25,12 @@ import {
     SWAMP_TRIDENT_TRAVEL_SEQ_ID,
     TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
     WARPED_SCEPTRE_TRAVEL_SEQ_ID,
+    ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID,
+    ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
 } from "../game/Projectile";
 import {
     ARROW_LAUNCH_SEQ_ID,
+    BABA_ROCK_FALL_SEQ_ID,
     CRYSTAL_HALBERD_SPECIAL_SEQ_ID,
     DUST_WAVE_SEQ_ID,
     FALLING_SHADOW_SEQ_ID,
@@ -43,8 +46,12 @@ import {
     WARDENS_FALLING_TILE_SEQ_ID,
     WARDENS_LIGHTNING_SEQ_ID,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
+    ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID,
+    ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID,
 } from "../game/VisualEffect";
 import { wardenP3AnimationSeqIds } from "../game/WardenP3Animations";
+import { WardenPhantom } from "../game/WardenP3Director";
+import { wardenPhantomEnemyTypeId } from "../game/WardenP3Phantoms";
 import {
     HEALING_POTION_CAST_SEQ_ID,
     WEAPON_LADDERS,
@@ -224,6 +231,14 @@ const WARDENS_LIGHTNING_SPOTANIM_ID = 2197;
 const WARDENS_LIGHTNING_WARNING_SPOTANIM_ID = 2198;
 const WARDENS_FALLING_TILE_SPOTANIM_ID = 2228;
 
+// Zebak's own projectiles (SpotAnimType ids): 2176 ZEBAK_MAGE_PROJANIM_INITIAL, a jug, and 2178
+// ZEBAK_RANGE_PROJANIM_INITIAL, a rock shard; 2186/2185 are the bursts they break into.
+const ZEBAK_PHANTOM_MAGIC_PROJECTILE_SPOTANIM_ID = 2176;
+const ZEBAK_PHANTOM_RANGED_PROJECTILE_SPOTANIM_ID = 2178;
+const ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID = 2186;
+const ZEBAK_PHANTOM_RANGED_IMPACT_SPOTANIM_ID = 2185;
+const BABA_ROCK_FALL_SPOTANIM_ID = 2252;
+
 export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> = {
     [ProjectileKind.ARROW]: {
         kind: "ARROW_OBJ",
@@ -277,6 +292,14 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
     [ProjectileKind.TUMEKENS_SHADOW]: animatedSpotAnim(
         TUMEKENS_SHADOW_PROJECTILE_SPOTANIM_ID,
         TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ZEBAK_PHANTOM_MAGIC]: animatedSpotAnim(
+        ZEBAK_PHANTOM_MAGIC_PROJECTILE_SPOTANIM_ID,
+        ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ZEBAK_PHANTOM_RANGED]: animatedSpotAnim(
+        ZEBAK_PHANTOM_RANGED_PROJECTILE_SPOTANIM_ID,
+        ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
     ),
 };
 
@@ -344,6 +367,18 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
     [VisualEffectKind.WARDENS_FALLING_TILE]: animatedSpotAnim(
         WARDENS_FALLING_TILE_SPOTANIM_ID,
         WARDENS_FALLING_TILE_SEQ_ID,
+    ),
+    [VisualEffectKind.ZEBAK_PHANTOM_MAGIC_IMPACT]: animatedSpotAnim(
+        ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID,
+        ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID,
+    ),
+    [VisualEffectKind.ZEBAK_PHANTOM_RANGED_IMPACT]: animatedSpotAnim(
+        ZEBAK_PHANTOM_RANGED_IMPACT_SPOTANIM_ID,
+        ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID,
+    ),
+    [VisualEffectKind.BABA_ROCK_FALL]: animatedSpotAnim(
+        BABA_ROCK_FALL_SPOTANIM_ID,
+        BABA_ROCK_FALL_SEQ_ID,
     ),
 };
 
@@ -496,16 +531,21 @@ function enemyTypeSeqIds(enemyType: EnemyType): number[] {
     return [...new Set(seqIds.filter((seqId): seqId is number => seqId !== undefined))];
 }
 
-// A scripted encounter's own seqs play on its boss, so they are baked into the boss's type.
+// A scripted encounter's own seqs play on its boss and its phantoms, so they are baked into the
+// type of whichever actor plays them.
 function scriptSeqIds(encounter: Encounter, enemyTypeId: StaticEnemyTypeId): readonly number[] {
     if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
         return [];
     }
     switch (encounter.script.kind) {
-        case EncounterScriptKind.WARDENS_P3:
-            return enemyTypeId === EnemyTypeId.TUMEKENS_WARDEN
-                ? wardenP3AnimationSeqIds(encounter.script.wardenAnimations)
-                : [];
+        case EncounterScriptKind.WARDENS_P3: {
+            if (enemyTypeId === EnemyTypeId.TUMEKENS_WARDEN) {
+                return wardenP3AnimationSeqIds(encounter.script.wardenAnimations);
+            }
+            return Object.values(WardenPhantom)
+                .filter((phantom) => wardenPhantomEnemyTypeId(phantom) === enemyTypeId)
+                .map((phantom) => encounter.script.phantomAnimations.attacks[phantom].seqId);
+        }
     }
 }
 

@@ -10,6 +10,7 @@ import {
     WardenSlamTarget,
     WardenSlamTempo,
     WardenStance,
+    ZebakPhantomStyle,
     initialWardenP3State,
     parseWardenP3Arena,
     parseWardenP3Timing,
@@ -35,7 +36,11 @@ const timing = parseWardenP3Timing({
         [WardenStance.STANDING]: { transitionSeconds: 2 },
         [WardenStance.ENRAGED]: { transitionSeconds: 1 },
     },
-    phantomAttackIntervalSeconds: 3,
+    phantomAttacks: {
+        [WardenPhantom.ZEBAK]: { releaseSeconds: 1.25, durationSeconds: 2 },
+        [WardenPhantom.BABA]: { releaseSeconds: 0.5, durationSeconds: 1 },
+    },
+    phantomAttackRestSeconds: 3,
     lightningWarningSeconds: 0.5,
     lightningWarningIntervalSeconds: 1,
     rowRemovalIntervalSeconds: 2,
@@ -203,19 +208,74 @@ describe("Wardens P3 director", () => {
         expect(commandOfKind(result.commands, "ACTIVATE_PHANTOM").phantom).toBe(WardenPhantom.BABA);
     });
 
-    it("schedules active phantom attacks while siphons are unresolved", () => {
-        let state: WardenP3State = initialWardenP3State(0, arena);
-        let result = step(state, 0, 80);
-        state = step(result.nextState, 1, 80, WardenSiphonStatus.ALL_REVERSED).nextState;
-        result = step(state, 2, 60);
+    // Opens the second intermission at 2s, which activates Zebak's phantom.
+    function activateZebak() {
+        const first = step(initialWardenP3State(0, arena), 0, 80);
+        const resumed = step(first.nextState, 1, 80, WardenSiphonStatus.ALL_REVERSED).nextState;
+        return step(resumed, 2, 60);
+    }
 
-        const beforeAttack = step(result.nextState, 4, 60);
-        expect(beforeAttack.commands.some((command) => command.kind === "PHANTOM_ATTACK")).toBe(
-            false,
-        );
+    it("schedules active phantom attacks while siphons are unresolved", () => {
+        const result = activateZebak();
+
+        const beforeAttack = step(result.nextState, 4.99, 60);
+        expect(hasCommand(beforeAttack.commands, "BEGIN_PHANTOM_ATTACK")).toBe(false);
 
         const attack = step(result.nextState, 5, 60);
-        expect(commandOfKind(attack.commands, "PHANTOM_ATTACK").phantom).toBe(WardenPhantom.ZEBAK);
+        expect(commandOfKind(attack.commands, "BEGIN_PHANTOM_ATTACK").phantom).toBe(
+            WardenPhantom.ZEBAK,
+        );
+    });
+
+    it("never attacks with a phantom before its intermission activates it or once the fight is over", () => {
+        let state: WardenP3State = initialWardenP3State(0, arena);
+        const first = step(state, 0, 80);
+        state = step(first.nextState, 1, 80, WardenSiphonStatus.ALL_REVERSED).nextState;
+        for (let timeSeconds = 1; timeSeconds < 60; timeSeconds += 0.5) {
+            const result = step(state, timeSeconds, 80);
+            expect(hasCommand(result.commands, "BEGIN_PHANTOM_ATTACK")).toBe(false);
+            expect(hasCommand(result.commands, "RELEASE_PHANTOM_ATTACK")).toBe(false);
+            state = result.nextState;
+        }
+
+        const resumed = step(activateZebak().nextState, 3, 60, WardenSiphonStatus.ALL_REVERSED);
+        const completed = step(resumed.nextState, 4, 0);
+        expect(completed.nextState.phase).toBe(WardenP3Phase.COMPLETE);
+        const afterCompletion = step(completed.nextState, 30, 0);
+        expect(afterCompletion.commands).toEqual([]);
+    });
+
+    it("releases each phantom attack on its release frame and rests after the whole sequence, alternating Zebak's styles", () => {
+        const zebak = timing.phantomAttacks[WardenPhantom.ZEBAK];
+        const firstBeginsAt = 2 + timing.phantomAttackRestSeconds;
+        const begun = step(activateZebak().nextState, firstBeginsAt, 60);
+        expect(hasCommand(begun.commands, "BEGIN_PHANTOM_ATTACK")).toBe(true);
+
+        const windingUp = step(begun.nextState, firstBeginsAt + zebak.releaseSeconds - 0.01, 60);
+        expect(windingUp.commands).toEqual([]);
+
+        const released = step(begun.nextState, firstBeginsAt + zebak.releaseSeconds, 60);
+        expect(commandOfKind(released.commands, "RELEASE_PHANTOM_ATTACK").release).toEqual({
+            phantom: WardenPhantom.ZEBAK,
+            style: ZebakPhantomStyle.MAGIC,
+        });
+
+        const secondBeginsAt =
+            firstBeginsAt + zebak.durationSeconds + timing.phantomAttackRestSeconds;
+        const resting = step(released.nextState, secondBeginsAt - 0.01, 60);
+        expect(resting.commands).toEqual([]);
+
+        const secondBegun = step(released.nextState, secondBeginsAt, 60);
+        expect(hasCommand(secondBegun.commands, "BEGIN_PHANTOM_ATTACK")).toBe(true);
+        const secondReleased = step(
+            secondBegun.nextState,
+            secondBeginsAt + zebak.releaseSeconds,
+            60,
+        );
+        expect(commandOfKind(secondReleased.commands, "RELEASE_PHANTOM_ATTACK").release).toEqual({
+            phantom: WardenPhantom.ZEBAK,
+            style: ZebakPhantomStyle.RANGED,
+        });
     });
 
     it("enters enrage after all siphon thresholds, heals 20% maximum health, and removes rows with lightning", () => {

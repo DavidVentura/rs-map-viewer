@@ -20,7 +20,7 @@ import {
 } from "./Animation";
 import { CombatEvent, CombatEventKind, applyDamage, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
-import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
+import { Affects, HitEffect, applyPayloads, damagePayload, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterScriptKind, EncounterSpawnMode, ScriptedEncounter } from "./Encounter";
 import {
@@ -29,6 +29,8 @@ import {
     EnergySiphonActor,
     createEnergySiphonActor,
     createPhantomActor,
+    encounterActorProjectileLaunchHeight,
+    playEncounterActorSeq,
     updateEncounterActor,
 } from "./EncounterActor";
 import { EncounterAnimations } from "./EncounterAnimations";
@@ -113,6 +115,7 @@ import {
 import {
     ParsedWardenP3Arena,
     ParsedWardenP3Timing,
+    PhantomAttackRelease,
     WARDEN_P3_HAZARD_TIMING,
     WardenP3Arena,
     WardenP3Command,
@@ -134,6 +137,14 @@ import {
     floorSlamTilesArriving,
     wardenP3SlamShockwave,
 } from "./WardenP3FloorSlam";
+import {
+    BABA_PHANTOM_ROCK_FALL,
+    WARDEN_P3_PHANTOM_DAMAGE,
+    ZEBAK_PHANTOM_SHOTS,
+    ZebakPhantomShot,
+    babaPhantomRockTargets,
+    wardenPhantomEnemyTypeId,
+} from "./WardenP3Phantoms";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import {
     WaveDirectorState,
@@ -195,11 +206,15 @@ export type WardenP3RenderState = {
     readonly resolvedSlamTarget: WardenSlamTarget | undefined;
     readonly activeIntermission: WardenP3Intermission | undefined;
     readonly activePhantoms: readonly WardenPhantom[];
-    readonly lastPhantomAttack: WardenPhantom | undefined;
     readonly lightningWarningTarget: WardenP3Tile | undefined;
     readonly lightningTarget: WardenP3Tile | undefined;
     readonly removedArenaRows: readonly number[];
     readonly floorSlams: readonly FloorSlam[];
+};
+
+type PendingRockFall = {
+    readonly tile: WardenP3Tile;
+    readonly landsAtSeconds: number;
 };
 
 type WardenP3Runtime = {
@@ -216,7 +231,6 @@ type WardenP3Runtime = {
     resolvedSlamTarget: WardenSlamTarget | undefined;
     activeIntermission: WardenP3Intermission | undefined;
     activePhantoms: readonly WardenPhantom[];
-    lastPhantomAttack: WardenPhantom | undefined;
     lightningWarningTarget: WardenP3Tile | undefined;
     lightningTarget: WardenP3Tile | undefined;
     floor: WardenP3ArenaFloor;
@@ -225,6 +239,7 @@ type WardenP3Runtime = {
     // Arrivals up to this time have already hit, so each tile's arrival is resolved exactly once
     // even when it lands on a step boundary.
     floorSlamsResolvedUntilSeconds: number;
+    rockFalls: readonly PendingRockFall[];
 };
 
 export class GameWorld {
@@ -394,7 +409,6 @@ export class GameWorld {
             resolvedSlamTarget: runtime.resolvedSlamTarget,
             activeIntermission: runtime.activeIntermission,
             activePhantoms: runtime.activePhantoms,
-            lastPhantomAttack: runtime.lastPhantomAttack,
             lightningWarningTarget: runtime.lightningWarningTarget,
             lightningTarget: runtime.lightningTarget,
             removedArenaRows: wardenP3DestroyedRowDistances(runtime.floor),
@@ -418,6 +432,7 @@ export class GameWorld {
             ...WARDEN_P3_HAZARD_TIMING,
             slams: animations.slams,
             stances: animations.stances,
+            phantomAttacks: animations.phantoms.attacks,
         });
         warden.invulnerable = false;
         this.wardenP3Runtime = {
@@ -434,12 +449,12 @@ export class GameWorld {
             resolvedSlamTarget: undefined,
             activeIntermission: undefined,
             activePhantoms: [],
-            lastPhantomAttack: undefined,
             lightningWarningTarget: undefined,
             lightningTarget: undefined,
             floor: WARDEN_P3_INITIAL_ARENA_FLOOR,
             floorSlams: [],
             floorSlamsResolvedUntilSeconds: this.timeSeconds,
+            rockFalls: [],
         };
     }
 
@@ -577,7 +592,7 @@ export class GameWorld {
                     this.spawnWardenPhantomObserver(
                         phantomSpawn.x,
                         phantomSpawn.y,
-                        phantomSpawn.enemyTypeId,
+                        wardenPhantomEnemyTypeId(phantomSpawn.phantom),
                     );
                 }
                 const platformFacing = directionToRotation(0, 1);
@@ -1191,9 +1206,10 @@ export class GameWorld {
         runtime.commands = result.commands;
         runtime.siphonStatus = WardenSiphonStatus.NONE;
         for (const command of result.commands) {
-            this.dispatchWardenP3Command(runtime, warden, command);
+            this.dispatchWardenP3Command(runtime, warden, player, command);
         }
         this.resolveWardenFloorSlamArrivals(runtime);
+        this.resolveBabaRockFalls(runtime);
     }
 
     // A tile hurts the player only as the front reaches it, so stepping onto tiles the front has
@@ -1215,6 +1231,16 @@ export class GameWorld {
         );
     }
 
+    private resolveBabaRockFalls(runtime: WardenP3Runtime): void {
+        const landed = runtime.rockFalls.filter((rock) => this.timeSeconds >= rock.landsAtSeconds);
+        for (const rock of landed) {
+            this.damagePlayerOnWardenTile(rock.tile, WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA]);
+        }
+        runtime.rockFalls = runtime.rockFalls.filter(
+            (rock) => this.timeSeconds < rock.landsAtSeconds,
+        );
+    }
+
     private wardenP3SiphonStatus(runtime: WardenP3Runtime): WardenSiphonStatus {
         if (runtime.siphonStatus !== WardenSiphonStatus.NONE) {
             return runtime.siphonStatus;
@@ -1231,6 +1257,7 @@ export class GameWorld {
     private dispatchWardenP3Command(
         runtime: WardenP3Runtime,
         warden: Enemy,
+        player: Player,
         command: WardenP3Command,
     ): void {
         switch (command.kind) {
@@ -1287,8 +1314,17 @@ export class GameWorld {
             case "ACTIVATE_PHANTOM":
                 runtime.activePhantoms = [...runtime.activePhantoms, command.phantom];
                 return;
-            case "PHANTOM_ATTACK":
-                runtime.lastPhantomAttack = command.phantom;
+            case "BEGIN_PHANTOM_ATTACK": {
+                const phantom = this.wardenPhantomActor(command.phantom);
+                phantom.rotation = directionToRotation(player.x - phantom.x, player.y - phantom.y);
+                playEncounterActorSeq(
+                    phantom,
+                    runtime.animations.phantoms.attacks[command.phantom].seq,
+                );
+                return;
+            }
+            case "RELEASE_PHANTOM_ATTACK":
+                this.releasePhantomAttack(runtime, warden, player, command.release);
                 return;
             case "ENTER_ENRAGE":
                 applyHeal(warden, command.healAmount, this.events);
@@ -1326,6 +1362,90 @@ export class GameWorld {
         }
     }
 
+    private wardenPhantomActor(phantom: WardenPhantom): EncounterActor {
+        const typeId = wardenPhantomEnemyTypeId(phantom);
+        const actor = this.encounterActors.find(
+            (candidate) =>
+                candidate.kind === EncounterActorKind.PHANTOM && candidate.type.id === typeId,
+        );
+        if (!actor) {
+            throw new Error(`Wardens P3 has no ${phantom} phantom to attack with`);
+        }
+        return actor;
+    }
+
+    private releasePhantomAttack(
+        runtime: WardenP3Runtime,
+        warden: Enemy,
+        player: Player,
+        release: PhantomAttackRelease,
+    ): void {
+        switch (release.phantom) {
+            case WardenPhantom.ZEBAK:
+                this.throwZebakPhantomShot(warden, player, ZEBAK_PHANTOM_SHOTS[release.style]);
+                return;
+            case WardenPhantom.BABA:
+                this.dropBabaPhantomRocks(runtime, player);
+                return;
+        }
+    }
+
+    // The phantoms are the Warden's own attacks in another boss's shape, so the Warden is the shot's
+    // caster (its faction and level) and the phantom only lends the launch point.
+    private throwZebakPhantomShot(warden: Enemy, player: Player, shot: ZebakPhantomShot): void {
+        if (this.projectiles.length >= GameWorld.MAX_PROJECTILES) {
+            return;
+        }
+        const phantom = this.wardenPhantomActor(WardenPhantom.ZEBAK);
+        const start: FlightOrigin = {
+            x: phantom.x,
+            y: phantom.y,
+            height:
+                this.terrain.getHeight(phantom.level, phantom.x, phantom.y) +
+                encounterActorProjectileLaunchHeight(phantom),
+        };
+        const impact: ProjectileImpact = {
+            caster: warden,
+            affects: Affects.HOSTILE,
+            payloads: [damagePayload(WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.ZEBAK])],
+            hitEffect: shot.hitEffect,
+        };
+        this.projectiles.push(
+            new Projectile(
+                shot.spec,
+                impact,
+                start,
+                { kind: "POINT", x: player.x, y: player.y },
+                this.projectileTravelSeq(shot.spec),
+            ),
+        );
+    }
+
+    // Each rock's graphic plays its whole fall from the moment it drops, so its shadow is held until
+    // the graphic's landing frame, where the rock hits.
+    private dropBabaPhantomRocks(runtime: WardenP3Runtime, player: Player): void {
+        const { rockFall } = runtime.animations.phantoms;
+        const targets = babaPhantomRockTargets(
+            runtime.floor,
+            {
+                x: Math.floor(player.x / TILE_SIZE),
+                y: Math.floor(player.y / TILE_SIZE),
+                level: player.level,
+            },
+            BABA_PHANTOM_ROCK_FALL.extraRockCount,
+            this.random,
+        );
+        const landsAtSeconds = this.timeSeconds + rockFall.landingSeconds;
+        for (const tile of targets) {
+            this.spawnWardenTileEffect(BABA_PHANTOM_ROCK_FALL.shadow.kind, tile, landsAtSeconds);
+            this.spawnWardenTileEffect(rockFall.effect, tile);
+        }
+        runtime.rockFalls = [
+            ...runtime.rockFalls,
+            ...targets.map((tile) => ({ tile, landsAtSeconds })),
+        ];
+    }
+
     private damagePlayerOnWardenTile(tile: WardenP3Tile, damage: number): void {
         const player = this.player;
         if (
@@ -1338,7 +1458,11 @@ export class GameWorld {
         }
     }
 
-    private spawnWardenTileEffect(kind: VisualEffectKind, tile: WardenP3Tile): void {
+    private spawnWardenTileEffect(
+        kind: VisualEffectKind,
+        tile: WardenP3Tile,
+        holdUntilSeconds?: number,
+    ): void {
         this.visualEffects.push(
             new VisualEffect(
                 kind,
@@ -1351,6 +1475,7 @@ export class GameWorld {
                 },
                 0,
                 this.animations.effects[kind],
+                holdUntilSeconds,
             ),
         );
     }

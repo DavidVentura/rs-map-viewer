@@ -21,6 +21,12 @@ export enum WardenPhantom {
     BABA = "baba",
 }
 
+// Zebak's phantom alternates the two projectile styles Zebak himself throws.
+export enum ZebakPhantomStyle {
+    MAGIC = "magic",
+    RANGED = "ranged",
+}
+
 export enum WardenSlamTempo {
     NORMAL = "normal",
     // The enrage phase's quicker slams.
@@ -70,8 +76,15 @@ export type WardenStanceTiming = {
     readonly transitionSeconds: number;
 };
 
+export type WardenPhantomAttackTiming = {
+    readonly releaseSeconds: number;
+    readonly durationSeconds: number;
+};
+
 export type WardenP3HazardTiming = {
-    readonly phantomAttackIntervalSeconds: number;
+    // From the end of a phantom's attack sequence to the start of its next one, so every attack
+    // plays out in full before the phantom winds up again.
+    readonly phantomAttackRestSeconds: number;
     readonly lightningWarningSeconds: number;
     readonly lightningWarningIntervalSeconds: number;
     readonly rowRemovalIntervalSeconds: number;
@@ -82,6 +95,7 @@ export type WardenP3Timing = WardenP3HazardTiming & {
         Record<WardenSlamTempo, Readonly<Record<WardenSlamTarget, WardenSlamTiming>>>
     >;
     readonly stances: Readonly<Record<WardenStance, WardenStanceTiming>>;
+    readonly phantomAttacks: Readonly<Record<WardenPhantom, WardenPhantomAttackTiming>>;
 };
 
 export type WardenP3Arena = {
@@ -109,9 +123,21 @@ type SwingingSlam = {
 
 type WardenSlamState = ReadySlam | SwingingSlam;
 
+type ReadyPhantomAttack = {
+    readonly kind: "ready";
+    readonly beginsAtSeconds: number;
+};
+
+type WindingUpPhantomAttack = {
+    readonly kind: "winding_up";
+    readonly releasesAtSeconds: number;
+    readonly nextBeginsAtSeconds: number;
+};
+
 type ActivePhantom = {
     readonly phantom: WardenPhantom;
-    readonly nextAttackAtSeconds: number;
+    readonly attack: ReadyPhantomAttack | WindingUpPhantomAttack;
+    readonly releasedAttackCount: number;
 };
 
 type PendingLightning = {
@@ -193,10 +219,21 @@ export type ActivatePhantomCommand = {
     readonly phantom: WardenPhantom;
 };
 
-export type PhantomAttackCommand = {
-    readonly kind: "PHANTOM_ATTACK";
+export type BeginPhantomAttackCommand = {
+    readonly kind: "BEGIN_PHANTOM_ATTACK";
     readonly phantom: WardenPhantom;
 };
+
+export type PhantomAttackRelease =
+    | { readonly phantom: WardenPhantom.ZEBAK; readonly style: ZebakPhantomStyle }
+    | { readonly phantom: WardenPhantom.BABA };
+
+export type ReleasePhantomAttackCommand = {
+    readonly kind: "RELEASE_PHANTOM_ATTACK";
+    readonly release: PhantomAttackRelease;
+};
+
+type PhantomAttackCommand = BeginPhantomAttackCommand | ReleasePhantomAttackCommand;
 
 export type EnterEnrageCommand = {
     readonly kind: "ENTER_ENRAGE";
@@ -230,7 +267,8 @@ export type WardenP3Command =
     | SpawnEnergySiphonsCommand
     | ResolveEnergySiphonsCommand
     | ActivatePhantomCommand
-    | PhantomAttackCommand
+    | BeginPhantomAttackCommand
+    | ReleasePhantomAttackCommand
     | EnterEnrageCommand
     | WarnLightningCommand
     | StrikeLightningCommand
@@ -247,7 +285,7 @@ const ENRAGE_HEALTH_FRACTION = 0.05;
 const ENRAGE_HEAL_FRACTION = 0.2;
 
 export const WARDEN_P3_HAZARD_TIMING: WardenP3HazardTiming = {
-    phantomAttackIntervalSeconds: 2.4,
+    phantomAttackRestSeconds: 2.4,
     lightningWarningSeconds: 0.6,
     lightningWarningIntervalSeconds: 1.2,
     rowRemovalIntervalSeconds: 2.4,
@@ -266,7 +304,7 @@ function assertFinitePositive(value: number, description: string): void {
 }
 
 export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
-    assertFinitePositive(timing.phantomAttackIntervalSeconds, "phantomAttackIntervalSeconds");
+    assertFinitePositive(timing.phantomAttackRestSeconds, "phantomAttackRestSeconds");
     assertFinitePositive(timing.lightningWarningSeconds, "lightningWarningSeconds");
     assertFinitePositive(timing.lightningWarningIntervalSeconds, "lightningWarningIntervalSeconds");
     assertFinitePositive(timing.rowRemovalIntervalSeconds, "rowRemovalIntervalSeconds");
@@ -286,6 +324,15 @@ export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timin
     }
     for (const [stance, { transitionSeconds }] of Object.entries(timing.stances)) {
         assertFiniteNonNegative(transitionSeconds, `The ${stance} stance's transition`);
+    }
+    for (const [phantom, attack] of Object.entries(timing.phantomAttacks)) {
+        assertFinitePositive(attack.durationSeconds, `The ${phantom} phantom attack's duration`);
+        assertFiniteNonNegative(attack.releaseSeconds, `The ${phantom} phantom attack's release`);
+        if (attack.releaseSeconds >= attack.durationSeconds) {
+            throw new RangeError(
+                `The ${phantom} phantom attack must release before its sequence ends`,
+            );
+        }
     }
     return timing as ParsedWardenP3Timing;
 }
@@ -362,6 +409,71 @@ function intermissionIsDue(intermission: WardenP3Intermission, health: WardenP3H
     return healthFraction(health) <= INTERMISSION_HEALTH_FRACTIONS[intermission];
 }
 
+function phantomAttackRelease(
+    phantom: WardenPhantom,
+    releasedAttackCount: number,
+): PhantomAttackRelease {
+    switch (phantom) {
+        case WardenPhantom.ZEBAK:
+            return {
+                phantom,
+                style:
+                    releasedAttackCount % 2 === 0
+                        ? ZebakPhantomStyle.MAGIC
+                        : ZebakPhantomStyle.RANGED,
+            };
+        case WardenPhantom.BABA:
+            return { phantom };
+    }
+}
+
+// Like the Warden's slams, an attack releases on its sequence's release frame and the next one
+// waits for the whole sequence plus the rest.
+function stepPhantom(
+    active: ActivePhantom,
+    timeSeconds: number,
+    timing: WardenP3Timing,
+): { readonly phantom: ActivePhantom; readonly command: PhantomAttackCommand | undefined } {
+    const { attack } = active;
+    switch (attack.kind) {
+        case "ready": {
+            if (timeSeconds < attack.beginsAtSeconds) {
+                return { phantom: active, command: undefined };
+            }
+            const attackTiming = timing.phantomAttacks[active.phantom];
+            return {
+                phantom: {
+                    ...active,
+                    attack: {
+                        kind: "winding_up",
+                        releasesAtSeconds: timeSeconds + attackTiming.releaseSeconds,
+                        nextBeginsAtSeconds:
+                            timeSeconds +
+                            attackTiming.durationSeconds +
+                            timing.phantomAttackRestSeconds,
+                    },
+                },
+                command: { kind: "BEGIN_PHANTOM_ATTACK", phantom: active.phantom },
+            };
+        }
+        case "winding_up":
+            if (timeSeconds < attack.releasesAtSeconds) {
+                return { phantom: active, command: undefined };
+            }
+            return {
+                phantom: {
+                    phantom: active.phantom,
+                    attack: { kind: "ready", beginsAtSeconds: attack.nextBeginsAtSeconds },
+                    releasedAttackCount: active.releasedAttackCount + 1,
+                },
+                command: {
+                    kind: "RELEASE_PHANTOM_ATTACK",
+                    release: phantomAttackRelease(active.phantom, active.releasedAttackCount),
+                },
+            };
+    }
+}
+
 function stepPhantoms(
     phantoms: readonly ActivePhantom[],
     timeSeconds: number,
@@ -370,18 +482,11 @@ function stepPhantoms(
     readonly phantoms: readonly ActivePhantom[];
     readonly commands: readonly PhantomAttackCommand[];
 } {
-    const commands: PhantomAttackCommand[] = [];
-    const nextPhantoms = phantoms.map((phantom) => {
-        if (timeSeconds < phantom.nextAttackAtSeconds) {
-            return phantom;
-        }
-        commands.push({ kind: "PHANTOM_ATTACK", phantom: phantom.phantom });
-        return {
-            phantom: phantom.phantom,
-            nextAttackAtSeconds: timeSeconds + timing.phantomAttackIntervalSeconds,
-        };
-    });
-    return { phantoms: nextPhantoms, commands };
+    const steps = phantoms.map((phantom) => stepPhantom(phantom, timeSeconds, timing));
+    return {
+        phantoms: steps.map((step) => step.phantom),
+        commands: steps.flatMap((step) => (step.command === undefined ? [] : [step.command])),
+    };
 }
 
 function activateIntermissionPhantom(
@@ -400,7 +505,14 @@ function activateIntermissionPhantom(
     return {
         phantoms: [
             ...phantoms,
-            { phantom, nextAttackAtSeconds: timeSeconds + timing.phantomAttackIntervalSeconds },
+            {
+                phantom,
+                attack: {
+                    kind: "ready",
+                    beginsAtSeconds: timeSeconds + timing.phantomAttackRestSeconds,
+                },
+                releasedAttackCount: 0,
+            },
         ],
         command: { kind: "ACTIVATE_PHANTOM", phantom },
     };

@@ -23,6 +23,9 @@ export enum VisualEffectKind {
     WARDENS_LIGHTNING = 17,
     WARDENS_LIGHTNING_WARNING = 18,
     WARDENS_FALLING_TILE = 19,
+    ZEBAK_PHANTOM_MAGIC_IMPACT = 20,
+    ZEBAK_PHANTOM_RANGED_IMPACT = 21,
+    BABA_ROCK_FALL = 22,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
@@ -69,6 +72,13 @@ export const TUMEKENS_SHADOW_CAST_SEQ_ID = 9543;
 export const FIRE_BOLT_CAST_SEQ_ID = 658;
 export const WARDENS_LIGHTNING_SEQ_ID = 8680;
 export const WARDENS_FALLING_TILE_SEQ_ID = 9722;
+// The bursts Zebak's jug and rock break into on landing (SpotAnimType 2186 ZEBAK_MAGE_SPLIT and 2185
+// ZEBAK_RANGED_SPLIT).
+export const ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID = 9638;
+export const ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID = 9641;
+// Ba-Ba's falling rock (SpotAnimType 2252, TOA_BABA_ROCK_FALL_FASTEST): dust trickles down, the rock
+// falls and shatters on the floor, all within the graphic's own frames.
+export const BABA_ROCK_FALL_SEQ_ID = 9806;
 
 // A weapon-trail graphic authored frame for frame against its cast animation (the same frame count,
 // e.g. the halberd sweep 1204 against the halberd special 1203) plays on the cast's own frame

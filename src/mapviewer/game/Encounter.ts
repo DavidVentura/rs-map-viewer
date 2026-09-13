@@ -17,14 +17,22 @@ import { TransformableGroundDecorations, isTileInMapSquare } from "./LocTransfor
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
-import { WardenP3AnimationIds } from "./WardenP3Animations";
+import { VisualEffectKind } from "./VisualEffect";
+import { WardenP3AnimationIds, WardenPhantomAnimationIds } from "./WardenP3Animations";
 import {
     WARDEN_P3_ARENA_ROW_COUNT,
     WARDEN_P3_FLOOR_DECORATIONS,
     WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WARDEN_P3_SPAWN_TILE,
 } from "./WardenP3Arena";
-import { WardenP3Arena, WardenSlamTarget, WardenSlamTempo, WardenStance } from "./WardenP3Director";
+import {
+    WardenP3Arena,
+    WardenPhantom,
+    WardenSlamTarget,
+    WardenSlamTempo,
+    WardenStance,
+} from "./WardenP3Director";
+import { wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import { UpgradeId } from "./upgrades";
 
@@ -143,7 +151,7 @@ export type WardenPhantomSpawn = {
     readonly x: number;
     readonly y: number;
     readonly level: number;
-    readonly enemyTypeId: EnemyTypeId;
+    readonly phantom: WardenPhantom;
 };
 
 export type WardensP3Script = {
@@ -153,6 +161,7 @@ export type WardensP3Script = {
     readonly arena: WardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
     readonly wardenAnimations: WardenP3AnimationIds;
+    readonly phantomAnimations: WardenPhantomAnimationIds;
 };
 
 export type ScriptedEncounter = EncounterCommon & {
@@ -282,6 +291,11 @@ function validateScriptedEncounter(encounter: ScriptedEncounter): void {
                 throw new RangeError("Wardens P3 requires Tumeken's Warden in its enemy types");
             }
             validateWardenP3SiphonLayout(encounter.script.siphonLayout);
+            for (const { phantom } of encounter.script.phantomSpawns) {
+                if (!encounter.enemyTypeIds.includes(wardenPhantomEnemyTypeId(phantom))) {
+                    throw new RangeError(`Wardens P3 requires the ${phantom} phantom's enemy type`);
+                }
+            }
             return;
     }
 }
@@ -813,8 +827,8 @@ const [wardensP3WardenX, wardensP3WardenY] = tileToWorld(
 );
 
 const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
-    { x: 3925, y: 5152, level: 0, enemyTypeId: EnemyTypeId.ZEBAK_PHANTOM },
-    { x: 3943, y: 5152, level: 0, enemyTypeId: EnemyTypeId.BABA_PHANTOM },
+    { x: 3925, y: 5152, level: 0, phantom: WardenPhantom.ZEBAK },
+    { x: 3943, y: 5152, level: 0, phantom: WardenPhantom.BABA },
 ];
 
 // RuneLite's NPC_WARDENS_ATTACKLEFT/RIGHT/CENTER, 01 at the normal pace and 02 for the enrage.
@@ -839,6 +853,18 @@ const WARDENS_P3_WARDEN_ANIMATIONS: WardenP3AnimationIds = {
         [WardenStance.STANDING]: { transitionSeqId: 9681, holdSeqId: 9657 },
         [WardenStance.ENRAGED]: { transitionSeqId: 9684, holdSeqId: 9685 },
     },
+};
+
+// Zebak's is RuneLite's NPC_ZEBAK01_ATTACK_RANGED, released on the sound as he rears up to throw.
+// Ba-Ba's is NPC_MANDRILL_ATTACK_SPECIAL_JUMP01, released on its landing sound so the rocks come
+// down as the ground shakes. Each rock lands on the frame its graphic (TOA_BABA_ROCK_FALL_FASTEST)
+// switches from falling to shattering.
+const WARDENS_P3_PHANTOM_ANIMATIONS: WardenPhantomAnimationIds = {
+    attacks: {
+        [WardenPhantom.ZEBAK]: { seqId: 9624, releaseFrame: 65 },
+        [WardenPhantom.BABA]: { seqId: 9748, releaseFrame: 53 },
+    },
+    rockFall: { effect: VisualEffectKind.BABA_ROCK_FALL, landingFrame: 53 },
 };
 
 const WARDENS_P3: ScriptedEncounter = {
@@ -869,6 +895,7 @@ const WARDENS_P3: ScriptedEncounter = {
         arena: { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT },
         siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
+        phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
     },
 };
 
