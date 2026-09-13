@@ -51,6 +51,7 @@ export enum WardenSiphonStatus {
     NONE = "none",
     ALL_REVERSED = "all_reversed",
     DEADLINE_EXPIRED = "deadline_expired",
+    SWARM_CLEARED = "swarm_cleared",
 }
 
 export type WardenP3Health = {
@@ -173,6 +174,8 @@ export type WardenP3SiphonState = WardenP3CommonState & {
     readonly intermission: WardenP3Intermission;
     readonly suspendedSlamTarget: WardenSlamTarget;
     readonly siphons: ChargingSiphons | LaunchedSiphons;
+    // The Warden keeps slamming through a skull swarm.
+    readonly slam: WardenSlamState;
 };
 
 // The Warden stops slamming once enraged; its floor goes and lightning falls instead.
@@ -639,7 +642,8 @@ function beginIntermission(
     if (activation.command !== undefined) {
         commands.push(activation.command);
     }
-    commands.push({ kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING });
+    // The siphon charge is on hold while the skull swarm is tried in its place.
+    // commands.push({ kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING });
     return {
         nextState: {
             phase: WardenP3Phase.SIPHONS,
@@ -649,8 +653,10 @@ function beginIntermission(
             phantoms: activation.phantoms,
             siphons: {
                 kind: "charging",
-                launchesAtSeconds: timeSeconds + timing.siphonLaunchSeconds,
+                // launchesAtSeconds: timeSeconds + timing.siphonLaunchSeconds,
+                launchesAtSeconds: timeSeconds,
             },
+            slam: normal.slam,
         },
         commands,
     };
@@ -671,7 +677,8 @@ function resumeAfterSiphons(
         reversalDamage: snapshot.wardenHealth.maximum * SIPHON_REVERSAL_DAMAGE_FRACTION,
     };
     const failurePunishment: readonly WardenP3Command[] =
-        snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED
+        snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED ||
+        snapshot.siphonStatus === WardenSiphonStatus.SWARM_CLEARED
             ? []
             : [{ kind: "RESOLVE_FLOOR_SLAM", target: WardenSlamTarget.CENTRE }];
     return {
@@ -679,18 +686,19 @@ function resumeAfterSiphons(
             phase: WardenP3Phase.NORMAL,
             nextIntermission: state.nextIntermission,
             phantoms: state.phantoms,
-            slam: slamAfterStanceChange(
-                WardenStance.STANDING,
-                state.suspendedSlamTarget,
-                snapshot.timeSeconds,
-                timing,
-            ),
+            // slam: slamAfterStanceChange(
+            //     WardenStance.STANDING,
+            //     state.suspendedSlamTarget,
+            //     snapshot.timeSeconds,
+            //     timing,
+            // ),
+            slam: state.slam,
         },
         commands: [
             resolution,
             ...failurePunishment,
             { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
-            { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
+            // { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
         ],
     };
 }
@@ -755,18 +763,19 @@ function stepSiphons(
     timing: WardenP3Timing,
 ): WardenP3Result {
     const phantomStep = stepPhantoms(state.phantoms, snapshot.timeSeconds, timing);
-    const workingState = { ...state, phantoms: phantomStep.phantoms };
+    const slamStep = stepSlam(state.slam, snapshot.timeSeconds, timing);
+    const workingState = { ...state, phantoms: phantomStep.phantoms, slam: slamStep.slam };
     if (snapshot.siphonStatus === WardenSiphonStatus.NONE) {
         const launch = launchDueSiphons(workingState, snapshot.timeSeconds);
         return {
             nextState: launch.nextState,
-            commands: [...phantomStep.commands, ...launch.commands],
+            commands: [...phantomStep.commands, ...slamStep.commands, ...launch.commands],
         };
     }
     const resumed = resumeAfterSiphons(workingState, snapshot, timing);
     return {
         nextState: resumed.nextState,
-        commands: [...phantomStep.commands, ...resumed.commands],
+        commands: [...phantomStep.commands, ...slamStep.commands, ...resumed.commands],
     };
 }
 

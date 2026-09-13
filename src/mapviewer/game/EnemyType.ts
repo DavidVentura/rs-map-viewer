@@ -17,6 +17,8 @@ import {
     TZ_KEK_MELEE_SEQ_ID,
     TZ_KIH_MELEE,
     TZ_KIH_MELEE_SEQ_ID,
+    WARDENS_SKULL_BITE,
+    WARDENS_SKULL_BITE_SEQ_ID,
     YT_HURKOT_HEAL_PULSE,
     YT_MEJKOT_HEAL_PULSE,
     YT_MEJKOT_MELEE,
@@ -36,6 +38,7 @@ export enum EnemyTypeId {
     ZEBAK_PHANTOM = "zebak_phantom",
     BABA_PHANTOM = "baba_phantom",
     ENERGY_SIPHON = "energy_siphon",
+    WARDENS_SKULL = "wardens_skull",
     // Built at runtime by the animation viewer (see AnimPreview.ts), never present in ENEMY_TYPES.
     PREVIEW = "preview",
 }
@@ -479,6 +482,24 @@ const ENERGY_SIPHON: EnemyType = {
     dropTier: DropTier.NONE,
 };
 
+// The siphon's skull let loose as a Tz-Kih-like swarmer, in place of the siphon intermissions.
+const WARDENS_SKULL: EnemyType = {
+    id: EnemyTypeId.WARDENS_SKULL,
+    npcTypeId: 11772,
+    idleSeqId: WARDENS_SKULL_BITE_SEQ_ID,
+    walkSeqId: WARDENS_SKULL_BITE_SEQ_ID,
+    deathSeqId: WARDENS_SKULL_BITE_SEQ_ID,
+    attackSeqId: WARDENS_SKULL_BITE_SEQ_ID,
+    hitRadius: 64,
+    projectileLaunchHeight: 64,
+    maxHealth: 8,
+    experienceReward: createExperience(0),
+    walkSpeed: 480 * 1.6,
+    behaviour: EnemyBehaviour.RUSHER,
+    abilities: [WARDENS_SKULL_BITE],
+    dropTier: DropTier.NONE,
+};
+
 export const ENEMY_TYPES: Readonly<Partial<Record<EnemyTypeId, EnemyType>>> = {
     [EnemyTypeId.GOBLIN]: GOBLIN,
     [EnemyTypeId.TZ_KIH]: TZ_KIH,
@@ -492,6 +513,7 @@ export const ENEMY_TYPES: Readonly<Partial<Record<EnemyTypeId, EnemyType>>> = {
     [EnemyTypeId.ZEBAK_PHANTOM]: ZEBAK_PHANTOM,
     [EnemyTypeId.BABA_PHANTOM]: BABA_PHANTOM,
     [EnemyTypeId.ENERGY_SIPHON]: ENERGY_SIPHON,
+    [EnemyTypeId.WARDENS_SKULL]: WARDENS_SKULL,
 };
 
 export function getEnemyType(id: EnemyTypeId): EnemyType {

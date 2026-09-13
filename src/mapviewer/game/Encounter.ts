@@ -44,6 +44,7 @@ import {
     WardenP3SiphonSpawn,
     validateWardenP3SiphonLayout,
 } from "./WardenP3SiphonLayout";
+import { WardenP3SkullSwarm, validateWardenP3SkullSwarm } from "./WardenP3SkullSwarm";
 import { UpgradeId } from "./upgrades";
 
 export type { MapSquareCoord };
@@ -182,6 +183,7 @@ export type WardensP3Script = {
     readonly phantomSpawns: readonly WardenPhantomSpawn[];
     readonly startPhase: WardenP3StartPhase;
     readonly siphonLayout: WardenP3SiphonLayout;
+    readonly skullSwarm: WardenP3SkullSwarm;
     readonly wardenAnimations: WardenP3AnimationIds;
     readonly phantomAnimations: WardenPhantomAnimationIds;
     readonly siphonAnimations: WardenSiphonAnimationIds;
@@ -315,6 +317,10 @@ function validateScriptedEncounter(encounter: ScriptedEncounter): void {
                 throw new RangeError("Wardens P3 requires Tumeken's Warden in its enemy types");
             }
             validateWardenP3SiphonLayout(encounter.script.siphonLayout);
+            validateWardenP3SkullSwarm(encounter.script.skullSwarm);
+            if (!encounter.enemyTypeIds.includes(EnemyTypeId.WARDENS_SKULL)) {
+                throw new RangeError("Wardens P3 requires the skull's enemy type for its swarm");
+            }
             for (const spawns of Object.values(
                 encounter.script.siphonLayout.spawnsByIntermission,
             )) {
@@ -905,6 +911,16 @@ export const WARDENS_P3_SIPHON_LAYOUT: WardenP3SiphonLayout = {
     deadlineSeconds: 15,
 };
 
+export const WARDENS_P3_SKULL_SWARM: WardenP3SkullSwarm = {
+    countsByIntermission: {
+        [WardenP3Intermission.FIRST]: 10,
+        [WardenP3Intermission.SECOND]: 15,
+        [WardenP3Intermission.THIRD]: 20,
+        [WardenP3Intermission.FOURTH]: 25,
+    },
+    playerClearanceTiles: 2,
+};
+
 const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
     { x: 3925, y: 5152, level: 0, phantom: WardenPhantom.ZEBAK },
     { x: 3943, y: 5152, level: 0, phantom: WardenPhantom.BABA },
@@ -978,6 +994,7 @@ const WARDENS_P3: ScriptedEncounter = {
         EnemyTypeId.ZEBAK_PHANTOM,
         EnemyTypeId.BABA_PHANTOM,
         EnemyTypeId.ENERGY_SIPHON,
+        EnemyTypeId.WARDENS_SKULL,
     ],
     spawnMode: EncounterSpawnMode.SCRIPTED,
     ambientNpcs: false,
@@ -999,6 +1016,7 @@ const WARDENS_P3: ScriptedEncounter = {
         phantomSpawns: WARDENS_P3_PHANTOM_SPAWNS,
         startPhase: WardenP3StartPhase.OPENING,
         siphonLayout: WARDENS_P3_SIPHON_LAYOUT,
+        skullSwarm: WARDENS_P3_SKULL_SWARM,
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
         phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
         siphonAnimations: WARDENS_P3_SIPHON_ANIMATIONS,

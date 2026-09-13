@@ -16,7 +16,7 @@ import {
     playEncounterActorSeq,
 } from "./EncounterActor";
 import { EncounterScript, WardenP3RenderState } from "./EncounterScript";
-import { Enemy } from "./Enemy";
+import { Enemy, EnemyState } from "./Enemy";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState, energySiphonRecallStrikes, settleEnergySiphon } from "./EnergySiphon";
 import { nonEmpty } from "./NonEmpty";
@@ -83,6 +83,11 @@ import {
     wardenPhantomEnemyTypeId,
 } from "./WardenP3Phantoms";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
+import {
+    WardenP3SkullSwarm,
+    validateWardenP3SkullSwarm,
+    wardenP3SkullSwarmTiles,
+} from "./WardenP3SkullSwarm";
 import { WorldContext } from "./WorldContext";
 import { FlightOrigin, FlightPoint, directionToRotation } from "./projectileMath";
 
@@ -135,7 +140,7 @@ export function startWardensP3Encounter(
     world: WorldContext,
     script: WardensP3Script,
 ): WardenP3Runtime {
-    const { wardenSpawn, phantomSpawns, startPhase, siphonLayout, sounds } = script;
+    const { wardenSpawn, phantomSpawns, startPhase, siphonLayout, skullSwarm, sounds } = script;
     const wardenId = world.spawnEnemyAtExactPosition(
         wardenSpawn.x,
         wardenSpawn.y,
@@ -143,7 +148,15 @@ export function startWardensP3Encounter(
         world.animations.enemyType(EnemyTypeId.TUMEKENS_WARDEN),
     );
     world.findEnemy(wardenId)!.rotation = directionToRotation(0, 1);
-    return new WardenP3Runtime(world, wardenId, siphonLayout, phantomSpawns, sounds, startPhase);
+    return new WardenP3Runtime(
+        world,
+        wardenId,
+        siphonLayout,
+        skullSwarm,
+        phantomSpawns,
+        sounds,
+        startPhase,
+    );
 }
 
 export class WardenP3Runtime implements EncounterScript {
@@ -153,6 +166,7 @@ export class WardenP3Runtime implements EncounterScript {
     private siphonStatus = WardenSiphonStatus.NONE;
     private siphonWindow: SiphonWindow | undefined = undefined;
     private siphonStrikes: readonly PendingSiphonStrike[] = [];
+    private skullSwarmIds: readonly number[] = [];
     private commands: readonly WardenP3Command[];
     private aimedSlamTarget: WardenSlamTarget | undefined = undefined;
     private resolvedSlamTarget: WardenSlamTarget | undefined = undefined;
@@ -170,6 +184,7 @@ export class WardenP3Runtime implements EncounterScript {
         private readonly world: WorldContext,
         private readonly wardenId: number,
         private readonly siphonLayout: WardenP3SiphonLayout,
+        private readonly skullSwarm: WardenP3SkullSwarm,
         private readonly phantomSpawns: readonly WardenPhantomSpawn[],
         private readonly sounds: WardenP3Sounds,
         startPhase: WardenP3StartPhase,
@@ -183,6 +198,7 @@ export class WardenP3Runtime implements EncounterScript {
             throw new Error("Cannot start Wardens P3 without a player");
         }
         validateWardenP3SiphonLayout(siphonLayout);
+        validateWardenP3SkullSwarm(skullSwarm);
         this.animations = world.animations.wardenP3();
         this.timing = parseWardenP3Timing({
             ...WARDEN_P3_HAZARD_TIMING,
@@ -374,6 +390,22 @@ export class WardenP3Runtime implements EncounterScript {
         }
     }
 
+    private releaseSkullSwarm(player: Player, intermission: WardenP3Intermission): void {
+        const world = this.world;
+        const skullType = world.animations.enemyType(EnemyTypeId.WARDENS_SKULL);
+        const tiles = wardenP3SkullSwarmTiles(
+            this.floor,
+            playerWardenTile(player),
+            this.skullSwarm,
+            intermission,
+            world.random,
+        );
+        this.skullSwarmIds = tiles.map((tile) => {
+            const centre = wardenTileCentre(tile);
+            return world.spawnEnemy(centre.x, centre.y, tile.level, skullType);
+        });
+    }
+
     // Every siphon flies back into the Warden during its release, whether or not it was reversed;
     // only the reversed ones strike it as they arrive.
     private recallEnergySiphons(warden: Enemy, reversalDamage: number): void {
@@ -478,6 +510,16 @@ export class WardenP3Runtime implements EncounterScript {
         if (this.siphonStatus !== WardenSiphonStatus.NONE) {
             return this.siphonStatus;
         }
+        if (
+            this.skullSwarmIds.length > 0 &&
+            this.skullSwarmIds.every((id) => {
+                // A slain skull's corpse despawns after it lingers.
+                const skull = this.world.findEnemy(id);
+                return skull === undefined || skull.state === EnemyState.DEAD;
+            })
+        ) {
+            return WardenSiphonStatus.SWARM_CLEARED;
+        }
         const siphons = this.energySiphonActors();
         if (
             siphons.length > 0 &&
@@ -520,10 +562,13 @@ export class WardenP3Runtime implements EncounterScript {
                 warden.invulnerable = !command.vulnerable;
                 return;
             case "SPAWN_ENERGY_SIPHONS":
-                this.throwEnergySiphons(warden, command.intermission);
+                // The siphons are on hold while a skull swarm is tried in their place.
+                // this.throwEnergySiphons(warden, command.intermission);
+                this.releaseSkullSwarm(player, command.intermission);
                 return;
             case "RESOLVE_ENERGY_SIPHONS":
                 this.recallEnergySiphons(warden, command.reversalDamage);
+                this.skullSwarmIds = [];
                 return;
             case "ACTIVATE_PHANTOM":
                 this.activePhantoms = [...this.activePhantoms, command.phantom];

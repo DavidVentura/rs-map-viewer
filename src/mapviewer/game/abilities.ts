@@ -614,6 +614,14 @@ function chaffMelee(
 
 export const GOBLIN_MELEE = chaffMelee("goblin_melee", "Goblin Melee", GOBLIN_MELEE_SEQ_ID, 5);
 export const TZ_KIH_MELEE = chaffMelee("tz_kih_melee", "Tz-Kih Bite", TZ_KIH_MELEE_SEQ_ID, 9);
+// The Energy Siphon npc has no attack of its own, so the skull bites on its idle.
+export const WARDENS_SKULL_BITE_SEQ_ID = 9736;
+export const WARDENS_SKULL_BITE = chaffMelee(
+    "wardens_skull_bite",
+    "Skull Bite",
+    WARDENS_SKULL_BITE_SEQ_ID,
+    1,
+);
 // Tz-Kek's mid-swing hold.
 export const TZ_KEK_MELEE = chaffMelee("tz_kek_melee", "Tz-Kek Melee", TZ_KEK_MELEE_SEQ_ID, 5);
 
