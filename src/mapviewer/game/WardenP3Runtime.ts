@@ -49,6 +49,7 @@ import {
     PhantomAttackRelease,
     WARDEN_P3_HAZARD_TIMING,
     WardenP3Command,
+    WardenP3Intermission,
     WardenP3Phase,
     WardenP3StartPhase,
     WardenP3State,
@@ -335,7 +336,7 @@ export class WardenP3Runtime implements EncounterScript {
 
     // The siphons leave the Warden's chest together and land together, each as its tile's shadow
     // reaches the landing frame.
-    private throwEnergySiphons(warden: Enemy): void {
+    private throwEnergySiphons(warden: Enemy, intermission: WardenP3Intermission): void {
         const world = this.world;
         const { siphons } = this.animations;
         const landsAtSeconds = world.timeSeconds + siphons.flightSeconds;
@@ -352,7 +353,7 @@ export class WardenP3Runtime implements EncounterScript {
                 world.terrain.getHeight(warden.level, warden.x, warden.y) +
                 warden.projectileLaunchHeight,
         };
-        for (const spawn of this.siphonLayout.spawns) {
+        for (const spawn of this.siphonLayout.spawnsByIntermission[intermission]) {
             const siphon = createEnergySiphonActor(
                 world.allocateActorId(),
                 (spawn.x + 0.5) * TILE_SIZE,
@@ -519,7 +520,7 @@ export class WardenP3Runtime implements EncounterScript {
                 warden.invulnerable = !command.vulnerable;
                 return;
             case "SPAWN_ENERGY_SIPHONS":
-                this.throwEnergySiphons(warden);
+                this.throwEnergySiphons(warden, command.intermission);
                 return;
             case "RESOLVE_ENERGY_SIPHONS":
                 this.recallEnergySiphons(warden, command.reversalDamage);

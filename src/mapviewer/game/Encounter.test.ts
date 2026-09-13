@@ -91,7 +91,6 @@ describe("encounters", () => {
                 EnemyTypeId.ENERGY_SIPHON,
             ]),
         );
-        expect(encounter.script.siphonLayout.spawns).toHaveLength(4);
     });
 
     it("opens Wardens P3 at a requested later phase and rejects one for any other encounter", () => {

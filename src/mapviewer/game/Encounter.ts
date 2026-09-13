@@ -27,17 +27,23 @@ import {
 } from "./WardenP3Animations";
 import {
     WARDEN_P3_FLOOR_DECORATIONS,
-    WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WARDEN_P3_SPAWN_TILE,
+    wardenP3ArenaTile,
+    wardenP3RowForTile,
 } from "./WardenP3Arena";
 import {
+    WardenP3Intermission,
     WardenP3StartPhase,
     WardenPhantom,
     WardenSlamTarget,
     WardenStance,
 } from "./WardenP3Director";
 import { wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
-import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
+import {
+    WardenP3SiphonLayout,
+    WardenP3SiphonSpawn,
+    validateWardenP3SiphonLayout,
+} from "./WardenP3SiphonLayout";
 import { UpgradeId } from "./upgrades";
 
 export type { MapSquareCoord };
@@ -309,6 +315,17 @@ function validateScriptedEncounter(encounter: ScriptedEncounter): void {
                 throw new RangeError("Wardens P3 requires Tumeken's Warden in its enemy types");
             }
             validateWardenP3SiphonLayout(encounter.script.siphonLayout);
+            for (const spawns of Object.values(
+                encounter.script.siphonLayout.spawnsByIntermission,
+            )) {
+                for (const spawn of spawns) {
+                    if (!wardenP3RowForTile(wardenP3ArenaTile(spawn.x, spawn.y))) {
+                        throw new RangeError(
+                            `Wardens siphon spawn ${spawn.x},${spawn.y} is off the arena floor`,
+                        );
+                    }
+                }
+            }
             for (const { phantom } of encounter.script.phantomSpawns) {
                 if (!encounter.enemyTypeIds.includes(wardenPhantomEnemyTypeId(phantom))) {
                     throw new RangeError(`Wardens P3 requires the ${phantom} phantom's enemy type`);
@@ -846,6 +863,27 @@ const [wardensP3WardenX, wardensP3WardenY] = tileToWorld(
     true,
 );
 
+function wardenP3SiphonDiamond(centreX: number, centreY: number): readonly WardenP3SiphonSpawn[] {
+    return [
+        { x: centreX, y: centreY - 2, level: 0, rotation: 0 },
+        { x: centreX - 3, y: centreY, level: 0, rotation: 0 },
+        { x: centreX + 3, y: centreY, level: 0, rotation: 0 },
+        { x: centreX, y: centreY + 2, level: 0, rotation: 0 },
+    ];
+}
+
+// The first intermission's diamond is measured from a gameplay recording; the later ones reuse its
+// shape around the user's ground markers for each intermission, until their real patterns are known.
+export const WARDENS_P3_SIPHON_LAYOUT: WardenP3SiphonLayout = {
+    spawnsByIntermission: {
+        [WardenP3Intermission.FIRST]: wardenP3SiphonDiamond(3936, 5162),
+        [WardenP3Intermission.SECOND]: wardenP3SiphonDiamond(3938, 5163),
+        [WardenP3Intermission.THIRD]: wardenP3SiphonDiamond(3936, 5160),
+        [WardenP3Intermission.FOURTH]: wardenP3SiphonDiamond(3940, 5162),
+    },
+    deadlineSeconds: 15,
+};
+
 const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
     { x: 3925, y: 5152, level: 0, phantom: WardenPhantom.ZEBAK },
     { x: 3943, y: 5152, level: 0, phantom: WardenPhantom.BABA },
@@ -939,7 +977,7 @@ const WARDENS_P3: ScriptedEncounter = {
         wardenSpawn: { x: wardensP3WardenX, y: wardensP3WardenY, level: 0 },
         phantomSpawns: WARDENS_P3_PHANTOM_SPAWNS,
         startPhase: WardenP3StartPhase.OPENING,
-        siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
+        siphonLayout: WARDENS_P3_SIPHON_LAYOUT,
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
         phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
         siphonAnimations: WARDENS_P3_SIPHON_ANIMATIONS,

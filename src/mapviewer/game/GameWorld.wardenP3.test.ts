@@ -1,6 +1,6 @@
 import { WeaponStyle } from "./Ability";
 import { CombatEventKind, applyDamage } from "./CombatEvent";
-import { WARDENS_P3_SOUNDS, WardenPhantomSpawn } from "./Encounter";
+import { WARDENS_P3_SIPHON_LAYOUT, WARDENS_P3_SOUNDS, WardenPhantomSpawn } from "./Encounter";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
@@ -13,7 +13,6 @@ import { VisualEffectKind } from "./VisualEffect";
 import {
     WARDEN_P3_FLOOR_DECORATIONS,
     WARDEN_P3_INITIAL_ARENA_FLOOR,
-    WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WardenP3ArenaTile,
     WardenP3ArenaTileOccupancy,
     canOccupyWardenP3ArenaTile,
@@ -117,7 +116,7 @@ function createWardenWorld(
     const wardens = new WardenP3Runtime(
         world,
         wardenId,
-        WARDEN_P3_SOLO_SIPHON_LAYOUT,
+        WARDENS_P3_SIPHON_LAYOUT,
         PHANTOM_SPAWNS,
         WARDENS_P3_SOUNDS,
         startPhase,
@@ -432,7 +431,7 @@ describe("Wardens P3 world runtime", () => {
         const deadlineAtSeconds =
             world.timeSeconds +
             WARDEN_ANIMATIONS.siphons.flightSeconds +
-            WARDEN_P3_SOLO_SIPHON_LAYOUT.deadlineSeconds;
+            WARDENS_P3_SIPHON_LAYOUT.deadlineSeconds;
 
         while (world.timeSeconds + STEP_SECONDS < deadlineAtSeconds) {
             world.step(EMPTY_INPUT, STEP_SECONDS);
@@ -728,7 +727,8 @@ describe("Wardens P3 world runtime", () => {
     }
 
     it("drops Ba-Ba's phantom rocks on solid floor and the player's tile, hitting only as they land", () => {
-        const playerTile = wardenP3ArenaTile(3936, 5162);
+        // Clear of the third intermission's siphons, which would push the player off their tile.
+        const playerTile = wardenP3ArenaTile(3934, 5163);
         const world = releaseBabaRocks(playerTile);
         const landsAtSeconds =
             world.timeSeconds + WARDEN_ANIMATIONS.phantoms.rockFall.landingSeconds;

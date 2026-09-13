@@ -1,7 +1,6 @@
 import { TransformableGroundDecorations } from "./LocTransform";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import type { WardenP3Tile } from "./WardenP3Director";
-import type { WardenP3SiphonLayout as SiphonLayout } from "./WardenP3SiphonLayout";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
 import { RandomSource } from "./abilityRules";
 
@@ -86,16 +85,6 @@ function arenaFloor(
 }
 
 export const WARDEN_P3_INITIAL_ARENA_FLOOR: WardenP3ArenaFloor = arenaFloor(0, new Set());
-
-export const WARDEN_P3_SOLO_SIPHON_LAYOUT: SiphonLayout = {
-    spawns: [
-        { x: 3929, y: 5159, level: 0, rotation: 0 },
-        { x: 3943, y: 5159, level: 0, rotation: 0 },
-        { x: 3929, y: 5164, level: 0, rotation: 0 },
-        { x: 3943, y: 5164, level: 0, rotation: 0 },
-    ],
-    deadlineSeconds: 15,
-};
 
 const CENTRE_X = WARDEN_P3_FRONT_CENTRE_TILE.x;
 const ARENA_ROW_COUNT = WARDEN_P3_FLOOR_ROWS.length;
