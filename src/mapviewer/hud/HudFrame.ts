@@ -1,7 +1,8 @@
 import { mat4 } from "gl-matrix";
 
 import { WeaponStyle } from "../game/Ability";
-import { Faction } from "../game/Combatant";
+import { HitsplatSprites } from "../assets/HudAssets";
+import { Combatant } from "../game/Combatant";
 import { ClickCrossKind, CrossSprites } from "./ClickCross";
 import { MenuEntry, OpenMenuState, Point } from "./contextMenu";
 
@@ -21,43 +22,42 @@ export type PlayerHudInfo = {
     nextLevelExperience: number;
 };
 
-export type TargetHudInfo = {
-    name: string;
-    combatLevel: number;
-    health: number;
-    maxHealth: number;
-};
-
 export enum SplatKind {
     DAMAGE = 0,
     HEAL = 1,
 }
 
-export type SplatPosition = {
-    worldX: number;
-    worldY: number;
-    groundHeight: number;
+// Where a combatant's splats sit this frame: halfway up its model, as OSRS sets its hitsplats.
+export type SplatAnchor = {
+    readonly worldX: number;
+    readonly worldY: number;
+    readonly height: number;
 };
 
-export type DamageSplatEvent = SplatPosition & {
+// A splat rides on its target (see HudFrame.splatAnchors) and goes with it when it despawns; the
+// hitsplats on one target spread over its own slots (see Hitsplats.ts).
+export type DamageSplatEvent = {
     kind: SplatKind.DAMAGE;
     amount: number;
-    factionHit: Faction;
+    target: Combatant;
 };
 
-export type HealSplatEvent = SplatPosition & {
+export type HealSplatEvent = {
     kind: SplatKind.HEAL;
     amount: number;
+    target: Combatant;
 };
 
 export type SplatEvent = DamageSplatEvent | HealSplatEvent;
 
-// An icon floating over a combatant, e.g. the protection prayers an enemy has up.
-export type OverheadIconHudInfo = {
+// What floats over an enemy's head: its health bar, with its protection prayer icon above that.
+export type OverheadHudInfo = {
     readonly worldX: number;
     readonly worldY: number;
-    readonly height: number;
-    readonly icon: CanvasImageSource;
+    readonly modelTopHeight: number;
+    readonly health: number;
+    readonly maxHealth: number;
+    readonly prayerIcon: CanvasImageSource | undefined;
 };
 
 export enum AbilitySlotBlockReason {
@@ -104,13 +104,6 @@ export type UpgradeOfferHudInfo = {
     readonly cards: readonly UpgradeCardHudInfo[];
 };
 
-export type BossHudInfo = {
-    readonly name: string;
-    readonly health: number;
-    readonly maxHealth: number;
-    readonly phaseLabel?: string;
-};
-
 // A transient "Equipped: <name>" banner shown for a couple of seconds after a pickup; fixed to the
 // screen rather than projected from a world position, so it's tracked separately from SplatEvent.
 export type PickupFlashEvent = {
@@ -137,19 +130,19 @@ export type HudFrame = {
     viewProjMatrix: mat4;
     screenSize: ScreenSize;
     player?: PlayerHudInfo;
-    target?: TargetHudInfo;
     abilities: AbilitySlotHudInfo[];
     activeStyle?: WeaponStyle;
     godMode: boolean;
     splatEvents: SplatEvent[];
-    overheadIcons: OverheadIconHudInfo[];
+    splatAnchors: ReadonlyMap<Combatant, SplatAnchor>;
+    overheads: OverheadHudInfo[];
     phase?: PhaseHudInfo;
     previewSeqId?: number;
-    boss?: BossHudInfo;
     contextMenu?: OpenMenuState;
     contextMenuTooltip?: ContextMenuTooltipHudInfo;
     upgradeOffer?: UpgradeOfferHudInfo;
     pickupFlashEvents: PickupFlashEvent[];
     crossSprites: CrossSprites;
+    hitsplatSprites: HitsplatSprites;
     clickCross?: ClickCrossHudInfo;
 };

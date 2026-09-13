@@ -2,6 +2,7 @@ import { LocModelLoader } from "../../../rs/config/loctype/LocModelLoader";
 import { LocModelType } from "../../../rs/config/loctype/LocModelType";
 import { LocTypeLoader } from "../../../rs/config/loctype/LocTypeLoader";
 import { NpcModelLoader } from "../../../rs/config/npctype/NpcModelLoader";
+import { NpcType } from "../../../rs/config/npctype/NpcType";
 import { SpotAnimTypeLoader } from "../../../rs/config/spotanimtype/SpotAnimTypeLoader";
 import {
     CHARACTER_LIGHT_CONTRAST_BONUS,
@@ -139,10 +140,12 @@ function createPlayerActorData(
     const itemsByItemId = new Map(
         itemEntries.map(([itemId], index) => [itemId, itemMeshes[index]]),
     );
+    fullBodyModel.calculateBoundsCylinder();
     return {
         bodyMeshesByStyle,
         bodyAnimationsBySeqId: rig.animationsBySeqId,
         itemsByItemId,
+        modelHeight: fullBodyModel.height,
     };
 }
 
@@ -274,11 +277,25 @@ function createEnemyTypeAnimationSet(
     if (!rest) {
         throw new Error(`Enemy model is missing for enemy type ${assets.enemyTypeId}`);
     }
-    return skinning.addAnimationSet(
-        rest.model,
-        requireSeqs(skinning, assets.seqIds),
-        rest.poseSpace,
-    );
+    return {
+        ...skinning.addAnimationSet(
+            rest.model,
+            requireSeqs(skinning, assets.seqIds),
+            rest.poseSpace,
+        ),
+        modelHeight: idleModelHeight(npcModelLoader, npcType),
+    };
+}
+
+// As the OSRS client measures it: the first frame of the npc's idle, posed and at the npc's own
+// scale, since the rest model is neither.
+function idleModelHeight(npcModelLoader: NpcModelLoader, npcType: NpcType): number {
+    const model = npcModelLoader.getModel(npcType, npcType.idleSeqId, 0);
+    if (!model) {
+        throw new Error(`No idle model to measure for npc ${npcType.id}`);
+    }
+    model.calculateBoundsCylinder();
+    return model.height;
 }
 
 // The animation viewer's preview enemy: bakes the npc's own idle/walk seqs plus every seq in the
@@ -311,7 +328,10 @@ function createPreviewNpcBake(
             ]),
     );
     return {
-        animations: skinning.addAnimationSet(rest.model, posedSeqs, rest.poseSpace),
+        animations: {
+            ...skinning.addAnimationSet(rest.model, posedSeqs, rest.poseSpace),
+            modelHeight: idleModelHeight(npcModelLoader, npcType),
+        },
         bake: { unposedSeqs },
     };
 }

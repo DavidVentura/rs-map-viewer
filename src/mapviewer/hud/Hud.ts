@@ -1,49 +1,56 @@
 import { worldToScreen } from "../webgl/groundPoint";
-import { HudFrame, PickupFlashEvent, SplatEvent, SplatKind } from "./HudFrame";
+import { HitsplatSlot, pickHitsplatSlot } from "./Hitsplats";
+import {
+    DamageSplatEvent,
+    HealSplatEvent,
+    HudFrame,
+    PickupFlashEvent,
+    SplatEvent,
+    SplatKind,
+} from "./HudFrame";
 import {
     computeHudLayout,
     drawAbilityBar,
-    drawBossBar,
     drawBottomPanel,
     drawClickCross,
     drawContextMenu,
     drawContextMenuTooltip,
     drawDamageSplat,
+    drawExperienceBar,
     drawGodModeLabel,
     drawHealSplat,
     drawHealthGlobe,
-    drawLevelProgress,
     drawManaGlobe,
-    drawOverheadIcon,
+    drawOverhead,
     drawPhaseCounter,
     drawPickupFlash,
     drawPreviewSeqLabel,
     drawStyleRow,
-    drawTargetPlate,
     drawUpgradeOverlay,
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
 
-function drawOverheadIcons(ctx: CanvasRenderingContext2D, frame: HudFrame): void {
+function drawOverheads(ctx: CanvasRenderingContext2D, frame: HudFrame): void {
     const { width, height } = frame.screenSize;
-    for (const overhead of frame.overheadIcons) {
+    for (const overhead of frame.overheads) {
         const screen = worldToScreen(
             frame.viewProjMatrix,
             overhead.worldX,
             overhead.worldY,
-            overhead.height,
+            overhead.modelTopHeight,
             width,
             height,
         );
         if (screen) {
-            drawOverheadIcon(ctx, overhead.icon, screen);
+            drawOverhead(ctx, overhead, screen);
         }
     }
 }
 const PICKUP_FLASH_LIFETIME_SECONDS = 2;
 
-type LiveSplat = SplatEvent & { ageSeconds: number };
+type LiveHitsplat = DamageSplatEvent & { slot: HitsplatSlot };
+type LiveSplat = (HealSplatEvent | LiveHitsplat) & { ageSeconds: number };
 type LivePickupFlash = PickupFlashEvent & { ageSeconds: number };
 
 export class Hud {
@@ -76,10 +83,7 @@ export class Hud {
         if (frame.player) {
             drawHealthGlobe(ctx, layout, frame.player);
             drawManaGlobe(ctx, layout, frame.player);
-            drawLevelProgress(ctx, width, frame.player);
-        }
-        if (frame.target) {
-            drawTargetPlate(ctx, width, frame.target);
+            drawExperienceBar(ctx, layout, frame.player);
         }
         if (frame.phase) {
             drawPhaseCounter(ctx, width, frame.phase);
@@ -87,10 +91,7 @@ export class Hud {
         if (frame.godMode) {
             drawGodModeLabel(ctx, width);
         }
-        if (frame.boss) {
-            drawBossBar(ctx, width, frame.boss);
-        }
-        drawOverheadIcons(ctx, frame);
+        drawOverheads(ctx, frame);
         this.drawSplats(frame);
         this.drawPickupFlashes(width);
         if (frame.upgradeOffer) {
@@ -122,7 +123,22 @@ export class Hud {
 
     private spawnSplats(events: SplatEvent[]): void {
         for (const event of events) {
-            this.splats.push({ ...event, ageSeconds: 0 });
+            if (event.kind === SplatKind.HEAL) {
+                this.splats.push({ ...event, ageSeconds: 0 });
+                continue;
+            }
+            const onTarget = this.splats.filter(
+                (splat): splat is LiveHitsplat & { ageSeconds: number } =>
+                    splat.kind === SplatKind.DAMAGE && splat.target === event.target,
+            );
+            const slot = pickHitsplatSlot(onTarget);
+            this.splats = this.splats.filter(
+                (splat) =>
+                    splat.kind !== SplatKind.DAMAGE ||
+                    splat.target !== event.target ||
+                    splat.slot !== slot,
+            );
+            this.splats.push({ ...event, slot, ageSeconds: 0 });
         }
     }
 
@@ -158,11 +174,15 @@ export class Hud {
     private drawSplats(frame: HudFrame): void {
         const { width, height } = frame.screenSize;
         for (const splat of this.splats) {
+            const anchor = frame.splatAnchors.get(splat.target);
+            if (!anchor) {
+                continue;
+            }
             const screen = worldToScreen(
                 frame.viewProjMatrix,
-                splat.worldX,
-                splat.worldY,
-                splat.groundHeight,
+                anchor.worldX,
+                anchor.worldY,
+                anchor.height,
                 width,
                 height,
             );
@@ -175,7 +195,13 @@ export class Hud {
                     drawHealSplat(this.ctx, screen, splat.amount, progress);
                     break;
                 case SplatKind.DAMAGE:
-                    drawDamageSplat(this.ctx, screen, splat.amount, splat.factionHit, progress);
+                    drawDamageSplat(
+                        this.ctx,
+                        frame.hitsplatSprites,
+                        screen,
+                        splat.slot,
+                        splat.amount,
+                    );
                     break;
             }
         }

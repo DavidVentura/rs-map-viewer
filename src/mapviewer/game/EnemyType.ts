@@ -431,7 +431,7 @@ const TUMEKENS_WARDEN: EnemyType = {
     behaviour: EnemyBehaviour.SCRIPTED_BOSS,
     abilities: [],
     dropTier: DropTier.NONE,
-    protectionPrayers: { attacksPerChange: 4, overheadHeight: 750 },
+    protectionPrayers: { attacksPerChange: 8 },
 };
 
 const ZEBAK_PHANTOM: EnemyType = {

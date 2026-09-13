@@ -45,8 +45,9 @@ import {
     EnergySiphonActor,
     isEncounterActorVisible,
 } from "../game/EncounterActor";
+import { Combatant } from "../game/Combatant";
 import { Enemy, EnemyState } from "../game/Enemy";
-import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
+import { EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
 import { EnergySiphonState } from "../game/EnergySiphon";
 import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import { GameWorld } from "../game/GameWorld";
@@ -105,13 +106,13 @@ import {
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
-    BossHudInfo,
     ClickCrossHudInfo,
     ContextMenuTooltipHudInfo,
     HudFrame,
-    OverheadIconHudInfo,
+    OverheadHudInfo,
     PhaseStatus,
     PickupFlashEvent,
+    SplatAnchor,
     SplatEvent,
     SplatKind,
     UpgradeCardHudInfo,
@@ -440,7 +441,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     // coordinates. Used to gate the startup loading screen so the reveal never shows that jump.
     private hasPinnedCameraSinceSpawn: boolean = false;
     private encounterCleared: boolean = false;
-    private bossPhaseLabel?: string;
 
     readonly terrain: WebGLTerrain;
 
@@ -1283,7 +1283,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         world.visualEffects = [];
         this.encounterSpawned = false;
         this.encounterCleared = false;
-        this.bossPhaseLabel = undefined;
         this.hasPinnedCameraSinceSpawn = false;
         this.previewGfxId = undefined;
     }
@@ -2501,7 +2500,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 continue;
             }
             if (event.kind === CombatEventKind.BOSS_PHASE) {
-                this.bossPhaseLabel = event.phaseLabel;
                 continue;
             }
             if (event.kind === CombatEventKind.ITEM_DROPPED) {
@@ -2521,29 +2519,19 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 void this.mapViewer.audioFeedback.playLevelUp();
                 continue;
             }
-            const groundHeight = this.terrain.getHeight(
-                event.target.level,
-                event.target.x,
-                event.target.y,
-            );
             switch (event.kind) {
                 case CombatEventKind.DAMAGE:
                     splatEvents.push({
                         kind: SplatKind.DAMAGE,
                         amount: event.amount,
-                        factionHit: event.target.faction,
-                        worldX: event.target.x,
-                        worldY: event.target.y,
-                        groundHeight,
+                        target: event.target,
                     });
                     break;
                 case CombatEventKind.HEAL:
                     splatEvents.push({
                         kind: SplatKind.HEAL,
                         amount: event.amount,
-                        worldX: event.target.x,
-                        worldY: event.target.y,
-                        groundHeight,
+                        target: event.target,
                     });
                     break;
             }
@@ -2551,23 +2539,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const phaseProgress = world.waveEncounter?.getPhaseProgress();
 
-        const targetEnemy = this.highlightedEnemy;
-        const targetNpcType = targetEnemy && this.resolveEnemyNpcType(targetEnemy);
-
-        const bossEnemy = world.enemies.find(
-            (enemy) =>
-                (enemy.type.behaviour === EnemyBehaviour.BOSS ||
-                    enemy.type.behaviour === EnemyBehaviour.SCRIPTED_BOSS) &&
-                enemy.state !== EnemyState.DEAD,
-        );
-        const bossNpcType = bossEnemy && this.resolveEnemyNpcType(bossEnemy);
-        const boss: BossHudInfo | undefined = bossEnemy &&
-            bossNpcType && {
-                name: bossNpcType.name,
-                health: bossEnemy.health,
-                maxHealth: bossEnemy.maxHealth,
-                phaseLabel: this.bossPhaseLabel,
-            };
 
         return {
             viewProjMatrix: camera.viewProjMatrix,
@@ -2584,18 +2555,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     createCharacterLevel(player.characterLevel + 1),
                 ),
             },
-            target: targetEnemy &&
-                targetNpcType && {
-                    name: targetNpcType.name,
-                    combatLevel: targetNpcType.combatLevel,
-                    health: targetEnemy.health,
-                    maxHealth: targetEnemy.maxHealth,
-                },
             abilities: player ? this.buildAbilitySlots(player) : [],
             activeStyle: player?.style,
             godMode: world.godMode,
             splatEvents,
-            overheadIcons: this.buildOverheadIcons(),
+            splatAnchors: this.buildSplatAnchors(),
+            overheads: this.buildOverheads(),
             contextMenu: this.menuState.kind === MenuStateKind.OPEN ? this.menuState : undefined,
             contextMenuTooltip:
                 this.menuState.kind === MenuStateKind.CLOSED
@@ -2621,33 +2586,64 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             previewSeqId: this.mapViewer.animPreview
                 ? world.enemies[0]?.previewSeq?.seqId
                 : undefined,
-            boss,
             crossSprites: this.mapViewer.hudAssets.crossSprites,
+            hitsplatSprites: this.mapViewer.hudAssets.hitsplats,
             clickCross: this.buildClickCrossHudInfo(),
         };
     }
 
-    // A prayer icon floats as high above the enemy's tile as its type sets, rather than over its
-    // animated model's head.
-    private buildOverheadIcons(): OverheadIconHudInfo[] {
+    private buildOverheads(): OverheadHudInfo[] {
+        const actorData = this.actorBuffer?.actorData;
+        if (!actorData) {
+            return [];
+        }
         const icons = this.mapViewer.hudAssets.prayerHeadIcons;
         return this.mapViewer.world.enemies.flatMap((enemy) => {
-            const rotation = enemy.type.protectionPrayers;
-            const frame = prayerHeadIconFrame(enemy.protectionPrayers.active);
-            if (!rotation || frame === undefined || enemy.state === EnemyState.DEAD) {
+            const animSet = actorData.enemyTypes[enemy.type.id];
+            if (!animSet || enemy.state === EnemyState.DEAD) {
                 return [];
             }
+            const frame = prayerHeadIconFrame(enemy.protectionPrayers.active);
             return [
                 {
                     worldX: enemy.x,
                     worldY: enemy.y,
-                    height:
+                    modelTopHeight:
                         this.terrain.getHeight(enemy.level, enemy.x, enemy.y) +
-                        rotation.overheadHeight,
-                    icon: icons[frame],
+                        animSet.modelHeight,
+                    health: enemy.health,
+                    maxHealth: enemy.maxHealth,
+                    prayerIcon: frame === undefined ? undefined : icons[frame],
                 },
             ];
         });
+    }
+
+    // Only actors the renderer draws carry splats, the same ones buildOverheads stacks over.
+    private buildSplatAnchors(): Map<Combatant, SplatAnchor> {
+        const actorData = this.actorBuffer?.actorData;
+        const world = this.mapViewer.world;
+        if (!actorData) {
+            return new Map();
+        }
+        const anchorAt = (combatant: Combatant, modelHeight: number): [Combatant, SplatAnchor] => [
+            combatant,
+            {
+                worldX: combatant.x,
+                worldY: combatant.y,
+                height:
+                    this.terrain.getHeight(combatant.level, combatant.x, combatant.y) +
+                    modelHeight / 2,
+            },
+        ];
+        const enemyAnchors = world.enemies.flatMap((enemy) => {
+            const animSet = actorData.enemyTypes[enemy.type.id];
+            return animSet ? [anchorAt(enemy, animSet.modelHeight)] : [];
+        });
+        const playerAnchors = world.player
+            ? [anchorAt(world.player, actorData.player.modelHeight)]
+            : [];
+        return new Map([...enemyAnchors, ...playerAnchors]);
     }
 
     // The active cross's resolved frame for this instant, or undefined (clearing the state) once

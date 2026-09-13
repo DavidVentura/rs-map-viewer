@@ -14,8 +14,6 @@ export type ProtectionPrayers = {
 // Only attacks that land count, and the one that completes each count picks the prayer.
 export type ProtectionPrayerRotation = {
     readonly attacksPerChange: number;
-    // Where the prayer icon floats above the enemy's tile.
-    readonly overheadHeight: number;
 };
 
 export const NO_PROTECTION_PRAYERS: ProtectionPrayers = { active: [], attacksReceived: 0 };

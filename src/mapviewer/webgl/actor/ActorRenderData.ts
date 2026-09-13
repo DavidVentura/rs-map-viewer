@@ -18,6 +18,8 @@ export interface PlayerActorData {
     readonly bodyMeshesByStyle: Readonly<Record<WeaponStyle, SkinnedMesh>>;
     readonly bodyAnimationsBySeqId: ReadonlyMap<number, readonly SkinFrame[]>;
     readonly itemsByItemId: ReadonlyMap<number, SkinnedMesh>;
+    // Where the player's hitsplats sit, halfway up it, as on an enemy (see EnemyTypeAnimationSet).
+    readonly modelHeight: number;
 }
 
 export function getPlayerBodyAnimation(
@@ -43,7 +45,8 @@ export function getPlayerItemAnimation(
     return { mesh, frames: requiredFramesFrom(data.bodyAnimationsBySeqId, seqId) };
 }
 
-export type EnemyTypeAnimationSet = SkinAnimationSet;
+// modelHeight is the height the npc's overheads (health bar, prayer icon) stack up from.
+export type EnemyTypeAnimationSet = SkinAnimationSet & { readonly modelHeight: number };
 
 export function getEnemyAnimation(data: EnemyTypeAnimationSet, seqId: number): SkinAnimation {
     return { mesh: data.mesh, frames: requiredFrames(data, seqId) };

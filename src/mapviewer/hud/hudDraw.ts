@@ -1,7 +1,8 @@
 import { clamp } from "../../util/MathUtil";
 import { WeaponStyle } from "../game/Ability";
-import { Faction } from "../game/Combatant";
+import { HitsplatSprites } from "../assets/HudAssets";
 import { CrossSprites } from "./ClickCross";
+import { HitsplatSlot } from "./Hitsplats";
 import {
     MenuEntry,
     MenuTextRunRole,
@@ -14,12 +15,11 @@ import {
 import {
     AbilitySlotBlockReason,
     AbilitySlotHudInfo,
-    BossHudInfo,
+    OverheadHudInfo,
     ClickCrossHudInfo,
     PhaseHudInfo,
     PhaseStatus,
     PlayerHudInfo,
-    TargetHudInfo,
     UpgradeCardHudInfo,
 } from "./HudFrame";
 
@@ -32,12 +32,12 @@ const PANEL_BOTTOM_MARGIN = 0;
 const GLOBE_RADIUS = 58;
 const ABILITY_SLOT_SIZE = 56;
 const ABILITY_SLOT_GAP = 8;
-const TARGET_PLATE_WIDTH = 300;
-const TARGET_PLATE_HEIGHT = 56;
-const TARGET_PLATE_MARGIN_TOP = 16;
 const STYLE_ICON_SIZE = 26;
 const STYLE_ICON_GAP = 6;
 const STYLE_ROW_MARGIN_BOTTOM = 6;
+const EXPERIENCE_BAR_HEIGHT = 8;
+const EXPERIENCE_BAR_GAP = 3;
+const EXPERIENCE_BAR_SEGMENTS = 10;
 const UPGRADE_CARD_WIDTH = 260;
 const UPGRADE_CARD_HEIGHT = 300;
 const UPGRADE_CARD_GAP = 24;
@@ -63,6 +63,7 @@ export type HudLayout = {
     manaGlobe: { x: number; y: number; radius: number };
     slots: { x: number; y: number; size: number }[];
     styleIcons: { x: number; y: number; size: number; style: WeaponStyle }[];
+    experienceBar: { x: number; y: number; width: number; height: number };
     upgradeCards: { x: number; y: number; width: number; height: number }[];
 };
 
@@ -83,7 +84,9 @@ export function computeHudLayout(
     const styleIconsWidth =
         STYLE_ICON_SIZE * STYLE_ORDER.length + STYLE_ICON_GAP * (STYLE_ORDER.length - 1);
     const styleIconsX = width / 2 - styleIconsWidth / 2;
-    const styleIconsY = slotsY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
+    const experienceBarX = panelX + GLOBE_RADIUS * 2 + EXPERIENCE_BAR_GAP;
+    const experienceBarY = panelY - EXPERIENCE_BAR_GAP - EXPERIENCE_BAR_HEIGHT;
+    const styleIconsY = experienceBarY - STYLE_ICON_SIZE - STYLE_ROW_MARGIN_BOTTOM;
     const upgradeCardsWidth =
         UPGRADE_CARD_WIDTH * upgradeCardCount +
         UPGRADE_CARD_GAP * Math.max(0, upgradeCardCount - 1);
@@ -101,6 +104,12 @@ export function computeHudLayout(
             y: slotsY,
             size: ABILITY_SLOT_SIZE,
         })),
+        experienceBar: {
+            x: experienceBarX,
+            y: experienceBarY,
+            width: panelWidth - (experienceBarX - panelX) * 2,
+            height: EXPERIENCE_BAR_HEIGHT,
+        },
         styleIcons: STYLE_ORDER.map((style, i) => ({
             x: styleIconsX + i * (STYLE_ICON_SIZE + STYLE_ICON_GAP),
             y: styleIconsY,
@@ -530,68 +539,57 @@ export function drawStyleRow(
     }
 }
 
-export function drawLevelProgress(
+// Diablo's experience strip: a thin gold bar right above the chrome, spanning the gap between the
+// two globes, notched into tenths of the level.
+export function drawExperienceBar(
     ctx: CanvasRenderingContext2D,
-    width: number,
+    layout: HudLayout,
     player: PlayerHudInfo,
 ): void {
+    const { x, y, width, height } = layout.experienceBar;
     const denominator = player.nextLevelExperience - player.levelStartExperience;
-    const progress =
-        denominator > 0 ? (player.experience - player.levelStartExperience) / denominator : 0;
-    const barWidth = 220;
-    const x = width / 2 - barWidth / 2;
-    const y = 82;
-    ctx.fillStyle = "rgba(6, 6, 10, 0.82)";
-    ctx.fillRect(x, y, barWidth, 18);
-    ctx.fillStyle = "#7c5cff";
-    ctx.fillRect(x, y, barWidth * clamp(progress, 0, 1), 18);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-    ctx.strokeRect(x, y, barWidth, 18);
-    ctx.fillStyle = "#e8e0d0";
-    ctx.font = "700 12px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`Level ${player.level}`, width / 2, y + 9);
-}
+    const progress = percentOf(player.experience - player.levelStartExperience, denominator);
 
-export function drawTargetPlate(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    target: TargetHudInfo,
-): void {
-    const x = width / 2 - TARGET_PLATE_WIDTH / 2;
-    const y = TARGET_PLATE_MARGIN_TOP;
+    ctx.fillStyle = "rgba(8, 6, 6, 0.92)";
+    ctx.fillRect(x, y, width, height);
+    const fill = ctx.createLinearGradient(0, y, 0, y + height);
+    fill.addColorStop(0, "#f4dc8a");
+    fill.addColorStop(0.5, "#c9a24a");
+    fill.addColorStop(1, "#7a5a1e");
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 1, y + 1, (width - 2) * progress, height - 2);
 
-    ctx.fillStyle = "rgba(6, 6, 10, 0.82)";
-    ctx.fillRect(x, y, TARGET_PLATE_WIDTH, TARGET_PLATE_HEIGHT);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+    for (let notch = 1; notch < EXPERIENCE_BAR_SEGMENTS; notch++) {
+        ctx.fillRect(Math.round(x + (width * notch) / EXPERIENCE_BAR_SEGMENTS), y, 1, height);
+    }
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-    ctx.strokeRect(x, y, TARGET_PLATE_WIDTH, TARGET_PLATE_HEIGHT);
+    ctx.strokeStyle = "rgba(120, 96, 60, 0.8)";
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
 
-    ctx.fillStyle = "#e8e0d0";
-    ctx.font = "600 15px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText(`${target.name} (level-${target.combatLevel})`, width / 2, y + 6);
-
-    const barWidth = TARGET_PLATE_WIDTH - 24;
-    const barHeight = 10;
-    const barX = width / 2 - barWidth / 2;
-    const barY = y + 32;
-    const percent = percentOf(target.health, target.maxHealth);
-
-    ctx.fillStyle = "rgba(40, 6, 6, 0.9)";
-    ctx.fillRect(barX, barY, barWidth, barHeight);
-    ctx.fillStyle = "#c81e1e";
-    ctx.fillRect(barX, barY, barWidth * percent, barHeight);
-    ctx.lineWidth = 1;
+    ctx.save();
+    ctx.font = "600 12px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.strokeRect(barX, barY, barWidth, barHeight);
+    ctx.fillStyle = "#d8cfbc";
+    const label = `Level ${player.level}`;
+    ctx.strokeText(label, x, y - 3);
+    ctx.fillText(label, x, y - 3);
+    ctx.restore();
 }
 
 const SPLAT_RISE_PIXELS = 46;
-const DAMAGE_TO_PLAYER_COLOR = "#ff4d4d";
-const DAMAGE_TO_ENEMY_COLOR = "#ffd24d";
+const HITSPLAT_SIZE_PX = 30;
+// The client's own offsets for a 25px splat, grown with it.
+const HITSPLAT_SLOT_SCALE = HITSPLAT_SIZE_PX / 25;
+const HITSPLAT_SLOT_OFFSETS: Readonly<Record<HitsplatSlot, { x: number; y: number }>> = {
+    [HitsplatSlot.BOTTOM]: { x: 0, y: 0 },
+    [HitsplatSlot.TOP]: { x: 0, y: -20 * HITSPLAT_SLOT_SCALE },
+    [HitsplatSlot.LEFT]: { x: -15 * HITSPLAT_SLOT_SCALE, y: -10 * HITSPLAT_SLOT_SCALE },
+    [HitsplatSlot.RIGHT]: { x: 15 * HITSPLAT_SLOT_SCALE, y: -10 * HITSPLAT_SLOT_SCALE },
+};
 const HEAL_COLOR = "#4dff7a";
 
 function drawSplatText(
@@ -616,15 +614,35 @@ function drawSplatText(
     ctx.restore();
 }
 
+// OSRS's hitsplat: the number over a blue splat when the hit did nothing, a red one when it hurt.
+// It holds still for its whole life rather than rising and fading like a heal.
 export function drawDamageSplat(
     ctx: CanvasRenderingContext2D,
-    screen: { x: number; y: number },
+    sprites: HitsplatSprites,
+    anchor: { x: number; y: number },
+    slot: HitsplatSlot,
     amount: number,
-    factionHit: Faction,
-    progress: number,
 ): void {
-    const color = factionHit === Faction.PLAYER ? DAMAGE_TO_PLAYER_COLOR : DAMAGE_TO_ENEMY_COLOR;
-    drawSplatText(ctx, screen, `${Math.round(amount)}`, color, progress);
+    const shown = Math.round(amount);
+    const offset = HITSPLAT_SLOT_OFFSETS[slot];
+    const x = anchor.x + offset.x;
+    const y = anchor.y + offset.y;
+    ctx.drawImage(
+        shown > 0 ? sprites.damage : sprites.blocked,
+        x - HITSPLAT_SIZE_PX / 2,
+        y - HITSPLAT_SIZE_PX / 2,
+        HITSPLAT_SIZE_PX,
+        HITSPLAT_SIZE_PX,
+    );
+    ctx.save();
+    ctx.font = "14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#000000";
+    ctx.fillText(`${shown}`, x + 1, y + 1);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`${shown}`, x, y);
+    ctx.restore();
 }
 
 export function drawHealSplat(
@@ -636,7 +654,7 @@ export function drawHealSplat(
     drawSplatText(ctx, screen, `+${Math.round(amount)}`, HEAL_COLOR, progress);
 }
 
-const WAVE_COUNTER_MARGIN_TOP = TARGET_PLATE_MARGIN_TOP + TARGET_PLATE_HEIGHT + 12;
+const WAVE_COUNTER_MARGIN_TOP = 16;
 const WAVE_COUNTER_SUMMARY_MARGIN_TOP = WAVE_COUNTER_MARGIN_TOP + 24;
 
 function phaseCounterText(phase: PhaseHudInfo): string {
@@ -702,46 +720,6 @@ export function drawGodModeLabel(ctx: CanvasRenderingContext2D, width: number): 
     ctx.strokeText("GOD MODE", width / 2, GOD_MODE_LABEL_MARGIN_TOP);
     ctx.fillText("GOD MODE", width / 2, GOD_MODE_LABEL_MARGIN_TOP);
     ctx.restore();
-}
-
-const BOSS_BAR_WIDTH = 520;
-const BOSS_BAR_HEIGHT = 22;
-const BOSS_BAR_NAME_MARGIN_TOP = WAVE_COUNTER_SUMMARY_MARGIN_TOP + 28;
-const BOSS_BAR_NAME_HEIGHT = 24;
-const BOSS_BAR_MARGIN_TOP = BOSS_BAR_NAME_MARGIN_TOP + BOSS_BAR_NAME_HEIGHT;
-
-export function drawBossBar(ctx: CanvasRenderingContext2D, width: number, boss: BossHudInfo): void {
-    const barX = width / 2 - BOSS_BAR_WIDTH / 2;
-    const barY = BOSS_BAR_MARGIN_TOP;
-
-    ctx.save();
-    ctx.font = "700 20px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillStyle = "#ffd24d";
-    const nameText = boss.phaseLabel ? `${boss.name} — ${boss.phaseLabel}` : boss.name;
-    ctx.strokeText(nameText, width / 2, BOSS_BAR_NAME_MARGIN_TOP);
-    ctx.fillText(nameText, width / 2, BOSS_BAR_NAME_MARGIN_TOP);
-    ctx.restore();
-
-    const gradient = ctx.createLinearGradient(0, barY, 0, barY + BOSS_BAR_HEIGHT);
-    gradient.addColorStop(0, "rgba(28, 24, 22, 0.96)");
-    gradient.addColorStop(1, "rgba(10, 8, 8, 0.98)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(barX, barY, BOSS_BAR_WIDTH, BOSS_BAR_HEIGHT);
-
-    const percent = percentOf(boss.health, boss.maxHealth);
-    ctx.fillStyle = "#c81e1e";
-    ctx.fillRect(barX + 2, barY + 2, (BOSS_BAR_WIDTH - 4) * percent, BOSS_BAR_HEIGHT - 4);
-
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(120, 96, 60, 0.7)";
-    ctx.strokeRect(barX + 1, barY + 1, BOSS_BAR_WIDTH - 2, BOSS_BAR_HEIGHT - 2);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
-    ctx.strokeRect(barX, barY, BOSS_BAR_WIDTH, BOSS_BAR_HEIGHT);
 }
 
 const PREVIEW_SEQ_LABEL_MARGIN_TOP = 12;
@@ -981,16 +959,33 @@ export function drawContextMenuTooltip(
 // The sprite's own native size (see assets/HudAssets.ts) - drawn 1:1, like OSRS.
 const CLICK_CROSS_SIZE_PX = 16;
 const OVERHEAD_ICON_SIZE_PX = 30;
+const OVERHEAD_HEALTH_BAR_WIDTH_PX = 40;
+const OVERHEAD_HEALTH_BAR_HEIGHT_PX = 6;
+const OVERHEAD_GAP_PX = 4;
 
-export function drawOverheadIcon(
+// OSRS's classic health bar: green for what's left, red for what's gone, just over the head, with
+// the prayer icon stacked above it.
+export function drawOverhead(
     ctx: CanvasRenderingContext2D,
-    icon: CanvasImageSource,
-    screen: { x: number; y: number },
+    overhead: OverheadHudInfo,
+    modelTop: { x: number; y: number },
 ): void {
+    const barX = Math.round(modelTop.x - OVERHEAD_HEALTH_BAR_WIDTH_PX / 2);
+    const barY = Math.round(modelTop.y - OVERHEAD_GAP_PX - OVERHEAD_HEALTH_BAR_HEIGHT_PX);
+    const remaining = Math.round(
+        OVERHEAD_HEALTH_BAR_WIDTH_PX * percentOf(overhead.health, overhead.maxHealth),
+    );
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(barX, barY, OVERHEAD_HEALTH_BAR_WIDTH_PX, OVERHEAD_HEALTH_BAR_HEIGHT_PX);
+    ctx.fillStyle = "#00ff00";
+    ctx.fillRect(barX, barY, remaining, OVERHEAD_HEALTH_BAR_HEIGHT_PX);
+    if (!overhead.prayerIcon) {
+        return;
+    }
     ctx.drawImage(
-        icon,
-        screen.x - OVERHEAD_ICON_SIZE_PX / 2,
-        screen.y - OVERHEAD_ICON_SIZE_PX / 2,
+        overhead.prayerIcon,
+        modelTop.x - OVERHEAD_ICON_SIZE_PX / 2,
+        barY - OVERHEAD_GAP_PX - OVERHEAD_ICON_SIZE_PX,
         OVERHEAD_ICON_SIZE_PX,
         OVERHEAD_ICON_SIZE_PX,
     );

@@ -19,12 +19,21 @@ const SINGLE_PRAYER_HEAD_ICON_FRAMES: Readonly<Record<WeaponStyle, number>> = {
     [WeaponStyle.MAGIC]: 2,
 };
 const RANGED_MAGIC_HEAD_ICON_FRAME = 6;
+// SpriteId.Hitmark's classic splats: blue for a hit that did nothing, red for damage.
+const BLOCKED_HITSPLAT_SPRITE_ID = 1358;
+const DAMAGE_HITSPLAT_SPRITE_ID = 1359;
 const RANGED_MELEE_HEAD_ICON_FRAME = 7;
 const MAGIC_MELEE_HEAD_ICON_FRAME = 8;
+
+export type HitsplatSprites = {
+    readonly blocked: CanvasImageSource;
+    readonly damage: CanvasImageSource;
+};
 
 export type HudAssets = {
     readonly crossSprites: CrossSprites;
     readonly prayerHeadIcons: readonly CanvasImageSource[];
+    readonly hitsplats: HitsplatSprites;
 };
 
 // Every sprite id the HUD reads by id, flattened into the cache roots next to ActorAssets (see
@@ -32,6 +41,8 @@ export type HudAssets = {
 export const HUD_SPRITE_GROUP_IDS: readonly number[] = [
     CROSS_SPRITE_GROUP_ID,
     PRAYER_HEAD_ICON_GROUP_ID,
+    BLOCKED_HITSPLAT_SPRITE_ID,
+    DAMAGE_HITSPLAT_SPRITE_ID,
 ];
 
 export function prayerHeadIconFrame(active: ActiveProtectionPrayers): number | undefined {
@@ -54,6 +65,14 @@ export function prayerHeadIconFrame(active: ActiveProtectionPrayers): number | u
             throw new Error(`Both prayer slots hold the same style: ${active[0]}`);
         }
     }
+}
+
+function loadSingleSprite(spriteIndex: CacheIndex, groupId: number): CanvasImageSource {
+    const sprites = SpriteLoader.loadIntoIndexedSprites(spriteIndex, groupId);
+    if (!sprites || sprites.length !== 1) {
+        throw new Error(`Sprite group ${groupId} did not decode into a single frame`);
+    }
+    return sprites[0].getCanvas();
 }
 
 function loadPrayerHeadIcons(spriteIndex: CacheIndex): readonly CanvasImageSource[] {
@@ -87,5 +106,9 @@ export function loadHudAssets(spriteIndex: CacheIndex): HudAssets {
     return {
         crossSprites: loadCrossSprites(spriteIndex),
         prayerHeadIcons: loadPrayerHeadIcons(spriteIndex),
+        hitsplats: {
+            blocked: loadSingleSprite(spriteIndex, BLOCKED_HITSPLAT_SPRITE_ID),
+            damage: loadSingleSprite(spriteIndex, DAMAGE_HITSPLAT_SPRITE_ID),
+        },
     };
 }
