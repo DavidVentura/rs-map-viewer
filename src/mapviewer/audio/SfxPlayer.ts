@@ -1,6 +1,9 @@
 import { SfxClip, sfxClipPath } from "./FrameSounds";
 
 const DEFAULT_VOLUME = 0.5;
+// The synthesised effects come out near full scale while the music is mastered around 20 dB
+// quieter, so the effects sit 18 dB down for both volume sliders to mean the same listening level.
+const MIX_GAIN = 0.125;
 // The client drops new sounds while 50 are queued or playing.
 const MAX_VOICES = 50;
 const OGG_MAGIC = [0x4f, 0x67, 0x67, 0x53];
@@ -19,15 +22,16 @@ export class SfxPlayer {
     private unlocked = false;
     private enabled = true;
     private voices = 0;
+    private currentVolume = DEFAULT_VOLUME;
 
     constructor(private readonly context: AudioContext) {
         this.output = context.createGain();
-        this.output.gain.value = DEFAULT_VOLUME;
+        this.output.gain.value = DEFAULT_VOLUME * MIX_GAIN;
         this.output.connect(context.destination);
     }
 
     get volume(): number {
-        return this.output.gain.value;
+        return this.currentVolume;
     }
 
     get isEnabled(): boolean {
@@ -35,7 +39,8 @@ export class SfxPlayer {
     }
 
     setVolume(volume: number): void {
-        this.output.gain.value = Math.min(1, Math.max(0, volume));
+        this.currentVolume = Math.min(1, Math.max(0, volume));
+        this.output.gain.value = this.currentVolume * MIX_GAIN;
     }
 
     setEnabled(enabled: boolean): void {
