@@ -420,7 +420,7 @@ const TUMEKENS_WARDEN: EnemyType = {
     attackSeqId: 9657,
     hitRadius: 256,
     projectileLaunchHeight: 480,
-    maxHealth: 100,
+    maxHealth: 1000,
     experienceReward: createExperience(0),
     walkSpeed: 0,
     behaviour: EnemyBehaviour.SCRIPTED_BOSS,
