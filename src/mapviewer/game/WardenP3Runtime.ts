@@ -136,6 +136,13 @@ function wardenTileCentre(tile: WardenP3Tile): FlightPoint {
     return { x: (tile.x + 0.5) * TILE_SIZE, y: (tile.y + 0.5) * TILE_SIZE };
 }
 
+const FLOOR_SLAM_DAMAGE = 30;
+
+type ActiveFloorSlam = {
+    readonly slam: FloorSlam;
+    readonly struckPlayer: boolean;
+};
+
 export function startWardensP3Encounter(
     world: WorldContext,
     script: WardensP3Script,
@@ -173,7 +180,7 @@ export class WardenP3Runtime implements EncounterScript {
     private activePhantoms: readonly WardenPhantom[] = [];
     private floor: WardenP3ArenaFloor = WARDEN_P3_INITIAL_ARENA_FLOOR;
     // Slams whose front is still travelling or whose last tiles are still settling.
-    private floorSlams: readonly FloorSlam[] = [];
+    private floorSlams: readonly ActiveFloorSlam[] = [];
     // Arrivals up to this time have already hit, so each tile's arrival is resolved exactly once
     // even when it lands on a step boundary.
     private floorSlamsResolvedUntilSeconds: number;
@@ -229,7 +236,7 @@ export class WardenP3Runtime implements EncounterScript {
                 this.state.phase === WardenP3Phase.SIPHONS ? this.state.intermission : undefined,
             activePhantoms: this.activePhantoms,
             arenaFloor: this.floor,
-            floorSlams: this.floorSlams,
+            floorSlams: this.floorSlams.map((active) => active.slam),
         };
     }
 
@@ -463,23 +470,31 @@ export class WardenP3Runtime implements EncounterScript {
     }
 
     // A tile hurts the player only as the front reaches it, so stepping onto tiles the front has
-    // already passed is safe.
+    // already passed is safe. A slam hurts them at most once, so running ahead of the front onto
+    // tiles it has yet to reach can't be hit again by the same wave.
     private resolveFloorSlamArrivals(): void {
         const timeSeconds = this.world.timeSeconds;
-        for (const slam of this.floorSlams) {
-            const arriving = floorSlamTilesArriving(
-                slam,
-                this.floorSlamsResolvedUntilSeconds,
-                timeSeconds,
-            );
-            for (const tile of arriving) {
-                this.damagePlayerOnTile(tile, 30);
-            }
-        }
+        const player = this.world.player;
+        const resolvedFromSeconds = this.floorSlamsResolvedUntilSeconds;
+        this.floorSlams = this.floorSlams
+            .map((active) => {
+                if (active.struckPlayer || !player) {
+                    return active;
+                }
+                const playerTile = playerWardenTile(player);
+                const struck = floorSlamTilesArriving(
+                    active.slam,
+                    resolvedFromSeconds,
+                    timeSeconds,
+                ).some((tile) => isSameWardenTile(playerTile, tile));
+                if (!struck) {
+                    return active;
+                }
+                applyDamage(player, FLOOR_SLAM_DAMAGE, undefined, this.world.events);
+                return { slam: active.slam, struckPlayer: true };
+            })
+            .filter((active) => timeSeconds < floorSlamEndsAtSeconds(active.slam));
         this.floorSlamsResolvedUntilSeconds = timeSeconds;
-        this.floorSlams = this.floorSlams.filter(
-            (slam) => timeSeconds < floorSlamEndsAtSeconds(slam),
-        );
     }
 
     // A volley's strikes land together, so each sound plays once, heard from every tile it struck.
@@ -547,8 +562,11 @@ export class WardenP3Runtime implements EncounterScript {
                 this.floorSlams = [
                     ...this.floorSlams,
                     {
-                        shockwave: wardenP3SlamShockwave(command.target),
-                        startsAtSeconds: this.world.timeSeconds,
+                        slam: {
+                            shockwave: wardenP3SlamShockwave(command.target),
+                            startsAtSeconds: this.world.timeSeconds,
+                        },
+                        struckPlayer: false,
                     },
                 ];
                 return;

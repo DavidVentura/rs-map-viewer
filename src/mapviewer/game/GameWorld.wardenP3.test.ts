@@ -322,6 +322,28 @@ describe("Wardens P3 world runtime", () => {
         expect(safeWorld.player!.health).toBe(safeHealth);
     });
 
+    it("hurts a player running ahead of the front only once per slam", () => {
+        const { world } = createWardenWorld();
+        const firstTile = wardenP3ArenaTile(3940, 5160);
+        const laterTile = wardenP3ArenaTile(3944, 5162);
+        placePlayerOn(world, firstTile);
+        const startingHealth = world.player!.health;
+
+        const slam = stepUntilFirstFloorSlam(world);
+        expect(floorSlamArrivalSeconds(slam, laterTile)!).toBeGreaterThan(
+            floorSlamArrivalSeconds(slam, firstTile)!,
+        );
+        while (world.player!.health === startingHealth) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        placePlayerOn(world, laterTile);
+        while (world.timeSeconds < floorSlamEndsAtSeconds(slam)) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+
+        expect(world.player!.health).toBe(startingHealth - 30);
+    });
+
     // The siphons are on hold while the skull swarm is tried in their place.
     it.skip("spawns mechanic-only siphons and resolves their intermission after basic melee reverses each", () => {
         const { world, wardenId } = createWardenWorld();
