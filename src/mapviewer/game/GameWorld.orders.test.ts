@@ -97,7 +97,7 @@ describe("walk orders", () => {
         const world = makeWorld();
         const player = world.player!;
         issue(world, pressOnGround(1000, 0));
-        advanceSeconds(world, 0.1);
+        advanceSeconds(world, HOLD_THRESHOLD_SECONDS + 0.05);
         expect(player.x).toBeGreaterThan(0);
 
         issue(world, { kind: OrderEventKind.DRAG, x: 0, y: 1000 });

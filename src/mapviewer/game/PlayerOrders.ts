@@ -78,18 +78,14 @@ type AttackOrder = Extract<PlayerOrder, { readonly kind: PlayerOrderKind.ATTACK 
 export const IDLE_ORDER: PlayerOrder = { kind: PlayerOrderKind.IDLE };
 
 // How long the left button must stay down on the ground or an enemy before letting go stops the
-// player rather than counting as a click. Kept above a slow click's length, since a click mistaken
-// for a hold strands the player partway to the clicked point.
-export const HOLD_THRESHOLD_SECONDS = 0.25;
-
-// Dragging this far across the ground makes the press a hold at once, so steering starts with the
-// drag instead of waiting out HOLD_THRESHOLD_SECONDS.
-export const HOLD_DRAG_DISTANCE = 0.5 * TILE_SIZE;
+// player rather than counting as a click. Short, so a hold takes over the pointer promptly; a click
+// held past it is read as a hold and stops the player partway to the clicked point.
+export const HOLD_THRESHOLD_SECONDS = 0.1;
 
 export enum PointerHoldKind {
     RELEASED = 0,
-    // Down on the ground or an enemy, not yet long or far enough to be a hold: letting go now is a
-    // click, which leaves the press's order running.
+    // Down on the ground or an enemy, not yet long enough to be a hold: letting go now is a click,
+    // which leaves the press's order running.
     PRESSED = 1,
     // Letting go stops the player.
     HOLDING = 2,
@@ -204,16 +200,10 @@ function dragOrders(orders: PlayerOrders, x: number, y: number): PlayerOrders {
     switch (pointer.kind) {
         case PointerHoldKind.RELEASED:
             return orders;
-        case PointerHoldKind.PRESSED: {
-            const pressed = pointer.target;
-            if (
-                pressed.kind !== OrderTargetKind.GROUND ||
-                Math.hypot(x - pressed.x, y - pressed.y) < HOLD_DRAG_DISTANCE
-            ) {
-                return orders;
-            }
-            return steerTo(x, y);
-        }
+        // Players click to walk while already sweeping the cursor on towards their next target, so
+        // a short press keeps the point where the button went down, like the click cross.
+        case PointerHoldKind.PRESSED:
+            return orders;
         case PointerHoldKind.HOLDING:
             return pointer.on === OrderTargetKind.GROUND ? steerTo(x, y) : orders;
     }
@@ -231,8 +221,8 @@ function releaseOrders(orders: PlayerOrders): PlayerOrders {
 }
 
 // A press starts what a click on its target asks for straight away, so a hold responds from its
-// first frame. Once the button has stayed down HOLD_THRESHOLD_SECONDS (or dragged HOLD_DRAG_DISTANCE
-// across the ground) the press becomes a hold: the walk destination follows the pointer, or the
+// first frame. Once the button has stayed down HOLD_THRESHOLD_SECONDS the press becomes a hold:
+// the walk destination follows the pointer, or the
 // pressed enemy is attacked whenever the attack is ready, and letting go stops the player. A menu
 // entry is a click, and a skill key drops the order outright.
 function applyOrderEvent(

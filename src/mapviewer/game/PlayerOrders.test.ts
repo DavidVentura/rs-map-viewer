@@ -5,7 +5,6 @@ import { HOSTILE_ENERGY_SIPHON } from "./EnergySiphon";
 import {
     ATTACK_ORDER_PERSISTENCE,
     AttackOrderPersistence,
-    HOLD_DRAG_DISTANCE,
     HOLD_THRESHOLD_SECONDS,
     IDLE_ORDER,
     IDLE_PLAYER_ORDERS,
@@ -148,14 +147,15 @@ describe("clicks and holds on the ground", () => {
         });
     });
 
-    it("ignores the pointer's jitter during a click", () => {
-        const jittered = at(
+    it("walks to where a quick click went down even when the pointer sweeps on before release", () => {
+        const swept = at(
             pressed(pressOnGround(300, 200)),
             BEFORE_HOLD,
-            drag(300 + HOLD_DRAG_DISTANCE - 1, 200),
+            drag(600, 200),
+            drag(900, 400),
             RELEASE,
         );
-        expect(jittered.order).toEqual(walkTo(300, 200));
+        expect(swept.order).toEqual(walkTo(300, 200));
     });
 
     it("follows the pointer once held past the threshold, and stops on release", () => {
@@ -168,13 +168,6 @@ describe("clicks and holds on the ground", () => {
         const released = at(steered, HOLD_THRESHOLD_SECONDS + 0.2, RELEASE);
         expect(released).toEqual(IDLE_PLAYER_ORDERS);
         expect(at(released, HOLD_THRESHOLD_SECONDS + 0.3, drag(900, 900))).toBe(released);
-    });
-
-    it("turns a drag across the ground into a hold before the threshold", () => {
-        const dragged = pressed(pressOnGround(300, 200), drag(300 + HOLD_DRAG_DISTANCE, 200));
-        expect(dragged.order).toEqual(walkTo(300 + HOLD_DRAG_DISTANCE, 200));
-
-        expect(at(dragged, 0.05, RELEASE)).toEqual(IDLE_PLAYER_ORDERS);
     });
 });
 
