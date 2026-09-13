@@ -79,6 +79,12 @@ export function sequenceDurationSeconds(seq: SeqTiming): number {
     return seq.frameTicks.reduce((total, ticks) => total + ticks, 0) * 0.02;
 }
 
+// Seconds until the sequence settles on its last frame. Death sequences hold that final pose for
+// thousands of ticks, so their full duration says nothing about when the motion is over.
+export function sequenceTimeToLastFrameSeconds(seq: SeqTiming): number {
+    return seq.frameTicks.slice(0, -1).reduce((total, ticks) => total + ticks, 0) * 0.02;
+}
+
 // Seconds from the start of the sequence (at natural speed) until `frame` is first displayed,
 // i.e. the summed lengths of the frames before it.
 export function sequenceTimeToFrameSeconds(seq: SeqTiming, frame: number): number {

@@ -5,6 +5,7 @@ import {
     loadSeqTiming,
     sequenceDurationSeconds,
     sequenceTimeToFrameSeconds,
+    sequenceTimeToLastFrameSeconds,
 } from "./Animation";
 
 const seqFrameLoader = {} as SeqFrameLoader;
@@ -38,6 +39,17 @@ describe("sequenceDurationSeconds", () => {
 
     it("is zero for a sequence without frames", () => {
         expect(sequenceDurationSeconds(NO_FRAMES)).toBe(0);
+    });
+});
+
+describe("sequenceTimeToLastFrameSeconds", () => {
+    it("ignores how long the last frame is held", () => {
+        const death: SeqTiming = { seqId: 2627, frameTicks: [4, 4, 5, 3, 20000] };
+        expect(sequenceTimeToLastFrameSeconds(death)).toBeCloseTo(0.32);
+    });
+
+    it("is zero for a sequence without frames", () => {
+        expect(sequenceTimeToLastFrameSeconds(NO_FRAMES)).toBe(0);
     });
 });
 

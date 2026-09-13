@@ -12,7 +12,12 @@ import {
     liveAbilityTarget,
     trackedDeliveryReach,
 } from "./Ability";
-import { AnimationPlayback, SeqTiming, sequenceDurationSeconds } from "./Animation";
+import {
+    AnimationPlayback,
+    SeqTiming,
+    sequenceDurationSeconds,
+    sequenceTimeToLastFrameSeconds,
+} from "./Animation";
 import { CombatEvent, CombatEventKind, applyDamage, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
@@ -210,8 +215,8 @@ export class GameWorld {
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
     static readonly MAX_VISUAL_EFFECTS = 256;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
-    // How long a corpse stays after its death animation finishes, so long death animations (Jad)
-    // play out in full while short ones get swept up quickly.
+    // How long a corpse stays after its death animation reaches its final pose, so long death
+    // animations (Jad) play out in full while short ones get swept up quickly.
     static readonly CORPSE_LINGER_SECONDS = 1;
     static readonly ENEMY_GRID_CELL_SIZE = 256;
     static readonly ENEMY_NEIGHBOUR_QUERY_RADIUS = 256;
@@ -934,7 +939,7 @@ export class GameWorld {
                 this.recordWaveEnemyDeath(enemy);
                 enemy.despawnAt =
                     this.timeSeconds +
-                    sequenceDurationSeconds(enemy.type.seqs.death) +
+                    sequenceTimeToLastFrameSeconds(enemy.type.seqs.death) +
                     GameWorld.CORPSE_LINGER_SECONDS;
             }
             this.events.push({ kind: CombatEventKind.ENEMY_DIED, target: enemy });

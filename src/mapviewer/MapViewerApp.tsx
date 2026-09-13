@@ -6,7 +6,7 @@ import WebFont from "webfontloader";
 import { OsrsLoadingBar } from "../components/rs/loading/OsrsLoadingBar";
 import { CacheInfo } from "../rs/cache/CacheInfo";
 import { openCachePack } from "../rs/cache/pack/openCachePack";
-import { isIos, isWallpaperEngine } from "../util/DeviceUtil";
+import { isWallpaperEngine } from "../util/DeviceUtil";
 import { CacheList, fetchCacheList, loadCachePack, pruneCacheStorage } from "./Caches";
 import { MapViewer } from "./MapViewer";
 import { MapViewerContainer } from "./MapViewerContainer";
@@ -94,17 +94,13 @@ function MapViewerApp() {
             setMapViewer(mapViewer);
         };
 
-        if (isIos) {
-            setErrorMessage("iOS is not supported.");
-        } else {
-            load().catch((e) => {
-                if (signal.aborted) {
-                    return;
-                }
-                console.error(e);
-                setErrorMessage(`Failed to load: ${e instanceof Error ? e.message : e}`);
-            });
-        }
+        load().catch((e) => {
+            if (signal.aborted) {
+                return;
+            }
+            console.error(e);
+            setErrorMessage(`Failed to load: ${e instanceof Error ? e.message : e}`);
+        });
 
         // Fast Refresh re-runs this effect on every hot update, building a new viewer; the old one
         // must be unmounted and silenced here or its music keeps playing under the new one's.
