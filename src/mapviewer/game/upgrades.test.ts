@@ -121,8 +121,9 @@ describe("applyModifiers", () => {
         expect(slash.min).toBeCloseTo(base.min * 1.2 + 3);
         expect(slash.max).toBeCloseTo(base.max * 1.2 + 3);
         const cleave = damageRoll(applyModifiers(resolve(CLEAVE), modifiers).effect);
-        expect(cleave.min).toBeCloseTo(base.min * 2 * 1.2 + 3);
-        expect(cleave.max).toBeCloseTo(base.max * 2 * 1.2 + 3);
+        const cleaveBase = damageRoll(CLEAVE.effect);
+        expect(cleave.min).toBeCloseTo(cleaveBase.min * 1.2 + 3);
+        expect(cleave.max).toBeCloseTo(cleaveBase.max * 1.2 + 3);
     });
 
     it("leaves HEAL payloads and the projectile spec untouched by damage modifiers", () => {

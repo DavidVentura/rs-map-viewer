@@ -72,7 +72,7 @@ function singleShot(spec: ProjectileSpec): ProjectileDelivery {
 
 const ARROW_DAMAGE = 8;
 const MAGIC_BOLT_DAMAGE = 12;
-const SCIMITAR_SLASH_DAMAGE: DamageRoll = { min: 4, max: 9 };
+const SCIMITAR_SLASH_DAMAGE: DamageRoll = { min: 8, max: 18 };
 const MELEE_REACH = 48;
 // The player's own swing reaches most of a tile past both bodies' edges, so a basic melee connects
 // without pressing up against the target. Enemy swings keep MELEE_REACH,
@@ -440,11 +440,7 @@ export function resolveWeaponStance(
 
 const SPECIAL_RECHARGE_SECONDS = 6;
 
-// Both melee specials hit for twice the basic slash.
-const MELEE_SPECIAL_DAMAGE = damagePayload(
-    SCIMITAR_SLASH_DAMAGE.min * 2,
-    SCIMITAR_SLASH_DAMAGE.max * 2,
-);
+const MELEE_SPECIAL_DAMAGE = damagePayload(8, 18);
 
 const MELEE_SWEEP_DELIVERY = {
     kind: DeliveryKind.CONE,

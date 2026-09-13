@@ -398,7 +398,7 @@ describe("Melee style", () => {
         expect(enemy.health).toBe(enemy.maxHealth - minDamage(SCIMITAR_SLASH));
     });
 
-    it("Cleave hits an enemy in front of the player for double the basic slash damage", () => {
+    it("Cleave hits an enemy in front of the player for its own damage", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
@@ -408,7 +408,6 @@ describe("Melee style", () => {
 
         advanceSeconds(world, holdSkill(0, point(enemy.x, enemy.y)), impactOf(CLEAVE) + 0.05);
 
-        expect(minDamage(CLEAVE)).toBe(minDamage(SCIMITAR_SLASH) * 2);
         expect(enemy.health).toBe(enemy.maxHealth - minDamage(CLEAVE));
     });
 
