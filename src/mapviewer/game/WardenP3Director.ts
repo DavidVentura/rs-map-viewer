@@ -857,6 +857,21 @@ export function initialWardenP3State(
     };
 }
 
+// The Warden's health is held at the next threshold until the director has entered that
+// intermission or the enrage, so no single hit carries it past a phase.
+export function wardenP3HealthFloorFraction(state: WardenP3State): number {
+    switch (state.phase) {
+        case WardenP3Phase.NORMAL:
+        case WardenP3Phase.SIPHONS:
+            return state.nextIntermission === undefined
+                ? ENRAGE_HEALTH_FRACTION
+                : INTERMISSION_HEALTH_FRACTIONS[state.nextIntermission];
+        case WardenP3Phase.ENRAGE:
+        case WardenP3Phase.COMPLETE:
+            return 0;
+    }
+}
+
 export function stepWardenP3(
     state: WardenP3State,
     snapshot: WardenP3Snapshot,

@@ -1,5 +1,5 @@
 import { AbilityTargetKind, WeaponStyle } from "./Ability";
-import { CombatEventKind } from "./CombatEvent";
+import { CombatEventKind, applyDamage } from "./CombatEvent";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
@@ -226,6 +226,28 @@ describe("Wardens P3 world runtime", () => {
         world.step(EMPTY_INPUT, 0.01);
 
         expect(world.drainEvents()).toContainEqual({ kind: CombatEventKind.ENCOUNTER_CLEARED });
+    });
+
+    it("keeps stepping once the defeated Warden's corpse has despawned", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 0;
+        world.step(EMPTY_INPUT, 0.01);
+
+        world.enemies = world.enemies.filter((enemy) => enemy.id !== wardenId);
+
+        expect(() => world.step(EMPTY_INPUT, 0.01)).not.toThrow();
+    });
+
+    it("holds the Warden at its next threshold so one hit can't carry it past the phase", () => {
+        const { world, wardenId } = createWardenWorld();
+        const warden = world.findEnemy(wardenId)!;
+        world.step(EMPTY_INPUT, 0.01);
+
+        applyDamage(warden, warden.maxHealth, []);
+        expect(warden.health).toBe(warden.maxHealth * 0.8);
+
+        world.step(EMPTY_INPUT, 0.01);
+        expect(warden.invulnerable).toBe(true);
     });
 
     it("damages the attacked floor as the front arrives while leaving the safe side untouched", () => {

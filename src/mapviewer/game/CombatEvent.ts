@@ -124,6 +124,16 @@ function isInvulnerable(target: Combatant): target is Invulnerable {
     return typeof (target as Partial<Invulnerable>).invulnerable === "boolean";
 }
 
+// A scripted boss's health can be held at a phase threshold until its script has reacted to it, so
+// a single big hit can't carry it through a phase (the Wardens' siphons and enrage).
+export interface HealthFloored extends Combatant {
+    readonly healthFloor: number;
+}
+
+function hasHealthFloor(target: Combatant): target is HealthFloored {
+    return typeof (target as Partial<HealthFloored>).healthFloor === "number";
+}
+
 export function applyDamage(target: Combatant, amount: number, events: CombatEvent[]): void {
     if (isInvulnerable(target) && target.invulnerable) {
         return;
@@ -131,7 +141,8 @@ export function applyDamage(target: Combatant, amount: number, events: CombatEve
     const effectiveAmount = hasDamageTakenMultiplier(target)
         ? amount * target.damageTakenMultiplier
         : amount;
-    target.health = Math.max(0, target.health - effectiveAmount);
+    const floor = hasHealthFloor(target) ? target.healthFloor : 0;
+    target.health = Math.max(floor, target.health - effectiveAmount);
     events.push({ kind: CombatEventKind.DAMAGE, target, amount: effectiveAmount });
 }
 

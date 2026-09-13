@@ -157,6 +157,7 @@ export class Enemy implements Combatant, SteeringBody {
     state: EnemyState = EnemyState.IDLE;
     rotation = 0;
     invulnerable = false;
+    healthFloor = 0;
     frozenUntil?: number;
     respawnAt?: number;
     despawnAt?: number;

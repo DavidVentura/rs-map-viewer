@@ -135,6 +135,7 @@ import {
     parseWardenP3Arena,
     parseWardenP3Timing,
     stepWardenP3,
+    wardenP3HealthFloorFraction,
 } from "./WardenP3Director";
 import {
     FloorSlam,
@@ -455,14 +456,16 @@ export class GameWorld {
             phantomAttacks: animations.phantoms.attacks,
             siphonLaunchSeconds: animations.siphons.launchSeconds,
         });
+        const state = initialWardenP3State(this.timeSeconds, parsedArena);
         warden.invulnerable = false;
+        warden.healthFloor = wardenP3HealthFloorFraction(state) * warden.maxHealth;
         this.wardenP3Runtime = {
             wardenId,
             arena: parsedArena,
             siphonLayout,
             animations,
             timing,
-            state: initialWardenP3State(this.timeSeconds, parsedArena),
+            state,
             siphonStatus: WardenSiphonStatus.NONE,
             siphonWindow: undefined,
             siphonStrikes: [],
@@ -1204,6 +1207,10 @@ export class GameWorld {
         if (!runtime || !player) {
             return;
         }
+        // The Warden's corpse despawns after the fight is won, and nothing is left to direct.
+        if (runtime.state.phase === WardenP3Phase.COMPLETE) {
+            return;
+        }
         const warden = this.findEnemy(runtime.wardenId);
         if (!warden) {
             throw new Error(`Wardens P3 lost Warden enemy ${runtime.wardenId}`);
@@ -1225,6 +1232,7 @@ export class GameWorld {
             runtime.timing,
         );
         runtime.state = result.nextState;
+        warden.healthFloor = wardenP3HealthFloorFraction(runtime.state) * warden.maxHealth;
         runtime.commands = result.commands;
         runtime.siphonStatus = WardenSiphonStatus.NONE;
         for (const command of result.commands) {
