@@ -27,6 +27,7 @@ import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
 import { WORLD_OBJECT_BAKES } from "../assets/ActorAssets";
+import { prayerHeadIconFrame } from "../assets/HudAssets";
 import { AbilityTargetKind, AimMode, WeaponStyle, aimModeFor } from "../game/Ability";
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
 import {
@@ -79,7 +80,8 @@ import { Projectile } from "../game/Projectile";
 import { loadSeqCatalog } from "../game/SeqCatalog";
 import { TILE_SIZE, Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
-import { wardenP3ArenaTile } from "../game/WardenP3Arena";
+import { WardenP3ArenaFloor, wardenP3ArenaTile } from "../game/WardenP3Arena";
+import { WardenP3VoidPiece, wardenP3CollapsedFloor } from "../game/WardenP3CollapsedFloor";
 import { wardenP3FloorTilePose } from "../game/WardenP3FloorSlam";
 import { CAST_ITEM_OVERRIDES_BY_SEQ_ID } from "../game/abilities";
 import {
@@ -89,7 +91,7 @@ import {
     distanceToRect,
     pickEnemyNear,
 } from "../game/enemyPicking";
-import { computeRoofHiddenTiles, decodeTileKey } from "../game/roofHiding";
+import { computeRoofHiddenTiles, decodeTileKey, tileKey } from "../game/roofHiding";
 import { summarizeModifiers } from "../game/upgrades";
 import {
     ClickCrossKind,
@@ -107,6 +109,7 @@ import {
     ClickCrossHudInfo,
     ContextMenuTooltipHudInfo,
     HudFrame,
+    OverheadIconHudInfo,
     PhaseStatus,
     PickupFlashEvent,
     SplatEvent,
@@ -151,6 +154,7 @@ import {
     EnemyTypeAnimationSet,
     GROUND_ITEM_SCALE,
     PreviewGfxBake,
+    getCollapsedFloorAnimation,
     getEnemyAnimation,
     getGroundItemAnimation,
     getPlayerBodyAnimation,
@@ -246,6 +250,7 @@ type ActiveActor =
     | { kind: "effect"; effect: VisualEffect }
     | { kind: "groundItem"; item: GroundItem; itemId: number }
     | { kind: "worldObject"; visual: WorldObjectVisual }
+    | { kind: "collapsedFloorPiece"; piece: WardenP3VoidPiece }
     | { kind: "previewGfx" };
 
 type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset">;
@@ -445,6 +450,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     private lastRoofLevel?: number;
     private lastHiddenTiles: ReadonlySet<string> = new Set();
     private roofMaskedSquares: Set<WebGLMapSquare> = new Set();
+    private collapsedFloor?: {
+        readonly floor: WardenP3ArenaFloor;
+        readonly piecesByTile: ReadonlyMap<string, WardenP3VoidPiece>;
+    };
 
     constructor(public mapViewer: MapViewer) {
         super(mapViewer, ResidencyPolicyKind.WHOLE_WORLD);
@@ -2586,6 +2595,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             activeStyle: player?.style,
             godMode: world.godMode,
             splatEvents,
+            overheadIcons: this.buildOverheadIcons(),
             contextMenu: this.menuState.kind === MenuStateKind.OPEN ? this.menuState : undefined,
             contextMenuTooltip:
                 this.menuState.kind === MenuStateKind.CLOSED
@@ -2615,6 +2625,29 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             crossSprites: this.mapViewer.hudAssets.crossSprites,
             clickCross: this.buildClickCrossHudInfo(),
         };
+    }
+
+    // A prayer icon floats as high above the enemy's tile as its type sets, rather than over its
+    // animated model's head.
+    private buildOverheadIcons(): OverheadIconHudInfo[] {
+        const icons = this.mapViewer.hudAssets.prayerHeadIcons;
+        return this.mapViewer.world.enemies.flatMap((enemy) => {
+            const rotation = enemy.type.protectionPrayers;
+            const frame = prayerHeadIconFrame(enemy.protectionPrayers.active);
+            if (!rotation || frame === undefined || enemy.state === EnemyState.DEAD) {
+                return [];
+            }
+            return [
+                {
+                    worldX: enemy.x,
+                    worldY: enemy.y,
+                    height:
+                        this.terrain.getHeight(enemy.level, enemy.x, enemy.y) +
+                        rotation.overheadHeight,
+                    icon: icons[frame],
+                },
+            ];
+        });
     }
 
     // The active cross's resolved frame for this instant, or undefined (clearing the state) once
@@ -2942,6 +2975,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const world = this.mapViewer.world;
         const actorData = actorBuffer.actorData;
+        const collapsedFloorPieces = this.collapsedFloorPiecesByTile();
 
         // A player is drawn as several instances: the body plus one per currently equipped visible
         // item (weapon or cast-item override, secondary offhand, amulet, and that style's
@@ -2958,6 +2992,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             world.visualEffects.length +
             world.groundItems.length +
             (world.waveEncounter?.worldObjectVisuals.length ?? 0) +
+            (collapsedFloorPieces?.size ?? 0) +
             (this.previewGfxId !== undefined ? 1 : 0);
 
         if (this.actorInstanceData.length / (4 * ACTOR_INSTANCE_TEXELS) < maxCount) {
@@ -3187,6 +3222,62 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 },
             );
         }
+
+        if (collapsedFloorPieces) {
+            this.pushCollapsedFloorPieces(collapsedFloorPieces, push);
+        }
+    }
+
+    // Each piece sits where the floor loc of its tile rests, whatever the slams do to that loc.
+    private pushCollapsedFloorPieces(
+        piecesByTile: ReadonlyMap<string, WardenP3VoidPiece>,
+        push: (actor: ActiveActor, instance: ActorPlacement) => void,
+    ): void {
+        const mapSize = Scene.MAP_SQUARE_SIZE * TILE_SIZE;
+        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
+            const map = this.mapManager.visibleMaps[i];
+            for (const floorLoc of map.locsTransformable) {
+                const { x, y } = floorLoc.tile;
+                const piece = piecesByTile.get(tileKey(x, y));
+                if (!piece) {
+                    throw new Error(`No collapsed floor piece for the floor loc at ${x},${y}`);
+                }
+                const { sceneX, sceneZ, heightOffset, level } = floorLoc.placement;
+                push(
+                    { kind: "collapsedFloorPiece", piece },
+                    {
+                        worldX: map.mapX * mapSize + sceneX,
+                        worldY: map.mapY * mapSize + sceneZ,
+                        groundHeight: heightOffset + map.getHeightAt(sceneX, sceneZ, level),
+                        rotation: 0,
+                        level,
+                        interactType: InteractType.NONE,
+                        interactId: 0,
+                        pitch: 0,
+                    },
+                );
+            }
+        }
+    }
+
+    // A pull replaces the arena floor value, so the pieces are worked out again only then.
+    private collapsedFloorPiecesByTile(): ReadonlyMap<string, WardenP3VoidPiece> | undefined {
+        const wardens = this.mapViewer.world.encounterScript?.renderState;
+        if (wardens?.kind !== EncounterScriptKind.WARDENS_P3) {
+            return undefined;
+        }
+        if (this.collapsedFloor?.floor !== wardens.arenaFloor) {
+            this.collapsedFloor = {
+                floor: wardens.arenaFloor,
+                piecesByTile: new Map(
+                    wardenP3CollapsedFloor(wardens.arenaFloor).map(({ tile, piece }) => [
+                        tileKey(tile.x, tile.y),
+                        piece,
+                    ]),
+                ),
+            };
+        }
+        return this.collapsedFloor.piecesByTile;
     }
 
     updateActorDataTexture(): DataTextureSlot {
@@ -3365,6 +3456,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 );
                 return { animation, frameIndex: 0 };
             }
+            case "collapsedFloorPiece":
+                return {
+                    animation: getCollapsedFloorAnimation(actorData.collapsedFloor, actor.piece),
+                    frameIndex: 0,
+                };
             case "previewGfx": {
                 const animation = this.currentPreviewGfxBake()?.anim;
                 return animation

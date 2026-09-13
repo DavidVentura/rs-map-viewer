@@ -3,6 +3,11 @@ import { EnemyTypeId } from "../../game/EnemyType";
 import { WorldObjectKind, WorldObjectVariant } from "../../game/Interaction";
 import { ProjectileKind } from "../../game/Projectile";
 import { VisualEffectKind } from "../../game/VisualEffect";
+import {
+    WardenP3VoidPiece,
+    WardenP3VoidPieceKey,
+    wardenP3VoidPieceKey,
+} from "../../game/WardenP3CollapsedFloor";
 import { SkinAnimation, SkinAnimationSet, SkinFrame } from "../skin/SkinAnimation";
 import { SkinnedMesh } from "../skin/SkinnedMeshBuilder";
 
@@ -116,12 +121,30 @@ export function getWorldObjectAnimation(
     return variant === WorldObjectVariant.ACTIVATED ? meshes.activated : meshes.rest;
 }
 
+export interface CollapsedFloorActorData {
+    readonly animationsByPiece: ReadonlyMap<WardenP3VoidPieceKey, SkinAnimation>;
+}
+
+export function getCollapsedFloorAnimation(
+    data: CollapsedFloorActorData,
+    piece: WardenP3VoidPiece,
+): SkinAnimation {
+    const animation = data.animationsByPiece.get(wardenP3VoidPieceKey(piece));
+    if (!animation) {
+        throw new Error(
+            `No collapsed floor mesh loaded for loc ${piece.loc} turned ${piece.rotation}`,
+        );
+    }
+    return animation;
+}
+
 export interface ActorRenderData {
     readonly player: PlayerActorData;
     readonly enemyTypes: Partial<Record<EnemyTypeId, EnemyTypeAnimationSet>>;
     readonly projectiles: ProjectileActorData;
     readonly groundItems: GroundItemActorData;
     readonly worldObjects: WorldObjectActorData;
+    readonly collapsedFloor: CollapsedFloorActorData;
     readonly previewGfx?: PreviewGfxAnimationSet;
     readonly previewNpc?: PreviewNpcBake;
 }

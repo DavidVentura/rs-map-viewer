@@ -6,6 +6,9 @@ export type LocTile = {
     readonly y: number;
 };
 
+// Quarter turns clockwise seen from above, as a map square places its locs.
+export type LocRotation = 0 | 1 | 2 | 3;
+
 // Ground decorations an encounter moves at runtime instead of baking them into the static map.
 // A tile holds at most one ground decoration per level, so each declared tile names exactly one
 // loc; the map bake throws when a declared tile has no ground decoration with one of locIds.

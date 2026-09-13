@@ -99,6 +99,7 @@ function actorRoots(assets: ActorAssets): RootIds {
         ...Object.values<SpotAnimBake>(assets.effects).map(spotAnimRoots),
         { ...NO_ROOTS, objTypeIds: assets.groundItemDrops.map((drop) => drop.itemId) },
         ...assets.worldObjectKinds.map(worldObjectRoots),
+        { ...NO_ROOTS, locTypeIds: assets.collapsedFloorPieces.map((piece) => piece.loc) },
     ]);
 }
 

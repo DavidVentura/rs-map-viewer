@@ -26,11 +26,17 @@ import { getEncounter } from "../../game/Encounter";
 import { EnemyTypeId } from "../../game/EnemyType";
 import { DroppableItemDisplay } from "../../game/Equipment";
 import { WorldObjectKind } from "../../game/Interaction";
+import {
+    WardenP3VoidPiece,
+    WardenP3VoidPieceKey,
+    wardenP3VoidPieceKey,
+} from "../../game/WardenP3CollapsedFloor";
 import { PlayerAppearance, PlayerGender } from "../../player/PlayerAppearance";
 import { PlayerModelLoader } from "../../player/PlayerModelLoader";
 import { RenderDataLoader, RenderDataResult } from "../../worker/RenderDataLoader";
 import { WorkerState } from "../../worker/WorkerState";
 import {
+    CollapsedFloorActorData,
     EnemyTypeAnimationSet,
     GROUND_ITEM_SCALE,
     GroundItemActorData,
@@ -197,13 +203,8 @@ function bakeWorldObjectLoc(
     return skinning.addStatic(rest.model);
 }
 
-function createWorldObjectActorData(
-    state: WorkerState,
-    skinning: Skinning,
-    kinds: readonly WorldObjectKind[],
-): WorldObjectActorData {
-    const locTypeLoader = state.cacheLoaderFactory.getLocTypeLoader();
-    const locModelLoader = new LocModelLoader(
+function createLocModelLoader(state: WorkerState, locTypeLoader: LocTypeLoader): LocModelLoader {
+    return new LocModelLoader(
         locTypeLoader,
         state.cacheLoaderFactory.getModelLoader(),
         state.textureLoader,
@@ -211,6 +212,15 @@ function createWorldObjectActorData(
         state.seqFrameLoader,
         state.cacheLoaderFactory.getSkeletalSeqLoader(),
     );
+}
+
+function createWorldObjectActorData(
+    state: WorkerState,
+    skinning: Skinning,
+    kinds: readonly WorldObjectKind[],
+): WorldObjectActorData {
+    const locTypeLoader = state.cacheLoaderFactory.getLocTypeLoader();
+    const locModelLoader = createLocModelLoader(state, locTypeLoader);
     const meshesByKind = new Map<WorldObjectKind, WorldObjectMeshes>();
     for (const kind of kinds) {
         const bake = WORLD_OBJECT_BAKES[kind];
@@ -225,6 +235,32 @@ function createWorldObjectActorData(
         });
     }
     return { meshesByKind };
+}
+
+// Each piece is baked turned the way the map square would place it, so the renderer draws it
+// unrotated at its tile.
+function createCollapsedFloorActorData(
+    state: WorkerState,
+    skinning: Skinning,
+    pieces: readonly WardenP3VoidPiece[],
+): CollapsedFloorActorData {
+    const locTypeLoader = state.cacheLoaderFactory.getLocTypeLoader();
+    const locModelLoader = createLocModelLoader(state, locTypeLoader);
+    const animationsByPiece = new Map<WardenP3VoidPieceKey, SkinAnimation>();
+    for (const piece of pieces) {
+        const rest = locModelLoader.getRestModel(
+            locTypeLoader.load(piece.loc),
+            LocModelType.FLOOR_DECORATION,
+            piece.rotation,
+        );
+        if (!rest) {
+            throw new Error(
+                `Collapsed floor loc model is missing from the cache for loc ${piece.loc}`,
+            );
+        }
+        animationsByPiece.set(wardenP3VoidPieceKey(piece), skinning.addStatic(rest.model));
+    }
+    return { animationsByPiece };
 }
 
 function createEnemyTypeAnimationSet(
@@ -474,6 +510,11 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
         const projectiles = createProjectileActorData(state, skinning, assets);
         const groundItems = createGroundItemActorData(state, skinning, assets.groundItemDrops);
         const worldObjects = createWorldObjectActorData(state, skinning, assets.worldObjectKinds);
+        const collapsedFloor = createCollapsedFloorActorData(
+            state,
+            skinning,
+            assets.collapsedFloorPieces,
+        );
 
         const { geometry: skinned, usedTextureIds } = skinning.build();
 
@@ -507,6 +548,7 @@ export class ActorRenderDataLoader implements RenderDataLoader<ActorLoaderInput,
                     projectiles,
                     groundItems,
                     worldObjects,
+                    collapsedFloor,
                     previewGfx,
                     previewNpc: previewNpc?.bake,
                 },

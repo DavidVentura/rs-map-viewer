@@ -135,6 +135,18 @@ export function wardenP3RowTiles(row: WardenP3ArenaRow): readonly WardenP3ArenaT
     return tiles;
 }
 
+export const WARDEN_P3_FLOOR_TILES: readonly WardenP3ArenaTile[] =
+    WARDEN_P3_FLOOR_ROWS.flatMap(wardenP3RowTiles);
+
+// Deterministic per-tile noise in [-1, 1).
+export function wardenP3TileNoise(tile: WardenP3ArenaTile, salt: number): number {
+    let hash = Math.imul(tile.x, 0x27d4eb2d) ^ Math.imul(tile.y, 0x165667b1) ^ salt;
+    hash = Math.imul(hash ^ (hash >>> 15), 0x85ebca6b);
+    hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+    hash ^= hash >>> 16;
+    return ((hash >>> 0) / 0x100000000) * 2 - 1;
+}
+
 function tileMatchesSlamTarget(x: number, target: WardenSlamTarget): boolean {
     switch (target) {
         case WardenSlamTarget.RIGHT:
@@ -183,9 +195,7 @@ export function canOccupyWardenP3ArenaTile(
 
 // Rows nearest the Warden first, west to east within a row.
 export function wardenP3SolidFloorTiles(floor: WardenP3ArenaFloor): readonly WardenP3ArenaTile[] {
-    return WARDEN_P3_FLOOR_ROWS.flatMap(wardenP3RowTiles).filter((tile) =>
-        canOccupyWardenP3ArenaTile(floor, tile),
-    );
+    return WARDEN_P3_FLOOR_TILES.filter((tile) => canOccupyWardenP3ArenaTile(floor, tile));
 }
 
 // The edge row's remaining tiles; none once only the Warden-adjacent row is left.
@@ -339,5 +349,5 @@ export const WARDEN_P3_ARENA_ROW_COUNT = ARENA_ROW_COUNT;
 export const WARDEN_P3_FLOOR_DECORATIONS: TransformableGroundDecorations = {
     level: 1,
     locIds: [45646, 45647, 45648],
-    tiles: WARDEN_P3_FLOOR_ROWS.flatMap(wardenP3RowTiles),
+    tiles: WARDEN_P3_FLOOR_TILES,
 };

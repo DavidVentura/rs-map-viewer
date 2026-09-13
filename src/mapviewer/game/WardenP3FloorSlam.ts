@@ -6,6 +6,7 @@ import {
     WardenP3ArenaTileOccupancy,
     wardenP3ArenaTile,
     wardenP3FloorSlamTiles,
+    wardenP3TileNoise,
     wardenP3TileOccupancy,
 } from "./WardenP3Arena";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
@@ -138,15 +139,6 @@ function pulseProfile(progress: number): number {
     return Math.cos(settle * Math.PI * PULSE_SETTLE_HALF_WAVES) * decay;
 }
 
-// Deterministic per-tile noise in [-1, 1).
-function tileNoise(tile: WardenP3ArenaTile, salt: number): number {
-    let hash = Math.imul(tile.x, 0x27d4eb2d) ^ Math.imul(tile.y, 0x165667b1) ^ salt;
-    hash = Math.imul(hash ^ (hash >>> 15), 0x85ebca6b);
-    hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
-    hash ^= hash >>> 16;
-    return ((hash >>> 0) / 0x100000000) * 2 - 1;
-}
-
 // The unit direction the tile's leading edge faces: along the dominant Chebyshev axis of its
 // offset from the origin, diagonal on the L's corner, and none on the origin itself.
 function leadingEdgeDirection(entry: ShockwaveTile): {
@@ -188,9 +180,9 @@ export function floorTilePose(
         }
         pulsing = true;
         const profile = pulseProfile(sinceArrival / PULSE_SECONDS);
-        const tilt = profile * PEAK_TILT_RADIANS * (1 + TILT_JITTER * tileNoise(tile, 1));
+        const tilt = profile * PEAK_TILT_RADIANS * (1 + TILT_JITTER * wardenP3TileNoise(tile, 1));
         const direction = leadingEdgeDirection(entry);
-        lift += profile * PEAK_LIFT * (1 + LIFT_JITTER * tileNoise(tile, 0));
+        lift += profile * PEAK_LIFT * (1 + LIFT_JITTER * wardenP3TileNoise(tile, 0));
         northTilt += tilt * direction.north;
         eastTilt += tilt * direction.east;
     }

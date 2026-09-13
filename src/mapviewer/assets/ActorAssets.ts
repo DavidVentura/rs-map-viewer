@@ -53,6 +53,7 @@ import {
     ZEBAK_PHANTOM_SPLIT_SEQ_ID,
 } from "../game/VisualEffect";
 import { wardenP3AnimationSeqIds } from "../game/WardenP3Animations";
+import { WARDEN_P3_VOID_PIECES, WardenP3VoidPiece } from "../game/WardenP3CollapsedFloor";
 import { WardenPhantom } from "../game/WardenP3Director";
 import { wardenPhantomEnemyTypeId } from "../game/WardenP3Phantoms";
 import {
@@ -482,6 +483,8 @@ export type ActorAssets = {
     // The kinds of world object (lever, chest) this encounter actually declares, deduplicated -
     // each is baked once regardless of how many Interactions in the encounter operate it.
     readonly worldObjectKinds: readonly WorldObjectKind[];
+    // The Void pieces a scripted encounter's collapsed floor can draw.
+    readonly collapsedFloorPieces: readonly WardenP3VoidPiece[];
 };
 
 // interactionSeqIds are the encounter's interaction animations, which the player plays too.
@@ -567,6 +570,16 @@ function scriptSeqIds(encounter: Encounter, enemyTypeId: StaticEnemyTypeId): rea
     }
 }
 
+function collapsedFloorPieces(encounter: Encounter): readonly WardenP3VoidPiece[] {
+    if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
+        return [];
+    }
+    switch (encounter.script.kind) {
+        case EncounterScriptKind.WARDENS_P3:
+            return WARDEN_P3_VOID_PIECES;
+    }
+}
+
 function rangeIds(range: SeqRange): number[] {
     return Array.from({ length: range.to - range.from + 1 }, (_, index) => range.from + index);
 }
@@ -615,5 +628,6 @@ export function actorAssets(encounter: Encounter, preview?: AnimPreviewParams): 
             ...new Map(allDroppableItemDrops().map((drop) => [drop.itemId, drop])).values(),
         ],
         worldObjectKinds: [...new Set(encounter.worldObjects.map((object) => object.kind))],
+        collapsedFloorPieces: collapsedFloorPieces(encounter),
     };
 }
