@@ -2,7 +2,7 @@ import { CombatEventKind } from "./CombatEvent";
 import { EquipmentPath } from "./Equipment";
 import { GameWorld } from "./GameWorld";
 import { GroundItem } from "./GroundItem";
-import { PICKUP_RADIUS, SimInput } from "./PlayerOrders";
+import { OrderEventKind, OrderTargetKind, PICKUP_RADIUS, SimInput } from "./PlayerOrders";
 import { Terrain } from "./Terrain";
 import { stubEncounterAnimations } from "./testLoaders";
 
@@ -26,12 +26,19 @@ class FakeTerrain implements Terrain {
 
 const ANIMATIONS = stubEncounterAnimations();
 
-function pickupInput(groundItemId: number): SimInput {
-    return {
-        movement: { x: 0, y: 0, running: true },
-        combat: { basicAttack: { held: false }, skills: [] },
-        pickupTarget: { groundItemId },
-    };
+const RUNNING_INPUT: SimInput = { orders: [], running: true, skills: [] };
+
+function clickItem(world: GameWorld, groundItemId: number): void {
+    world.advance(0, {
+        ...RUNNING_INPUT,
+        orders: [
+            {
+                kind: OrderEventKind.PRESS,
+                target: { kind: OrderTargetKind.GROUND_ITEM, groundItemId },
+            },
+            { kind: OrderEventKind.RELEASE },
+        ],
+    });
 }
 
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {
@@ -71,7 +78,8 @@ describe("ground item pickup", () => {
         const player = world.player!;
         const startDistance = Math.hypot(item.x - player.x, item.y - player.y);
 
-        world.advance(1 / 120, pickupInput(item.id));
+        clickItem(world, item.id);
+        world.advance(1 / 120, RUNNING_INPUT);
 
         const newDistance = Math.hypot(item.x - player.x, item.y - player.y);
         expect(newDistance).toBeLessThan(startDistance);
@@ -88,7 +96,8 @@ describe("ground item pickup", () => {
         const player = world.player!;
         expect(player.equipment[EquipmentPath.STAFF]).toBe(0);
 
-        advanceSeconds(world, pickupInput(item.id), 5);
+        clickItem(world, item.id);
+        advanceSeconds(world, RUNNING_INPUT, 5);
 
         expect(player.equipment[EquipmentPath.STAFF]).toBe(2);
         expect(world.groundItems.length).toBe(0);
@@ -106,7 +115,8 @@ describe("ground item pickup", () => {
             tierIndex: 3,
         });
 
-        advanceSeconds(world, pickupInput(item.id), 5);
+        clickItem(world, item.id);
+        advanceSeconds(world, RUNNING_INPUT, 5);
         const events = world.drainEvents();
 
         const pickedUp = events.find((event) => event.kind === CombatEventKind.ITEM_PICKED_UP);
@@ -123,7 +133,8 @@ describe("ground item pickup", () => {
         const startX = player.x;
         const startY = player.y;
 
-        advanceSeconds(world, pickupInput(999), 1);
+        clickItem(world, 999);
+        advanceSeconds(world, RUNNING_INPUT, 1);
 
         expect(player.x).toBe(startX);
         expect(player.y).toBe(startY);
@@ -133,7 +144,8 @@ describe("ground item pickup", () => {
         const world = makeWorld();
         addGroundItem(world, { x: 10000, y: 0 });
 
-        world.advance(1 / 120, pickupInput(1));
+        clickItem(world, 1);
+        world.advance(1 / 120, RUNNING_INPUT);
 
         expect(world.groundItems.length).toBe(1);
     });

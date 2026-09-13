@@ -2,7 +2,7 @@ import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
     canOccupyWardenP3ArenaTile,
-    pullWardenP3ArenaTile,
+    pullWardenP3ArenaTiles,
     wardenP3ArenaTile,
 } from "./WardenP3Arena";
 import { WardenP3Tile } from "./WardenP3Director";
@@ -20,7 +20,7 @@ function floorWithClearedRows(count: number): WardenP3ArenaFloor {
     const random = seededRandom(count);
     let floor = WARDEN_P3_INITIAL_ARENA_FLOOR;
     while (floor.clearedRowCount < count) {
-        floor = pullWardenP3ArenaTile(floor, random).floor;
+        floor = pullWardenP3ArenaTiles(floor, 1, random).floor;
     }
     return floor;
 }

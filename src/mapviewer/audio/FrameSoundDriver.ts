@@ -42,9 +42,9 @@ function frameSoundSources(world: GameWorld): FrameSoundSource[] {
     return sources;
 }
 
-// Plays the frame sounds of every animation in the world as the sim advances it, heard from the
-// player's position. Each animation's last reading is kept, so a frame's sound plays once however
-// the render frames fall across it.
+// Plays the frame sounds of every animation in the world as the sim advances it, and the sounds the
+// game cued since the last update, heard from the player's position. Each animation's last reading
+// is kept, so a frame's sound plays once however the render frames fall across it.
 export class FrameSoundDriver {
     private readonly readings = new WeakMap<AnimationState, AnimationProgress>();
 
@@ -68,6 +68,12 @@ export class FrameSoundDriver {
                 if (gain > 0) {
                     this.sfxPlayer.play(sound, gain);
                 }
+            }
+        }
+        for (const cue of world.drainSoundCues()) {
+            const gain = listener ? frameSoundGain(cue.sound.rangeTiles, cue, listener) : 0;
+            if (gain > 0) {
+                this.sfxPlayer.play(cue.sound, gain);
             }
         }
     }

@@ -8,7 +8,7 @@ import {
     resolveAbility,
 } from "./Ability";
 import { EquipmentPath } from "./Equipment";
-import { Player } from "./Player";
+import { MovementOutcome, Player, PlayerMovement, PlayerMovementKind, STAND_STILL } from "./Player";
 import { createExperience } from "./Progression";
 import { Terrain } from "./Terrain";
 import {
@@ -36,6 +36,10 @@ const OPEN_TERRAIN = {
     getWallFlag: () => 0,
     getHeight: () => 0,
 } as unknown as Terrain;
+
+function walkEast(running: boolean): PlayerMovement {
+    return { kind: PlayerMovementKind.APPROACH, x: 100000, y: 0, stopDistance: 0, running };
+}
 
 function point(x: number, y: number): AbilityTarget {
     return { kind: AbilityTargetKind.POINT, x, y };
@@ -92,11 +96,11 @@ describe("Player loadout", () => {
 
 describe("Player animations follow the equipped style", () => {
     function playedSeqIds(player: Player): readonly number[] {
-        player.update({ x: 0, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        player.update(STAND_STILL, 0.01, 0, OPEN_TERRAIN);
         const idle = player.animation.seqId;
-        player.update({ x: 1, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        player.update(walkEast(false), 0.01, 0, OPEN_TERRAIN);
         const walk = player.animation.seqId;
-        player.update({ x: 1, y: 0, running: true }, 0.01, 0, OPEN_TERRAIN);
+        player.update(walkEast(true), 0.01, 0, OPEN_TERRAIN);
         return [idle, walk, player.animation.seqId];
     }
 
@@ -113,11 +117,11 @@ describe("Player animations follow the equipped style", () => {
 
 describe("Player animations follow the equipped weapon tier", () => {
     function playedSeqIds(player: Player): readonly number[] {
-        player.update({ x: 0, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        player.update(STAND_STILL, 0.01, 0, OPEN_TERRAIN);
         const idle = player.animation.seqId;
-        player.update({ x: 1, y: 0, running: false }, 0.01, 0, OPEN_TERRAIN);
+        player.update(walkEast(false), 0.01, 0, OPEN_TERRAIN);
         const walk = player.animation.seqId;
-        player.update({ x: 1, y: 0, running: true }, 0.01, 0, OPEN_TERRAIN);
+        player.update(walkEast(true), 0.01, 0, OPEN_TERRAIN);
         return [idle, walk, player.animation.seqId];
     }
 
@@ -180,10 +184,10 @@ describe("Player mana", () => {
     it("regenerates over time without exceeding the max", () => {
         const player = makePlayer();
         player.mana = 0;
-        player.update({ x: 0, y: 0, running: false }, 1, 0, {} as any);
+        player.update(STAND_STILL, 1, 0, {} as any);
         expect(player.mana).toBeCloseTo(Player.MANA_REGEN_PER_SECOND);
         player.mana = player.maxMana;
-        player.update({ x: 0, y: 0, running: false }, 1, 0, {} as any);
+        player.update(STAND_STILL, 1, 0, {} as any);
         expect(player.mana).toBe(player.maxMana);
     });
 });
@@ -222,10 +226,10 @@ describe("Player cast animation duration", () => {
         const played = potion.timing.animationSeconds;
         expect(played).toBeLessThan(potion.timing.impactSeconds + attackLockSeconds(potion));
 
-        player.update({ x: 0, y: 0, running: false }, played - 0.01, played - 0.01, {} as any);
+        player.update(STAND_STILL, played - 0.01, played - 0.01, {} as any);
         expect(player.animation.seqId).toBe(HEALING_POTION_CAST_SEQ_ID);
 
-        player.update({ x: 0, y: 0, running: false }, 0.02, played + 0.01, {} as any);
+        player.update(STAND_STILL, 0.02, played + 0.01, {} as any);
         expect(player.animation.seqId).toBe(808);
     });
 });
@@ -234,9 +238,59 @@ describe("Player movement while busy", () => {
     it("does not move while an ability is winding up", () => {
         const player = makePlayer();
         player.beginCast(resolve(BOW_SHOT), point(100, 0), 0);
-        player.update({ x: 1, y: 0, running: false }, 0.01, 0.01, {} as any);
+        player.update(walkEast(false), 0.01, 0.01, {} as any);
         expect(player.x).toBe(0);
         expect(player.y).toBe(0);
+    });
+});
+
+describe("Player approach movement", () => {
+    function approach(x: number, y: number, stopDistance: number): PlayerMovement {
+        return { kind: PlayerMovementKind.APPROACH, x, y, stopDistance, running: false };
+    }
+
+    it("lands on its point with the last stride instead of overshooting it", () => {
+        const player = makePlayer();
+        const stride = Player.WALK_SPEED * 0.1;
+        const target = approach(stride * 2.5, stride, 0);
+
+        const outcomes: MovementOutcome[] = [];
+        for (let step = 0; step < 5; step++) {
+            outcomes.push(player.update(target, 0.1, step * 0.1, OPEN_TERRAIN));
+        }
+
+        expect(player.x).toBeCloseTo(stride * 2.5, 9);
+        expect(player.y).toBeCloseTo(stride, 9);
+        expect(outcomes).toEqual([
+            MovementOutcome.MOVED,
+            MovementOutcome.MOVED,
+            MovementOutcome.MOVED,
+            MovementOutcome.STOOD,
+            MovementOutcome.STOOD,
+        ]);
+    });
+
+    it("stops once within stopDistance of its point", () => {
+        const player = makePlayer();
+        const stopDistance = 300;
+
+        for (let step = 0; step < 50; step++) {
+            player.update(approach(1000, 0, stopDistance), 0.05, step * 0.05, OPEN_TERRAIN);
+        }
+
+        expect(player.x).toBeLessThanOrEqual(1000 - stopDistance + Player.WALK_SPEED * 0.05);
+        expect(player.x).toBeGreaterThanOrEqual(1000 - stopDistance - Player.WALK_SPEED * 0.05);
+        expect(player.update(approach(1000, 0, stopDistance), 0.05, 3, OPEN_TERRAIN)).toBe(
+            MovementOutcome.STOOD,
+        );
+    });
+
+    it("reports a walk straight into a wall as blocked", () => {
+        const player = makePlayer();
+        const walled = { ...OPEN_TERRAIN, canOccupy: () => false } as unknown as Terrain;
+
+        expect(player.update(approach(1000, 0, 0), 0.1, 0.1, walled)).toBe(MovementOutcome.BLOCKED);
+        expect(player.x).toBe(0);
     });
 });
 
@@ -293,7 +347,7 @@ describe("Player.applyUpgrade", () => {
     it("speeds up movement once Fleet Footed is applied", () => {
         const player = makePlayer();
         player.applyUpgrade(FLEET_FOOTED);
-        player.update({ x: 1, y: 0, running: false }, 0.1, 0.1, {
+        player.update(walkEast(false), 0.1, 0.1, {
             isLoaded: () => true,
             canOccupy: () => true,
             getWallFlag: () => 0,

@@ -73,6 +73,10 @@ const ARROW_DAMAGE = 8;
 const MAGIC_BOLT_DAMAGE = 12;
 const SCIMITAR_SLASH_DAMAGE: DamageRoll = { min: 4, max: 9 };
 const MELEE_REACH = 48;
+// The player's own swing reaches a tile past both bodies' edges, so a basic melee connects from the
+// next tile over rather than needing to press up against the target. Enemy swings keep MELEE_REACH,
+// short enough that stepping back out of it still dodges them.
+const PLAYER_MELEE_REACH = 128;
 
 // Player castSpeeds keep each basic attack's whole sequence inside its old windup+lock cadence,
 // so the swing plays as one continuous motion with the recovery under the ATTACK lock.
@@ -136,7 +140,7 @@ export const SCIMITAR_SLASH: AbilityDefinition = {
     requires: [CooldownGroup.ATTACK],
     locks: [{ group: CooldownGroup.ATTACK, seconds: 0.14 }],
     effect: {
-        delivery: { kind: DeliveryKind.TARGET, reach: MELEE_REACH },
+        delivery: { kind: DeliveryKind.TARGET, reach: PLAYER_MELEE_REACH },
         affects: Affects.HOSTILE,
         payloads: [damagePayload(SCIMITAR_SLASH_DAMAGE.min, SCIMITAR_SLASH_DAMAGE.max)],
     },

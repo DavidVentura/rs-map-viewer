@@ -1,4 +1,10 @@
-import { AbilityDefinition, AbilityEffect, CooldownGroup, DeliveryKind } from "./Ability";
+import {
+    AbilityDefinition,
+    AbilityEffect,
+    CooldownGroup,
+    DeliveryKind,
+    abilityRange,
+} from "./Ability";
 import { AnimationPlayback } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
 import { Affects, damagePayload } from "./Effect";
@@ -9,7 +15,6 @@ import {
     computeChaseMovement,
     computeKeepDistanceMovement,
     decideEnemyState,
-    enemyAttackRange,
     selectPatternAbility,
 } from "./Enemy";
 import {
@@ -172,9 +177,9 @@ describe("decideEnemyState", () => {
     });
 });
 
-describe("enemyAttackRange", () => {
+describe("abilityRange", () => {
     it("adds both hit radii on top of a melee ability's reach", () => {
-        expect(enemyAttackRange(GOBLIN_MELEE, 64, 64)).toBe(48 + 64 + 64);
+        expect(abilityRange(GOBLIN_MELEE, 64, 64)).toBe(48 + 64 + 64);
     });
 
     it("uses the projectile spec's range for a ranged ability", () => {
@@ -183,11 +188,11 @@ describe("enemyAttackRange", () => {
             id: "enemy_ranged",
             effect: ARROW_SHOT,
         };
-        expect(enemyAttackRange(rangedDefinition, 64, 64)).toBe(ARROW_SPEC.range);
+        expect(abilityRange(rangedDefinition, 64, 64)).toBe(ARROW_SPEC.range);
     });
 
     it("puts no range limit on a caster-centred circle such as the heal pulse", () => {
-        expect(enemyAttackRange(YT_MEJKOT_HEAL_PULSE, 128, 64)).toBe(Infinity);
+        expect(abilityRange(YT_MEJKOT_HEAL_PULSE, 128, 64)).toBe(Infinity);
     });
 });
 

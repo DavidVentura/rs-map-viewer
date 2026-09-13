@@ -9,15 +9,24 @@ import {
     WeaponStyle,
     abilityTargetPoint,
     liveAbilityTarget,
+    trackedDeliveryReach,
 } from "./Ability";
 import { Combatant } from "./Combatant";
 import { applyPayloads, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
+import { EnergySiphonActor } from "./EncounterActor";
 import { Enemy } from "./Enemy";
+import {
+    EnergySiphonImpact,
+    EnergySiphonImpactKind,
+    EnergySiphonImpactResult,
+    resolveEnergySiphonImpact,
+} from "./EnergySiphon";
 import { Player } from "./Player";
 import { ProjectileImpact, ProjectileLanding, ProjectileTarget, travelSeconds } from "./Projectile";
 import { MAGIC_MANA_REFUND_PER_ENEMY } from "./StanceMechanics";
 import { WorldContext } from "./WorldContext";
+import { isWithinMeleeReach } from "./abilityRules";
 import {
     FlightOrigin,
     directionToRotation,
@@ -48,6 +57,9 @@ function resolveEffect(
     target: AbilityTarget,
 ): void {
     const effect = ability.effect;
+    if (target.kind === AbilityTargetKind.ENERGY_SIPHON) {
+        strikeEnergySiphon(world, caster, ability, target.siphon);
+    }
     const aim = liveAbilityTarget(target, caster.level);
     const delivery = effect.delivery;
     switch (delivery.kind) {
@@ -75,6 +87,42 @@ function resolveEffect(
             return;
         }
     }
+}
+
+// A siphon is no combatant, so the swing's own delivery passes it by; it takes the hit here, on the
+// same contact frame, and EnergySiphon.ts decides whether that hit reverses it.
+function strikeEnergySiphon(
+    world: WorldContext,
+    caster: Combatant,
+    ability: ResolvedAbility,
+    aimed: EnergySiphonActor,
+): void {
+    if (!(caster instanceof Player)) {
+        throw new Error(`Only the player strikes energy siphons, not ${ability.id}`);
+    }
+    const reach = trackedDeliveryReach(ability.effect.delivery);
+    if (reach === undefined) {
+        throw new Error(`${ability.id} has no melee reach to strike an energy siphon with`);
+    }
+    // The intermission may have resolved and recalled the siphon while the swing wound up.
+    const siphon = world.findEnergySiphon(aimed.id);
+    if (!siphon) {
+        return;
+    }
+    const distance = Math.hypot(siphon.x - caster.x, siphon.y - caster.y);
+    if (!isWithinMeleeReach(distance, reach, caster.hitRadius, siphon.type.hitRadius)) {
+        return;
+    }
+    // A style switch mid-swing changes the basic attack, and the swing no longer counts as one.
+    const impact: EnergySiphonImpact =
+        ability.id === caster.basicAttack.id
+            ? { kind: EnergySiphonImpactKind.PLAYER_BASIC_ATTACK, style: caster.style }
+            : { kind: EnergySiphonImpactKind.PLAYER_SKILL };
+    const resolved = resolveEnergySiphonImpact(siphon.siphon, impact);
+    if (resolved.result !== EnergySiphonImpactResult.REVERSED) {
+        return;
+    }
+    siphon.siphon = resolved.siphon;
 }
 
 function landOnCombatant(world: WorldContext, target: Combatant, effect: AbilityEffect): void {

@@ -1,7 +1,7 @@
 import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
-    pullWardenP3ArenaTile,
+    pullWardenP3ArenaTiles,
     wardenP3PullableTiles,
 } from "./WardenP3Arena";
 import {
@@ -14,7 +14,6 @@ import {
     WardenPhantom,
     WardenSiphonStatus,
     WardenSlamTarget,
-    WardenSlamTempo,
     WardenStance,
     ZebakPhantomStyle,
     beginWardenP3,
@@ -27,16 +26,9 @@ import {
 
 const timing = parseWardenP3Timing({
     slams: {
-        [WardenSlamTempo.NORMAL]: {
-            [WardenSlamTarget.RIGHT]: { impactSeconds: 1.25, durationSeconds: 3 },
-            [WardenSlamTarget.LEFT]: { impactSeconds: 1.5, durationSeconds: 3 },
-            [WardenSlamTarget.CENTRE]: { impactSeconds: 1.75, durationSeconds: 3 },
-        },
-        [WardenSlamTempo.FAST]: {
-            [WardenSlamTarget.RIGHT]: { impactSeconds: 0.5, durationSeconds: 1.75 },
-            [WardenSlamTarget.LEFT]: { impactSeconds: 0.625, durationSeconds: 1.75 },
-            [WardenSlamTarget.CENTRE]: { impactSeconds: 0.75, durationSeconds: 1.75 },
-        },
+        [WardenSlamTarget.RIGHT]: { impactSeconds: 1.25, durationSeconds: 3 },
+        [WardenSlamTarget.LEFT]: { impactSeconds: 1.5, durationSeconds: 3 },
+        [WardenSlamTarget.CENTRE]: { impactSeconds: 1.75, durationSeconds: 3 },
     },
     stances: {
         [WardenStance.CHARGING]: { transitionSeconds: 4 },
@@ -50,7 +42,7 @@ const timing = parseWardenP3Timing({
     siphonLaunchSeconds: 1.5,
     phantomAttackRestSeconds: 3,
     lightningIntervalSeconds: 1,
-    tilePullIntervalSeconds: 0.25,
+    tilePulls: { chunksPerRow: 4, chunkIntervalSeconds: 0.5, rowPauseSeconds: 0.75 },
 });
 
 function snapshot(
@@ -101,8 +93,8 @@ function hasCommand(commands: readonly WardenP3Command[], kind: WardenP3Command[
     return commands.some((command) => command.kind === kind);
 }
 
-// Clears the four siphon intermissions and drops the Warden into enrage at enteredAtSeconds.
-function enterEnrage(enteredAtSeconds: number) {
+// Clears the four siphon intermissions, leaving the Warden releasing its last charge at 7s.
+function clearIntermissions(): WardenP3State {
     let state: WardenP3State = initialWardenP3State(0);
     for (const [timeSeconds, health] of [
         [0, 80],
@@ -118,7 +110,12 @@ function enterEnrage(enteredAtSeconds: number) {
             WardenSiphonStatus.ALL_REVERSED,
         ).nextState;
     }
-    return step(state, enteredAtSeconds, 5);
+    return state;
+}
+
+// Drops the Warden into enrage at enteredAtSeconds, once the intermissions are cleared.
+function enterEnrage(enteredAtSeconds: number) {
+    return step(clearIntermissions(), enteredAtSeconds, 5);
 }
 
 describe("Wardens P3 director", () => {
@@ -126,12 +123,11 @@ describe("Wardens P3 director", () => {
         let state: WardenP3State = initialWardenP3State(0);
         let beganAtSeconds = 0;
         for (const target of SLAM_CYCLE) {
-            const slam = timing.slams[WardenSlamTempo.NORMAL][target];
+            const slam = timing.slams[target];
             const begun = step(state, beganAtSeconds);
             expect(commandOfKind(begun.commands, "BEGIN_SLAM")).toEqual({
                 kind: "BEGIN_SLAM",
                 target,
-                tempo: WardenSlamTempo.NORMAL,
             });
 
             const early = step(begun.nextState, beganAtSeconds + slam.impactSeconds - 0.01);
@@ -145,7 +141,7 @@ describe("Wardens P3 director", () => {
     });
 
     it("begins the next normal slam exactly as the previous slam's sequence ends", () => {
-        const slam = timing.slams[WardenSlamTempo.NORMAL][WardenSlamTarget.RIGHT];
+        const slam = timing.slams[WardenSlamTarget.RIGHT];
         const begun = step(initialWardenP3State(0), 0);
         const landed = step(begun.nextState, slam.impactSeconds);
 
@@ -156,7 +152,6 @@ describe("Wardens P3 director", () => {
         expect(commandOfKind(next.commands, "BEGIN_SLAM")).toEqual({
             kind: "BEGIN_SLAM",
             target: WardenSlamTarget.LEFT,
-            tempo: WardenSlamTempo.NORMAL,
         });
     });
 
@@ -303,71 +298,76 @@ describe("Wardens P3 director", () => {
         );
     });
 
-    it("calls lightning volleys and pulls floor tiles each on its own cadence through enrage", () => {
-        const entered = enterEnrage(8);
-        const hazardCounts = { CALL_LIGHTNING: 0, PULL_ARENA_TILE: 0 };
-        let state = entered.nextState;
+    it("calls lightning volleys on their own cadence through enrage", () => {
+        let state = enterEnrage(8).nextState;
+        let volleys = 0;
         for (let timeSeconds = 8; timeSeconds <= 12.001; timeSeconds += 0.125) {
             const result = step(state, timeSeconds, 25);
-            hazardCounts.CALL_LIGHTNING += result.commands.filter(
+            volleys += result.commands.filter(
                 (command) => command.kind === "CALL_LIGHTNING",
-            ).length;
-            hazardCounts.PULL_ARENA_TILE += result.commands.filter(
-                (command) => command.kind === "PULL_ARENA_TILE",
             ).length;
             state = result.nextState;
         }
 
-        expect(hazardCounts).toEqual({
-            CALL_LIGHTNING: 4 / timing.lightningIntervalSeconds,
-            PULL_ARENA_TILE: 4 / timing.tilePullIntervalSeconds,
-        });
+        expect(volleys).toBe(4 / timing.lightningIntervalSeconds);
+    });
+
+    it("pulls each row in even chunks a chunk interval apart, pausing before the next row", () => {
+        const { chunkIntervalSeconds, rowPauseSeconds } = timing.tilePulls;
+        let state = enterEnrage(8).nextState;
+        let floor: WardenP3ArenaFloor = WARDEN_P3_INITIAL_ARENA_FLOOR;
+        const pulls: { readonly atSeconds: number; readonly count: number }[] = [];
+        for (let timeSeconds = 8; pulls.length < 8; timeSeconds += 0.125) {
+            const result = step(state, timeSeconds, 25, WardenSiphonStatus.NONE, floor);
+            for (const command of result.commands) {
+                if (command.kind === "PULL_ARENA_TILES") {
+                    pulls.push({ atSeconds: timeSeconds, count: command.count });
+                    floor = pullWardenP3ArenaTiles(floor, command.count, () => 0.5).floor;
+                }
+            }
+            state = result.nextState;
+        }
+
+        expect(pulls.map((pull) => pull.count)).toEqual([6, 5, 5, 5, 6, 5, 5, 5]);
+        const gaps = pulls.slice(1).map((pull, index) => pull.atSeconds - pulls[index].atSeconds);
+        const chunkGap = chunkIntervalSeconds;
+        const rowGap = chunkIntervalSeconds + rowPauseSeconds;
+        expect(gaps).toEqual([chunkGap, chunkGap, chunkGap, rowGap, chunkGap, chunkGap, chunkGap]);
+        expect(pulls[0].atSeconds).toBe(8 + chunkIntervalSeconds);
     });
 
     it("stops pulling tiles once only the Warden-adjacent row is left", () => {
         let floor: WardenP3ArenaFloor = WARDEN_P3_INITIAL_ARENA_FLOOR;
         while (wardenP3PullableTiles(floor).length > 0) {
-            floor = pullWardenP3ArenaTile(floor, () => 0).floor;
+            floor = pullWardenP3ArenaTiles(
+                floor,
+                wardenP3PullableTiles(floor).length,
+                () => 0,
+            ).floor;
         }
         let state = enterEnrage(8).nextState;
         for (let timeSeconds = 8; timeSeconds < 20; timeSeconds += 0.125) {
             const result = step(state, timeSeconds, 25, WardenSiphonStatus.NONE, floor);
-            expect(hasCommand(result.commands, "PULL_ARENA_TILE")).toBe(false);
+            expect(hasCommand(result.commands, "PULL_ARENA_TILES")).toBe(false);
             state = result.nextState;
         }
     });
 
-    it("keeps slamming through enrage with the fast sequences alongside lightning and tile pulls", () => {
-        const entered = enterEnrage(8);
-        const firstSlamAtSeconds = 8 + timing.stances[WardenStance.ENRAGED].transitionSeconds;
-        const fastRight = timing.slams[WardenSlamTempo.FAST][WardenSlamTarget.RIGHT];
+    it("never slams once enraged, dropping the slam it was swinging as it enraged", () => {
+        const released = clearIntermissions();
+        const slamBeginsAtSeconds = 7 + timing.stances[WardenStance.STANDING].transitionSeconds;
+        const swinging = step(released, slamBeginsAtSeconds, 20);
+        expect(commandOfKind(swinging.commands, "BEGIN_SLAM").target).toBe(WardenSlamTarget.RIGHT);
 
-        const enraging = step(entered.nextState, firstSlamAtSeconds - 0.01, 25);
-        expect(hasCommand(enraging.commands, "BEGIN_SLAM")).toBe(false);
-
-        const first = step(entered.nextState, firstSlamAtSeconds, 25);
-        expect(commandOfKind(first.commands, "BEGIN_SLAM")).toEqual({
-            kind: "BEGIN_SLAM",
-            target: WardenSlamTarget.RIGHT,
-            tempo: WardenSlamTempo.FAST,
-        });
-        expect(hasCommand(first.commands, "CALL_LIGHTNING")).toBe(true);
-
-        const landed = step(first.nextState, firstSlamAtSeconds + fastRight.impactSeconds, 25);
-        expect(commandOfKind(landed.commands, "RESOLVE_FLOOR_SLAM").target).toBe(
-            WardenSlamTarget.RIGHT,
-        );
-
-        const pulled = step(landed.nextState, 10, 25);
-        expect(hasCommand(pulled.commands, "PULL_ARENA_TILE")).toBe(true);
-        expect(hasCommand(pulled.commands, "BEGIN_SLAM")).toBe(false);
-
-        const second = step(pulled.nextState, firstSlamAtSeconds + fastRight.durationSeconds, 25);
-        expect(commandOfKind(second.commands, "BEGIN_SLAM")).toEqual({
-            kind: "BEGIN_SLAM",
-            target: WardenSlamTarget.LEFT,
-            tempo: WardenSlamTempo.FAST,
-        });
+        const enraged = step(swinging.nextState, slamBeginsAtSeconds + 0.5, 5);
+        expect(enraged.nextState.phase).toBe(WardenP3Phase.ENRAGE);
+        let state = enraged.nextState;
+        for (let timeSeconds = slamBeginsAtSeconds + 0.5; timeSeconds < 40; timeSeconds += 0.125) {
+            const result = step(state, timeSeconds, 25);
+            expect(hasCommand(result.commands, "BEGIN_SLAM")).toBe(false);
+            expect(hasCommand(result.commands, "RESOLVE_FLOOR_SLAM")).toBe(false);
+            state = result.nextState;
+        }
     });
 
     it("reports a failed siphon deadline distinctly from successful reversals", () => {

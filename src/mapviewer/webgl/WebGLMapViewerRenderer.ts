@@ -27,7 +27,7 @@ import { MapViewer } from "../MapViewer";
 import { MapViewerRenderer } from "../MapViewerRenderer";
 import { MapViewerRendererType, WEBGL } from "../MapViewerRenderers";
 import { WORLD_OBJECT_BAKES } from "../assets/ActorAssets";
-import { AbilityTargetKind, AimMode, Delivery, WeaponStyle, aimModeFor } from "../game/Ability";
+import { AbilityTargetKind, AimMode, WeaponStyle, aimModeFor } from "../game/Ability";
 import { AnimPreviewParams, buildPreviewEnemyType, stepSeqId } from "../game/AnimPreview";
 import {
     AnimationPlayback,
@@ -65,12 +65,14 @@ import {
     REST_LOC_TRANSFORM,
     groundDecorationsInMapSquare,
 } from "../game/LocTransform";
-import { Player, PlayerInput } from "../game/Player";
+import { Player } from "../game/Player";
 import {
-    AbilitySlotInput,
-    CombatInput,
-    InteractionIntent,
-    PickupTarget,
+    MenuOrderTarget,
+    OrderEvent,
+    OrderEventKind,
+    OrderTarget,
+    OrderTargetKind,
+    SkillInput,
 } from "../game/PlayerOrders";
 import { createCharacterLevel, experienceForLevel } from "../game/Progression";
 import { Projectile } from "../game/Projectile";
@@ -113,7 +115,6 @@ import {
 } from "../hud/HudFrame";
 import {
     CLOSED_MENU_STATE,
-    MenuAction,
     MenuActionKind,
     MenuState,
     MenuStateKind,
@@ -121,6 +122,8 @@ import {
     MenuTargetKind,
     OpenMenuState,
     Point,
+    TargetMenuAction,
+    actionForTarget,
     buildMenuEntries,
     clickMenuAt,
     computeMenuLayout,
@@ -253,11 +256,13 @@ type HoveredInteractable =
     | { readonly kind: "enemy"; readonly enemy: Enemy }
     | { readonly kind: "energySiphon"; readonly siphon: EnergySiphonActor };
 
-// A basic attack can target a hostile energy siphon; a skill never can (see EnergySiphon.ts).
-enum CombatInputKind {
-    BASIC_ATTACK = "BASIC_ATTACK",
-    SKILL = "SKILL",
-}
+// What a left press on the world or a picked menu entry asks the sim for, resolved against the
+// live world.
+type MenuCommand =
+    | { readonly kind: "INTERACTION"; readonly interactionId: InteractionId }
+    | { readonly kind: "ORDER"; readonly target: MenuOrderTarget };
+
+type WorldCommand = MenuCommand | { readonly kind: "ORDER"; readonly target: OrderTarget };
 
 enum TextureFilterMode {
     DISABLED,
@@ -377,19 +382,17 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     highlightedSiphon?: EnergySiphonActor;
     highlightedWorldObject?: WorldObjectVisual;
     highlightedGroundItem?: GroundItem;
-    // Set by a click on a ground item's mesh (see buildPickupInput); cleared by a later click
-    // elsewhere, by the item being picked up or expiring, or by resolving to nothing on load.
-    private pickupTargetItemId?: number;
-    private selectedInteractionId?: InteractionId;
+    // Whether the left button was down last frame, so its release reaches the sim as an event
+    // even when the button came up over the HUD or under the right-click menu.
+    private pointerHeld = false;
 
     // The right-click "Choose Option" menu (see hud/contextMenu.ts). menuState is the pure state
-    // machine; pendingMenuAction is the one-shot action an entry selection queues, consumed by the
-    // matching input builder (buildInteractionInput/buildPickupInput/buildCombatInput) on the next
-    // frame - the same route a left-click already uses, just triggered a frame later than a real
-    // click since inputCapturedByMenu suppresses every mouse-driven builder for the whole frame the
-    // menu was open at the start of.
+    // machine; pendingMenuAction is the one-shot action an entry selection queues, consumed by
+    // takeMenuCommand on the next frame - the same route a left-click already uses, just triggered
+    // a frame later than a real click since inputCapturedByMenu suppresses every mouse-driven
+    // builder for the whole frame the menu was open at the start of.
     private menuState: MenuState = CLOSED_MENU_STATE;
-    private pendingMenuAction?: MenuAction;
+    private pendingMenuAction?: TargetMenuAction;
     // Where to show the click cross once pendingMenuAction reaches the sim (see updateClickCross) -
     // the anchor of the menu that queued it, i.e. where the user originally right-clicked, not
     // where the entry itself sits.
@@ -1497,21 +1500,28 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         this.handleInput(deltaTime);
         this.updateContextMenu();
         const menuActionWasPending = this.pendingMenuAction !== undefined;
-        const movement = this.buildMovementInput();
-        const combat = this.buildCombatInput();
+        const running = this.buildRunInput();
+        const menuCommand = this.takeMenuCommand();
+        const press = this.resolvePress();
+        const orders = this.buildOrderEvents(menuCommand, press);
+        const skills = this.buildSkillInput();
         const styleSwitch = this.buildKeyStyleSwitchInput() ?? this.buildStyleSwitchInput();
         const chooseUpgrade = this.buildUpgradeChoiceInput();
-        const pickupTarget = this.buildPickupInput();
-        const interaction = this.buildInteractionInput();
-        this.updateClickCross(menuActionWasPending, movement, combat, pickupTarget, interaction);
+        const startInteraction =
+            menuCommand?.kind === "INTERACTION"
+                ? menuCommand.interactionId
+                : press?.kind === "INTERACTION"
+                ? press.interactionId
+                : undefined;
+        this.updateClickCross(menuActionWasPending, press);
         if (this.isEncounterMapLoaded) {
             this.mapViewer.world.advance(deltaTime / 1000, {
-                movement,
-                combat,
+                orders,
+                running,
+                skills,
                 styleSwitch,
                 chooseUpgrade,
-                pickupTarget,
-                interaction,
+                startInteraction,
             });
             this.mapViewer.frameSounds.update(this.mapViewer.world);
             this.advancePreviewGfx(deltaTime / 1000);
@@ -1708,39 +1718,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return region?.kind === HudRegionKind.STYLE ? region.style : undefined;
     }
 
-    private buildMovementInput(): PlayerInput {
-        const player = this.mapViewer.world.player;
+    private buildRunInput(): boolean {
         const inputManager = this.mapViewer.inputManager;
         if (inputManager.isKeyDownEvent("ShiftLeft") || inputManager.isKeyDownEvent("ShiftRight")) {
             this.runEnabled = !this.runEnabled;
         }
-        const running = this.runEnabled;
-        const stationary: PlayerInput = { x: 0, y: 0, running };
-
-        if (
-            this.inputCapturedByMenu ||
-            !player ||
-            this.selectedInteractionId !== undefined ||
-            this.isPointerOverHud() ||
-            !inputManager.isDragging() ||
-            this.getHoveredInteractable()
-        ) {
-            return stationary;
-        }
-
-        const groundPoint = this.screenToGround(player, inputManager.mouseX, inputManager.mouseY);
-        if (!groundPoint) {
-            return stationary;
-        }
-
-        const deltaX = groundPoint.x - player.x;
-        const deltaY = groundPoint.y - player.y;
-        const length = Math.hypot(deltaX, deltaY);
-        if (length === 0) {
-            return stationary;
-        }
-
-        return { x: deltaX / length, y: deltaY / length, running };
+        return this.runEnabled;
     }
 
     private buildUpgradeChoiceInput(): number | undefined {
@@ -1782,90 +1765,153 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return undefined;
     }
 
-    private buildCombatInput(): CombatInput {
+    // The picked right-click entry, consumed the frame after the menu closed (see
+    // updateContextMenu).
+    private takeMenuCommand(): MenuCommand | undefined {
+        const action = this.pendingMenuAction;
+        if (this.inputCapturedByMenu || !action) {
+            return undefined;
+        }
+        this.pendingMenuAction = undefined;
+        return this.commandForAction(action);
+    }
+
+    // This frame's left press on the world does what the right-click menu's top entry would (see
+    // buildMenuTargetsUnderCursor), or walks to the ground point when nothing is under it.
+    private resolvePress(): WorldCommand | undefined {
+        const player = this.mapViewer.world.player;
+        const inputManager = this.mapViewer.inputManager;
+        if (
+            !player ||
+            this.inputCapturedByMenu ||
+            !inputManager.isPressEvent() ||
+            this.isPointerOverHud()
+        ) {
+            return undefined;
+        }
+        const x = inputManager.pressEventX;
+        const y = inputManager.pressEventY;
+        const [target] = this.buildMenuTargetsUnderCursor(x, y);
+        if (target) {
+            return this.commandForAction(actionForTarget(target));
+        }
+        const ground = this.screenToGround(player, x, y);
+        if (!ground) {
+            return undefined;
+        }
+        return { kind: "ORDER", target: { kind: OrderTargetKind.GROUND, ...ground } };
+    }
+
+    // undefined once the entry's target has left the world since the menu listed it.
+    private commandForAction(action: TargetMenuAction): MenuCommand | undefined {
+        const world = this.mapViewer.world;
+        switch (action.kind) {
+            case MenuActionKind.START_INTERACTION:
+                return { kind: "INTERACTION", interactionId: action.interactionId };
+            case MenuActionKind.ATTACK_ENEMY: {
+                const enemy = world.findEnemy(action.enemyId);
+                return enemy && { kind: "ORDER", target: { kind: OrderTargetKind.ENEMY, enemy } };
+            }
+            case MenuActionKind.ATTACK_ENERGY_SIPHON: {
+                const siphon = world.findEnergySiphon(action.siphonId);
+                return (
+                    siphon && {
+                        kind: "ORDER",
+                        target: { kind: OrderTargetKind.ENERGY_SIPHON, siphon },
+                    }
+                );
+            }
+            case MenuActionKind.PICK_UP_GROUND_ITEM:
+                if (!world.findGroundItem(action.groundItemId)) {
+                    return undefined;
+                }
+                return {
+                    kind: "ORDER",
+                    target: {
+                        kind: OrderTargetKind.GROUND_ITEM,
+                        groundItemId: action.groundItemId,
+                    },
+                };
+        }
+    }
+
+    // The player's orders only ever change through these events (see PlayerOrders.applyOrderEvent):
+    // a skill key, a picked menu entry, a press, the held pointer's ground point, its release.
+    private buildOrderEvents(
+        menuCommand: MenuCommand | undefined,
+        press: WorldCommand | undefined,
+    ): OrderEvent[] {
+        const inputManager = this.mapViewer.inputManager;
+        const player = this.mapViewer.world.player;
+        const events: OrderEvent[] = [];
+        const skillKeyPressed = (player?.skills ?? []).some((_, skillSlot) => {
+            const key = keyForSkillSlot(skillSlot);
+            return key !== undefined && inputManager.isKeyDownEvent(key);
+        });
+        // The upgrade cards take the same digit keys while they are offered.
+        if (skillKeyPressed && !this.inputCapturedByMenu && !this.hudFrame?.upgradeOffer) {
+            events.push({ kind: OrderEventKind.SKILL_KEY });
+        }
+        if (menuCommand?.kind === "ORDER") {
+            events.push({ kind: OrderEventKind.MENU, target: menuCommand.target });
+        }
+        if (press?.kind === "ORDER") {
+            events.push({ kind: OrderEventKind.PRESS, target: press.target });
+        }
+        const held = inputManager.isDragging();
+        if (
+            player &&
+            held &&
+            !inputManager.isPressEvent() &&
+            !this.inputCapturedByMenu &&
+            !this.isPointerOverHud()
+        ) {
+            const ground = this.screenToGround(player, inputManager.mouseX, inputManager.mouseY);
+            if (ground) {
+                events.push({ kind: OrderEventKind.DRAG, x: ground.x, y: ground.y });
+            }
+        }
+        if (!held && (this.pointerHeld || inputManager.isPressEvent())) {
+            events.push({ kind: OrderEventKind.RELEASE });
+        }
+        this.pointerHeld = held;
+        return events;
+    }
+
+    // Skills keep firing for as long as their key is held, at the hovered enemy when the skill can
+    // aim at one and at the ground under the pointer otherwise.
+    private buildSkillInput(): SkillInput[] {
         const player = this.mapViewer.world.player;
         if (!player) {
-            return { basicAttack: { held: false }, skills: [] };
+            return [];
         }
-        if (this.inputCapturedByMenu) {
-            return {
-                basicAttack: { held: false },
-                skills: player.skills.map(() => ({ held: false })),
-            };
-        }
-
         const inputManager = this.mapViewer.inputManager;
         const pointerOverHud = this.isPointerOverHud();
-
-        // A menu-selected "Attack" behaves like a single left-click on that target: force the
-        // hover/drag state for this one frame rather than opening a second route into the sim.
-        let menuAttackTarget: HoveredInteractable | undefined;
-        const pendingAction = this.pendingMenuAction;
-        if (pendingAction?.kind === MenuActionKind.ATTACK_ENEMY) {
-            this.pendingMenuAction = undefined;
-            const enemy = this.mapViewer.world.findEnemy(pendingAction.enemyId);
-            menuAttackTarget = enemy ? { kind: "enemy", enemy } : undefined;
-        } else if (pendingAction?.kind === MenuActionKind.ATTACK_ENERGY_SIPHON) {
-            this.pendingMenuAction = undefined;
-            const siphon = this.mapViewer.world.findEnergySiphon(pendingAction.siphonId);
-            menuAttackTarget = siphon ? { kind: "energySiphon", siphon } : undefined;
-        }
-
-        const hovered =
-            menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredInteractable());
-        const isDragging =
-            menuAttackTarget !== undefined || (!pointerOverHud && inputManager.isDragging());
-
-        const inputFor = (
-            held: boolean,
-            delivery: Delivery,
-            inputKind: CombatInputKind,
-        ): AbilitySlotInput => {
-            if (!held) {
+        const hovered = pointerOverHud ? undefined : this.getHoveredInteractable();
+        return player.skills.map((skill, skillSlot): SkillInput => {
+            const key = keyForSkillSlot(skillSlot);
+            if (
+                this.inputCapturedByMenu ||
+                pointerOverHud ||
+                key === undefined ||
+                !inputManager.isKeyDown(key)
+            ) {
                 return { held: false };
             }
-            if (hovered?.kind === "energySiphon") {
-                return inputKind === CombatInputKind.BASIC_ATTACK
-                    ? {
-                          held: true,
-                          target: { kind: AbilityTargetKind.ENERGY_SIPHON, siphon: hovered.siphon },
-                      }
-                    : { held: false };
-            }
-            if (hovered?.kind === "enemy" && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
+            if (
+                hovered?.kind === "enemy" &&
+                aimModeFor(skill.effect.delivery) === AimMode.COMBATANT_OR_POINT
+            ) {
                 return {
                     held: true,
                     target: { kind: AbilityTargetKind.COMBATANT, combatant: hovered.enemy },
                 };
             }
-            if (pointerOverHud) {
-                return { held: true, target: undefined };
-            }
-            const groundPoint = this.screenToGround(
-                player,
-                inputManager.mouseX,
-                inputManager.mouseY,
-            );
-            return groundPoint
-                ? { held: true, target: { kind: AbilityTargetKind.POINT, ...groundPoint } }
+            const ground = this.screenToGround(player, inputManager.mouseX, inputManager.mouseY);
+            return ground
+                ? { held: true, target: { kind: AbilityTargetKind.POINT, ...ground } }
                 : { held: false };
-        };
-
-        return {
-            basicAttack: inputFor(
-                isDragging && hovered !== undefined,
-                player.basicAttack.effect.delivery,
-                CombatInputKind.BASIC_ATTACK,
-            ),
-            skills: player.skills.map((skill, skillSlot) => {
-                const key = keyForSkillSlot(skillSlot);
-                return inputFor(
-                    key !== undefined && inputManager.isKeyDown(key),
-                    skill.effect.delivery,
-                    CombatInputKind.SKILL,
-                );
-            }),
-        };
+        });
     }
 
     // The active interaction (if any) that operates a given world object - at most one, since a
@@ -1967,7 +2013,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
     // Everything under a screen point that the right-click menu (or its hover tooltip) can act on,
     // nearest first: at most one of each kind, since each picker already resolves the nearest
-    // candidate of its own kind (see getHoveredEnemy/getHoveredWorldObject/buildPickupInput).
+    // candidate of its own kind (see getHoveredEnemy/getHoveredWorldObject/pickGroundItemAt).
     private buildMenuTargetsUnderCursor(x: number, y: number): MenuTarget[] {
         const cursor = { x, y };
         const candidates: { target: MenuTarget; distance: number }[] = [];
@@ -2131,16 +2177,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         }
     }
 
-    // Spawns the click cross from the same results this tick's input builders already computed -
-    // no second hit test (see hud/ClickCross.classifyPressCross). Must run after those builders,
-    // since it needs to see whether one of them just consumed pendingMenuAction.
-    private updateClickCross(
-        menuActionWasPending: boolean,
-        movement: PlayerInput,
-        combat: CombatInput,
-        pickupTarget: PickupTarget | undefined,
-        interaction: InteractionIntent | undefined,
-    ): void {
+    // Spawns the click cross from what this tick's press already resolved to - no second hit test
+    // (see hud/ClickCross.classifyPressCross). Must run after takeMenuCommand, since it needs to
+    // see whether it just consumed pendingMenuAction.
+    private updateClickCross(menuActionWasPending: boolean, press: WorldCommand | undefined): void {
         const menuActionConsumed = menuActionWasPending && this.pendingMenuAction === undefined;
         if (menuActionConsumed) {
             const anchor = this.pendingMenuActionAnchor;
@@ -2155,12 +2195,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         if (!inputManager.isPressEvent()) {
             return;
         }
+        const ordered = press?.kind === "ORDER" ? press.target.kind : undefined;
         const kind = classifyPressCross({
             capturedByMenu: this.inputCapturedByMenu,
-            interactionStarted: interaction?.kind === "START",
-            attackingEnemy: combat.basicAttack.held,
-            pickingUpItem: pickupTarget !== undefined,
-            moving: movement.x !== 0 || movement.y !== 0,
+            interactionStarted: press?.kind === "INTERACTION",
+            attackingEnemy:
+                ordered === OrderTargetKind.ENEMY || ordered === OrderTargetKind.ENERGY_SIPHON,
+            pickingUpItem: ordered === OrderTargetKind.GROUND_ITEM,
+            moving: ordered === OrderTargetKind.GROUND,
         });
         if (!kind) {
             return;
@@ -2194,49 +2236,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             anchor: { x: inputManager.mouseX, y: inputManager.mouseY },
             entries: buildMenuEntries(targets),
         };
-    }
-
-    private buildInteractionInput() {
-        const input = this.mapViewer.inputManager;
-        const activeIds = new Set(
-            (this.mapViewer.world.waveEncounter?.activeInteractions ?? []).map(({ id }) => id),
-        );
-        if (this.selectedInteractionId && !activeIds.has(this.selectedInteractionId)) {
-            this.selectedInteractionId = undefined;
-        }
-
-        if (this.inputCapturedByMenu) {
-            return undefined;
-        }
-
-        const pendingAction = this.pendingMenuAction;
-        if (pendingAction?.kind === MenuActionKind.START_INTERACTION) {
-            this.pendingMenuAction = undefined;
-            this.selectedInteractionId = pendingAction.interactionId;
-            this.pickupTargetItemId = undefined;
-            return { kind: "START" as const, interactionId: pendingAction.interactionId };
-        }
-
-        if (!input.isPressEvent()) {
-            return undefined;
-        }
-        const hoveredObjectId = this.getHoveredWorldObject()?.object.id;
-        const interaction =
-            hoveredObjectId !== undefined
-                ? this.activeInteractionForObject(hoveredObjectId)
-                : undefined;
-        if (interaction) {
-            this.selectedInteractionId = interaction.id;
-            this.pickupTargetItemId = undefined;
-            return { kind: "START" as const, interactionId: interaction.id };
-        }
-        const interactionState = this.mapViewer.world.waveEncounter?.interactionState;
-        if (interactionState !== undefined && interactionState.kind !== "IDLE") {
-            this.selectedInteractionId = undefined;
-            return { kind: "CANCEL" as const };
-        }
-        this.selectedInteractionId = undefined;
-        return undefined;
     }
 
     private screenToGround(
@@ -2399,36 +2398,6 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             top: Math.min(...ys),
             bottom: Math.max(...ys),
         };
-    }
-
-    // A click on a fresh press event either targets a ground item (a generous rect around the item
-    // itself, the same projected-footprint approach as enemy/world-object picking) or clears any
-    // pending pickup, the same way clicking an enemy or plain ground overrides a melee chase. The
-    // target also clears itself once the item is gone (picked up or expired).
-    private buildPickupInput(): PickupTarget | undefined {
-        if (this.inputCapturedByMenu) {
-            return undefined;
-        }
-
-        const inputManager = this.mapViewer.inputManager;
-        const pendingAction = this.pendingMenuAction;
-        if (pendingAction?.kind === MenuActionKind.PICK_UP_GROUND_ITEM) {
-            this.pendingMenuAction = undefined;
-            this.pickupTargetItemId = pendingAction.groundItemId;
-        } else if (!this.isPointerOverHud() && inputManager.isPressEvent()) {
-            this.pickupTargetItemId = this.pickGroundItemAt({
-                x: inputManager.pressEventX,
-                y: inputManager.pressEventY,
-            });
-        }
-        if (this.pickupTargetItemId === undefined) {
-            return undefined;
-        }
-        if (!this.mapViewer.world.findGroundItem(this.pickupTargetItemId)) {
-            this.pickupTargetItemId = undefined;
-            return undefined;
-        }
-        return { groundItemId: this.pickupTargetItemId };
     }
 
     private buildGroundItemScreenCandidates(): EnemyScreenCandidate[] {

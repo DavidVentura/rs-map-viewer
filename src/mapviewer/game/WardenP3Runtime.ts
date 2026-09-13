@@ -1,6 +1,6 @@
 import { CombatEventKind, applyDamage, applyHeal } from "./CombatEvent";
-import { Affects, damagePayload } from "./Effect";
-import { EncounterScriptKind, WardensP3Script } from "./Encounter";
+import { Affects } from "./Effect";
+import { EncounterScriptKind, WardenP3Sounds, WardensP3Script } from "./Encounter";
 import {
     EncounterActor,
     EncounterActorKind,
@@ -19,21 +19,24 @@ import {
     ENERGY_SIPHON_LAUNCH_FLIGHT,
     ENERGY_SIPHON_LEECH_SPEC,
     ENERGY_SIPHON_RECALL_FLIGHT,
-    ProjectileImpact,
     ProjectileSpec,
     ProjectileTarget,
     WARDENS_PULLED_TILE_FLIGHT,
     timedProjectileSpec,
 } from "./Projectile";
+import { SoundPlay } from "./SoundCue";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffect, VisualEffectKind } from "./VisualEffect";
 import { WardenP3Animations } from "./WardenP3Animations";
 import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
-    nearestSolidWardenP3Tile,
-    pullWardenP3ArenaTile,
+    WardenP3ArenaTileOccupancy,
+    nearestOpenWardenP3Tile,
+    pullWardenP3ArenaTiles,
     wardenP3ArenaTerrain,
+    wardenP3ArenaTile,
+    wardenP3TileOccupancy,
 } from "./WardenP3Arena";
 import {
     ParsedWardenP3Timing,
@@ -52,7 +55,12 @@ import {
     stepWardenP3,
     wardenP3HealthFloorFraction,
 } from "./WardenP3Director";
-import { WARDEN_P3_LIGHTNING, wardenP3LightningTargets } from "./WardenP3Enrage";
+import {
+    WARDEN_P3_LIGHTNING,
+    WARDEN_P3_PULLED_TILE_SKY,
+    wardenP3LightningTargets,
+    wardenP3PulledTileSkyPoint,
+} from "./WardenP3Enrage";
 import {
     FloorSlam,
     floorSlamEndsAtSeconds,
@@ -62,22 +70,30 @@ import {
 import {
     BABA_PHANTOM_ROCK_FALL,
     WARDEN_P3_PHANTOM_DAMAGE,
-    ZEBAK_PHANTOM_SHOTS,
-    ZebakPhantomShot,
+    ZEBAK_PHANTOM_SHOT,
+    ZebakPhantomPiece,
     babaPhantomRockTargets,
     wardenPhantomEnemyTypeId,
 } from "./WardenP3Phantoms";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import { WorldContext } from "./WorldContext";
-import { FlightOrigin, directionToRotation } from "./projectileMath";
+import { FlightOrigin, FlightPoint, directionToRotation } from "./projectileMath";
 
 // A hit on one floor tile once its telegraph runs out. A Ba-Ba rock's graphic plays its whole fall
-// from the drop, so only a lightning bolt brings a graphic of its own to the strike.
+// from the drop, so only a lightning bolt or Zebak's shot brings a graphic of its own to the strike.
 type PendingTileStrike = {
     readonly tile: WardenP3Tile;
     readonly strikesAtSeconds: number;
     readonly damage: number;
     readonly strikeEffect: VisualEffectKind | undefined;
+    readonly strikeSound: SoundPlay | undefined;
+};
+
+// Zebak's jug on its way up to burst over the tile the player stood on when it was thrown.
+type RisingZebakJug = {
+    readonly burstsAtSeconds: number;
+    readonly burstTile: WardenP3Tile;
+    readonly piece: ZebakPhantomPiece;
 };
 
 // Opened when the Warden throws its siphons. The deadline counts from their landing, so the time
@@ -104,11 +120,15 @@ function isSameWardenTile(a: WardenP3Tile, b: WardenP3Tile): boolean {
     return a.x === b.x && a.y === b.y && a.level === b.level;
 }
 
+function wardenTileCentre(tile: WardenP3Tile): FlightPoint {
+    return { x: (tile.x + 0.5) * TILE_SIZE, y: (tile.y + 0.5) * TILE_SIZE };
+}
+
 export function startWardensP3Encounter(
     world: WorldContext,
     script: WardensP3Script,
 ): WardenP3Runtime {
-    const { wardenSpawn, phantomSpawns, startPhase, siphonLayout } = script;
+    const { wardenSpawn, phantomSpawns, startPhase, siphonLayout, sounds } = script;
     const wardenId = world.spawnEnemyAtExactPosition(
         wardenSpawn.x,
         wardenSpawn.y,
@@ -134,7 +154,7 @@ export function startWardensP3Encounter(
             actor.rotation = platformFacing;
         }
     }
-    return new WardenP3Runtime(world, wardenId, siphonLayout, startPhase);
+    return new WardenP3Runtime(world, wardenId, siphonLayout, sounds, startPhase);
 }
 
 export class WardenP3Runtime implements EncounterScript {
@@ -155,11 +175,13 @@ export class WardenP3Runtime implements EncounterScript {
     // even when it lands on a step boundary.
     private floorSlamsResolvedUntilSeconds: number;
     private tileStrikes: readonly PendingTileStrike[] = [];
+    private risingZebakJugs: readonly RisingZebakJug[] = [];
 
     constructor(
         private readonly world: WorldContext,
         private readonly wardenId: number,
         private readonly siphonLayout: WardenP3SiphonLayout,
+        private readonly sounds: WardenP3Sounds,
         startPhase: WardenP3StartPhase,
     ) {
         const warden = world.findEnemy(wardenId);
@@ -206,7 +228,7 @@ export class WardenP3Runtime implements EncounterScript {
     }
 
     overlayTerrain(base: Terrain): Terrain {
-        return wardenP3ArenaTerrain(base, this.floor);
+        return wardenP3ArenaTerrain(base, this.floor, this.landedSiphonTiles());
     }
 
     resolveSiphons(status: Exclude<WardenSiphonStatus, WardenSiphonStatus.NONE>): void {
@@ -249,6 +271,7 @@ export class WardenP3Runtime implements EncounterScript {
             this.dispatchCommand(warden, player, command);
         }
         this.resolveFloorSlamArrivals();
+        this.burstRisingZebakJugs(warden, player);
         this.resolveTileStrikes();
         this.resolveEnergySiphonStrikes(warden);
     }
@@ -259,19 +282,31 @@ export class WardenP3Runtime implements EncounterScript {
         );
     }
 
+    // A siphon in flight is still in the air, so only a landed one stands in the way.
+    private landedSiphonTiles(): WardenP3Tile[] {
+        return this.energySiphonActors()
+            .filter((siphon) => siphon.siphon.state !== EnergySiphonState.IN_FLIGHT)
+            .map((siphon) => ({
+                x: Math.floor(siphon.x / TILE_SIZE),
+                y: Math.floor(siphon.y / TILE_SIZE),
+                level: siphon.level,
+            }));
+    }
+
     // A landing siphon's idle restarts so every leech pulse after it falls on the idle's leech frame.
     private advanceEnergySiphons(warden: Enemy): void {
         const timeSeconds = this.world.timeSeconds;
-        for (const siphon of this.energySiphonActors()) {
-            if (siphon.siphon.state !== EnergySiphonState.IN_FLIGHT) {
-                continue;
-            }
-            const settled = settleEnergySiphon(siphon.siphon, timeSeconds);
-            if (settled.state === EnergySiphonState.IN_FLIGHT) {
-                continue;
-            }
-            siphon.siphon = settled;
+        const landing = this.energySiphonActors().filter(
+            (siphon) =>
+                settleEnergySiphon(siphon.siphon, timeSeconds).state !== siphon.siphon.state,
+        );
+        for (const siphon of landing) {
+            siphon.siphon = settleEnergySiphon(siphon.siphon, timeSeconds);
             siphon.animation.restart(siphon.type.seqs.idle);
+            this.world.playSound({ sound: this.sounds.siphonLanding, x: siphon.x, y: siphon.y });
+        }
+        if (landing.length > 0) {
+            this.movePlayerOffOccupiedTile();
         }
         const window = this.siphonWindow;
         if (!window || timeSeconds < window.nextLeechAtSeconds) {
@@ -334,6 +369,7 @@ export class WardenP3Runtime implements EncounterScript {
                 siphonType,
                 spawn.rotation,
                 { state: EnergySiphonState.IN_FLIGHT, landsAtSeconds },
+                siphons.turnUnitsPerSecond,
             );
             this.spawnTileEffect(siphons.landingShadow, spawn, landsAtSeconds);
             this.launchFlight(warden, launch, chest, {
@@ -428,6 +464,12 @@ export class WardenP3Runtime implements EncounterScript {
             if (strike.strikeEffect !== undefined) {
                 this.spawnTileEffect(strike.strikeEffect, strike.tile);
             }
+            if (strike.strikeSound !== undefined) {
+                this.world.playSound({
+                    sound: strike.strikeSound,
+                    ...wardenTileCentre(strike.tile),
+                });
+            }
             this.damagePlayerOnTile(strike.tile, strike.damage);
         }
         this.tileStrikes = this.tileStrikes.filter(
@@ -461,7 +503,7 @@ export class WardenP3Runtime implements EncounterScript {
         switch (command.kind) {
             case "BEGIN_SLAM":
                 this.aimedSlamTarget = command.target;
-                warden.playScriptedSeq(this.animations.slams[command.tempo][command.target].seq);
+                warden.playScriptedSeq(this.animations.slams[command.target].seq);
                 return;
             case "RESOLVE_FLOOR_SLAM":
                 this.resolvedSlamTarget = command.target;
@@ -509,8 +551,8 @@ export class WardenP3Runtime implements EncounterScript {
             case "CALL_LIGHTNING":
                 this.callLightning();
                 return;
-            case "PULL_ARENA_TILE":
-                this.pullArenaTile(warden, player);
+            case "PULL_ARENA_TILES":
+                this.pullArenaTiles(warden, command.count);
                 return;
             case "COMPLETE_ENCOUNTER":
                 this.world.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
@@ -537,7 +579,7 @@ export class WardenP3Runtime implements EncounterScript {
     ): void {
         switch (release.phantom) {
             case WardenPhantom.ZEBAK:
-                this.throwZebakPhantomShot(warden, player, ZEBAK_PHANTOM_SHOTS[release.style]);
+                this.throwZebakJug(warden, player, ZEBAK_PHANTOM_SHOT.pieces[release.style]);
                 return;
             case WardenPhantom.BABA:
                 this.dropBabaPhantomRocks(player);
@@ -545,28 +587,82 @@ export class WardenP3Runtime implements EncounterScript {
         }
     }
 
-    // The phantoms are the Warden's own attacks in another boss's shape, so the Warden is the shot's
-    // caster (its faction and level) and the phantom only lends the launch point.
-    private throwZebakPhantomShot(warden: Enemy, player: Player, shot: ZebakPhantomShot): void {
+    // The phantoms are the Warden's own attacks in another boss's shape, so the Warden is the jug's
+    // caster (its faction and level) and the phantom only lends the launch point. The jug only
+    // pictures the shot on its way up; its burst runs on the runtime's own timer.
+    private throwZebakJug(warden: Enemy, player: Player, piece: ZebakPhantomPiece): void {
         const phantom = this.phantomActor(WardenPhantom.ZEBAK);
-        const start: FlightOrigin = {
-            x: phantom.x,
-            y: phantom.y,
-            height:
-                this.world.terrain.getHeight(phantom.level, phantom.x, phantom.y) +
-                encounterActorProjectileLaunchHeight(phantom),
-        };
-        const impact: ProjectileImpact = {
-            caster: warden,
-            affects: Affects.HOSTILE,
-            payloads: [damagePayload(WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.ZEBAK])],
-            hitEffect: shot.hitEffect,
-        };
-        this.world.launchProjectile(shot.spec, impact, start, {
-            kind: "POINT",
-            x: player.x,
-            y: player.y,
-        });
+        const { riseSeconds } = this.animations.phantoms.zebakShot;
+        const burstTile = playerWardenTile(player);
+        this.launchFlight(
+            warden,
+            timedProjectileSpec(ZEBAK_PHANTOM_SHOT.jug, riseSeconds),
+            {
+                x: phantom.x,
+                y: phantom.y,
+                height:
+                    this.world.terrain.getHeight(phantom.level, phantom.x, phantom.y) +
+                    encounterActorProjectileLaunchHeight(phantom),
+            },
+            { kind: "POINT", ...wardenTileCentre(burstTile) },
+        );
+        this.risingZebakJugs = [
+            ...this.risingZebakJugs,
+            { burstsAtSeconds: this.world.timeSeconds + riseSeconds, burstTile, piece },
+        ];
+    }
+
+    private burstRisingZebakJugs(warden: Enemy, player: Player): void {
+        const timeSeconds = this.world.timeSeconds;
+        const bursting = this.risingZebakJugs.filter((jug) => timeSeconds >= jug.burstsAtSeconds);
+        for (const jug of bursting) {
+            this.burstZebakJug(warden, player, jug);
+        }
+        this.risingZebakJugs = this.risingZebakJugs.filter(
+            (jug) => timeSeconds < jug.burstsAtSeconds,
+        );
+    }
+
+    // What falls out of the burst aims at the centre of the tile the player stands on then, under a
+    // shadow held until it lands, so stepping off that tile before the landing dodges it.
+    private burstZebakJug(warden: Enemy, player: Player, jug: RisingZebakJug): void {
+        const world = this.world;
+        const { fallShadow, fallSeconds } = this.animations.phantoms.zebakShot;
+        const burst = wardenTileCentre(jug.burstTile);
+        const level = jug.burstTile.level;
+        world.visualEffects.push(
+            new VisualEffect(
+                ZEBAK_PHANTOM_SHOT.burstEffect,
+                { kind: "POINT", ...burst, level, rotation: 0 },
+                ZEBAK_PHANTOM_SHOT.burstHeight,
+                world.animations.effects[ZEBAK_PHANTOM_SHOT.burstEffect],
+            ),
+        );
+        world.playSound({ sound: this.sounds.zebakShotBurst, ...burst });
+        const target = playerWardenTile(player);
+        const landsAtSeconds = world.timeSeconds + fallSeconds;
+        this.spawnTileEffect(fallShadow, target, landsAtSeconds);
+        this.launchFlight(
+            warden,
+            timedProjectileSpec(jug.piece.fall, fallSeconds),
+            {
+                ...burst,
+                height:
+                    world.terrain.getHeight(level, burst.x, burst.y) +
+                    ZEBAK_PHANTOM_SHOT.burstHeight,
+            },
+            { kind: "POINT", ...wardenTileCentre(target) },
+        );
+        this.tileStrikes = [
+            ...this.tileStrikes,
+            {
+                tile: target,
+                strikesAtSeconds: landsAtSeconds,
+                damage: WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.ZEBAK],
+                strikeEffect: jug.piece.landingEffect,
+                strikeSound: this.sounds.zebakShotLanding,
+            },
+        ];
     }
 
     // Each rock's graphic plays its whole fall from the moment it drops, so its shadow is held until
@@ -591,6 +687,7 @@ export class WardenP3Runtime implements EncounterScript {
                 strikesAtSeconds,
                 damage: WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA],
                 strikeEffect: undefined,
+                strikeSound: undefined,
             })),
         ];
     }
@@ -613,30 +710,49 @@ export class WardenP3Runtime implements EncounterScript {
                 strikesAtSeconds,
                 damage: WARDEN_P3_LIGHTNING.damage,
                 strikeEffect: WARDEN_P3_LIGHTNING.strike,
+                strikeSound: undefined,
             })),
         ];
     }
 
-    private pullArenaTile(warden: Enemy, player: Player): void {
-        const pull = pullWardenP3ArenaTile(this.floor, this.world.random);
+    private pullArenaTiles(warden: Enemy, count: number): void {
+        const world = this.world;
+        const pull = pullWardenP3ArenaTiles(this.floor, count, world.random);
         this.floor = pull.floor;
-        const x = (pull.tile.x + 0.5) * TILE_SIZE;
-        const y = (pull.tile.y + 0.5) * TILE_SIZE;
-        this.launchFlight(
-            warden,
-            timedProjectileSpec(
-                WARDENS_PULLED_TILE_FLIGHT,
-                this.animations.pulledTileFlightSeconds,
-            ),
-            { x, y, height: this.world.terrain.getHeight(pull.tile.level, x, y) },
-            { kind: "COMBATANT", combatant: warden },
+        const flight = timedProjectileSpec(
+            WARDENS_PULLED_TILE_FLIGHT,
+            this.animations.pulledTileFlightSeconds,
         );
-        if (!isSameWardenTile(playerWardenTile(player), pull.tile)) {
+        for (const tile of pull.tiles) {
+            const centre = wardenTileCentre(tile);
+            this.launchFlight(
+                warden,
+                flight,
+                { ...centre, height: world.terrain.getHeight(tile.level, centre.x, centre.y) },
+                { kind: "POINT", ...wardenP3PulledTileSkyPoint(tile, WARDEN_P3_PULLED_TILE_SKY) },
+            );
+        }
+        this.movePlayerOffOccupiedTile();
+    }
+
+    // A player left standing where the floor went or a siphon landed could never walk off again, so
+    // they are set down on the nearest open floor, unhurt.
+    private movePlayerOffOccupiedTile(): void {
+        const player = this.world.player;
+        if (!player) {
             return;
         }
-        const refuge = nearestSolidWardenP3Tile(this.floor, pull.tile);
-        player.x = (refuge.x + 0.5) * TILE_SIZE;
-        player.y = (refuge.y + 0.5) * TILE_SIZE;
+        const standing = playerWardenTile(player);
+        const occupied = this.landedSiphonTiles();
+        const tile = wardenP3ArenaTile(standing.x, standing.y);
+        const onPulledFloor =
+            wardenP3TileOccupancy(this.floor, tile) === WardenP3ArenaTileOccupancy.DESTROYED_FLOOR;
+        if (!onPulledFloor && !occupied.some((other) => isSameWardenTile(other, standing))) {
+            return;
+        }
+        const refuge = wardenTileCentre(nearestOpenWardenP3Tile(this.floor, occupied, tile));
+        player.x = refuge.x;
+        player.y = refuge.y;
     }
 
     private damagePlayerOnTile(tile: WardenP3Tile, damage: number): void {
@@ -654,13 +770,7 @@ export class WardenP3Runtime implements EncounterScript {
         this.world.visualEffects.push(
             new VisualEffect(
                 kind,
-                {
-                    kind: "POINT",
-                    x: (tile.x + 0.5) * TILE_SIZE,
-                    y: (tile.y + 0.5) * TILE_SIZE,
-                    level: tile.level,
-                    rotation: 0,
-                },
+                { kind: "POINT", ...wardenTileCentre(tile), level: tile.level, rotation: 0 },
                 0,
                 this.world.animations.effects[kind],
                 holdUntilSeconds,

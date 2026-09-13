@@ -10,6 +10,7 @@ import { VisualEffectKind } from "../game/VisualEffect";
 import {
     ResolvedWardenPhantomAttack,
     ResolvedWardenSlam,
+    ResolvedWardenZebakShot,
     WardenP3AnimationIds,
     WardenP3Animations,
     WardenPhantomAnimationIds,
@@ -17,6 +18,7 @@ import {
     WardenSiphonAnimationIds,
     WardenSiphonAnimations,
     WardenSlamSeq,
+    WardenZebakShotIds,
 } from "../game/WardenP3Animations";
 import { WardenStance } from "../game/WardenP3Director";
 import { resolvePlayerLoadouts } from "../game/abilities";
@@ -45,7 +47,7 @@ function lookup<K, V>(
     };
 }
 
-// A siphon flight runs from its sequence's start to the given frame, so the first frame would leave
+// A flight or fall runs from its sequence's start to the given frame, so the first frame would leave
 // it no time to fly.
 function flightFrameSeconds(seq: SeqTiming, frame: number, description: string): number {
     const seconds = sequenceTimeToFrameSeconds(seq, frame);
@@ -83,6 +85,40 @@ function resolveWardenSiphonAnimations(
             siphonIds.recallFrame,
             "A siphon's recall",
         ),
+        turnUnitsPerSecond: positiveRate(siphonIds.turnUnitsPerSecond, "A siphon's turn rate"),
+    };
+}
+
+function positiveRate(rate: number, description: string): number {
+    if (!Number.isFinite(rate) || rate <= 0) {
+        throw new RangeError(`${description} must be a finite positive number, got ${rate}`);
+    }
+    return rate;
+}
+
+function resolveZebakShot(
+    ids: WardenZebakShotIds,
+    assets: ActorAssets,
+    catalog: SeqCatalog,
+): ResolvedWardenZebakShot {
+    if (!Number.isInteger(ids.jugTumbles) || ids.jugTumbles < 1) {
+        throw new RangeError(
+            `Zebak's jug must tumble a whole number of times, got ${ids.jugTumbles}`,
+        );
+    }
+    const jugSeqId = projectileTravelSeqId(assets.projectiles[ProjectileKind.ZEBAK_PHANTOM_JUG]);
+    if (jugSeqId === undefined) {
+        throw new Error("Zebak's jug graphic must animate its tumble");
+    }
+    const { fallShadow } = ids;
+    return {
+        riseSeconds: ids.jugTumbles * sequenceDurationSeconds(catalog.get(jugSeqId)),
+        fallShadow: fallShadow.effect,
+        fallSeconds: flightFrameSeconds(
+            catalog.get(assets.effects[fallShadow.effect].seq.seqId),
+            fallShadow.landingFrame,
+            "Zebak's shot landing",
+        ),
     };
 }
 
@@ -94,8 +130,8 @@ function pulledTileFlightSeconds(bake: ProjectileBake, catalog: SeqCatalog): num
     return sequenceDurationSeconds(catalog.get(seqId));
 }
 
-// A slam's impact frame, a phantom attack's release frame, a rock's landing frame or a siphon beat
-// outside its sequence throws here, while the encounter loads.
+// A slam's impact frame, a phantom attack's release frame, a rock's or Zebak's shot's landing frame
+// or a siphon beat outside its sequence throws here, while the encounter loads.
 function resolveWardenP3Animations(
     wardenIds: WardenP3AnimationIds,
     phantomIds: WardenPhantomAnimationIds,
@@ -125,7 +161,7 @@ function resolveWardenP3Animations(
     };
     const { rockFall } = phantomIds;
     return {
-        slams: mapRecord(wardenIds.slams, (slams) => mapRecord(slams, resolveSlam)),
+        slams: mapRecord(wardenIds.slams, resolveSlam),
         stances: mapRecord(wardenIds.stances, ({ transitionSeqId, holdSeqId }) => {
             const transition = catalog.get(transitionSeqId);
             return {
@@ -143,6 +179,7 @@ function resolveWardenP3Animations(
                     rockFall.landingFrame,
                 ),
             },
+            zebakShot: resolveZebakShot(phantomIds.zebakShot, assets, catalog),
         },
         siphons: resolveWardenSiphonAnimations(wardenIds, siphonIds, effects, catalog),
         pulledTileFlightSeconds: pulledTileFlightSeconds(

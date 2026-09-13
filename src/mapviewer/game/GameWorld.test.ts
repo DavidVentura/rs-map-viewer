@@ -1,6 +1,5 @@
 import {
     AbilityDefinition,
-    AbilityTarget,
     AbilityTargetKind,
     CircleCenter,
     ConeDelivery,
@@ -15,7 +14,7 @@ import { Combatant, Faction } from "./Combatant";
 import { Affects, PayloadKind, damagePayload } from "./Effect";
 import { coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterId, EncounterSpawnMode } from "./Encounter";
-import { EnemyState } from "./Enemy";
+import { Enemy, EnemyState } from "./Enemy";
 import {
     DropTier,
     EnemyBehaviour,
@@ -35,7 +34,14 @@ import {
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
 import { Player } from "./Player";
-import { AbilitySlotInput, CombatInput, SimInput } from "./PlayerOrders";
+import {
+    OrderEvent,
+    OrderEventKind,
+    OrderTargetKind,
+    SimInput,
+    SkillInput,
+    SkillTarget,
+} from "./PlayerOrders";
 import { createExperience } from "./Progression";
 import { ARROW_SPEC, JAD_RANGED_ROCK_SPEC } from "./Projectile";
 import { recordStationaryRangedHit } from "./StanceMechanics";
@@ -149,15 +155,11 @@ function makeStationaryEnemyType(
     );
 }
 
-function idleCombat(): CombatInput {
-    return { basicAttack: { held: false }, skills: [] };
-}
-
-function point(x: number, y: number): AbilityTarget {
+function point(x: number, y: number): SkillTarget {
     return { kind: AbilityTargetKind.POINT, x, y };
 }
 
-function at(combatant: Combatant): AbilityTarget {
+function at(combatant: Combatant): SkillTarget {
     return { kind: AbilityTargetKind.COMBATANT, combatant };
 }
 
@@ -181,22 +183,30 @@ function healAmount(definition: AbilityDefinition): number {
     return payload.amount;
 }
 
-function holdBasicAttack(target: AbilityTarget): SimInput {
-    return {
-        movement: { x: 0, y: 0, running: false },
-        combat: { basicAttack: { held: true, target }, skills: [] },
-    };
-}
-
-function holdSkill(skillSlot: number, target: AbilityTarget): SimInput {
-    const skills: AbilitySlotInput[] = Array.from({ length: skillSlot + 1 }, () => ({
+function holdSkill(skillSlot: number, target: SkillTarget): SimInput {
+    const skills: SkillInput[] = Array.from({ length: skillSlot + 1 }, () => ({
         held: false,
     }));
     skills[skillSlot] = { held: true, target };
-    return {
-        movement: { x: 0, y: 0, running: false },
-        combat: { basicAttack: { held: false }, skills },
-    };
+    return { ...idleInput(), skills };
+}
+
+function pressOnEnemy(enemy: Enemy): OrderEvent {
+    return { kind: OrderEventKind.PRESS, target: { kind: OrderTargetKind.ENEMY, enemy } };
+}
+
+function pressOnGround(x: number, y: number): OrderEvent {
+    return { kind: OrderEventKind.PRESS, target: { kind: OrderTargetKind.GROUND, x, y } };
+}
+
+// Hands the world this frame's events without running a step, the way a frame too short for a
+// fixed step still delivers its clicks.
+function issue(world: GameWorld, ...orders: OrderEvent[]): void {
+    world.advance(0, { ...idleInput(), orders });
+}
+
+function clickGround(world: GameWorld, x: number, y: number): void {
+    issue(world, pressOnGround(x, y), { kind: OrderEventKind.RELEASE });
 }
 
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {
@@ -210,65 +220,74 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 }
 
 function idleInput(): SimInput {
-    return { movement: { x: 0, y: 0, running: false }, combat: idleCombat() };
+    return { orders: [], running: false, skills: [] };
+}
+
+function runningInput(): SimInput {
+    return { ...idleInput(), running: true };
 }
 
 function autoUpgradeInput(): SimInput {
     return idleInput();
 }
 
+// Far enough that an arrow is still in flight when a test counts it, well within bow range.
+const DISTANT_TARGET_X = 3000;
+
 describe("GameWorld ability wiring", () => {
     it("fires an arrow once the bow's wind-up elapses, not before", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
-        const target = point(500, 0);
+        world.spawnEnemy(500, 0, 0, makeStationaryEnemyType(1, 2, 3));
+        issue(world, pressOnEnemy(world.enemies[0]));
 
-        advanceSeconds(world, holdBasicAttack(target), impactOf(BOW_SHOT) - 0.05);
+        advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) - 0.05);
         expect(world.projectiles.length).toBe(0);
 
-        advanceSeconds(world, holdBasicAttack(target), 0.1);
+        advanceSeconds(world, idleInput(), 0.1);
         expect(world.projectiles.length).toBe(1);
     });
 
-    it("re-fires the bow on cooldown while the slot stays held", () => {
+    it("re-fires the bow on cooldown for as long as the attack order stands", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
-        // Far enough that neither arrow reaches its aimed landing point (and disappears) within
-        // this test's short window, so both fired arrows are still in flight to be counted.
-        const target = point(100000, 0);
+        world.spawnEnemy(DISTANT_TARGET_X, 0, 0, makeStationaryEnemyType(1, 2, 3));
+        issue(world, pressOnEnemy(world.enemies[0]));
 
         const cooldownTotal = impactOf(BOW_SHOT) + BOW_SHOT.locks[0].seconds;
-        advanceSeconds(world, holdBasicAttack(target), cooldownTotal * 2 + 0.1);
+        advanceSeconds(world, idleInput(), cooldownTotal * 2 + 0.1);
         expect(world.projectiles.length).toBe(2);
     });
 
     it("fires two tracked arrows after five confirmed stationary ranged hits", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
+        world.spawnEnemy(DISTANT_TARGET_X, 0, 0, makeStationaryEnemyType(1, 2, 3));
         const player = world.player!;
         for (let hit = 0; hit < 5; hit++) {
             player.stanceMechanics = recordStationaryRangedHit(player.stanceMechanics);
         }
+        issue(world, pressOnEnemy(world.enemies[0]));
 
-        advanceSeconds(world, holdBasicAttack(point(100000, 0)), impactOf(BOW_SHOT) + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.05);
 
         expect(world.projectiles).toHaveLength(2);
         expect(player.stanceMechanics.rangedConsecutiveHits).toBe(0);
     });
 
-    it("counts a confirmed ranged hit and clears the sequence on movement", () => {
+    it("counts a confirmed ranged hit and clears the sequence once the player walks", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(100, 0, 0, { ...makeEnemyType(1, 2, 3), maxHealth: 100 });
         const player = world.player!;
+        issue(world, pressOnEnemy(world.enemies[0]));
 
-        advanceSeconds(world, holdBasicAttack(at(world.enemies[0])), impactOf(BOW_SHOT) + 0.2);
+        advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.2);
         expect(player.stanceMechanics.rangedConsecutiveHits).toBe(1);
 
-        world.advance(1 / 120, {
-            ...idleInput(),
-            movement: { x: 1, y: 0, running: false },
-        });
+        clickGround(world, 0, -1000);
+        advanceSeconds(world, idleInput(), resolve(BOW_SHOT).timing.animationSeconds);
+        expect(player.y).toBeLessThan(0);
         expect(player.stanceMechanics.rangedConsecutiveHits).toBe(0);
     });
 
@@ -287,7 +306,9 @@ describe("GameWorld ability wiring", () => {
         advanceSeconds(world, holdSkill(2, point(0, 0)), impactOf(HEALING_POTION) + 0.05);
         expect(player.health).toBe(50 + healAmount(HEALING_POTION));
 
-        advanceSeconds(world, holdBasicAttack(point(500, 0)), 0.05);
+        world.spawnEnemy(500, 0, 0, makeStationaryEnemyType(1, 2, 3));
+        issue(world, pressOnEnemy(world.enemies[0]));
+        advanceSeconds(world, idleInput(), 0.05);
         expect(world.projectiles.length).toBe(0);
     });
 
@@ -309,19 +330,12 @@ describe("GameWorld ability wiring", () => {
         const player = world.player!;
         expect(player.style).toBe(WeaponStyle.RANGED);
 
-        const switchInput: SimInput = {
-            movement: { x: 0, y: 0, running: false },
-            combat: idleCombat(),
-            styleSwitch: WeaponStyle.MELEE,
-        };
+        const switchInput: SimInput = { ...idleInput(), styleSwitch: WeaponStyle.MELEE };
         advanceSeconds(world, switchInput, 1 / 120);
         expect(player.style).toBe(WeaponStyle.MELEE);
 
-        const movingWhileIdle: SimInput = {
-            movement: { x: 1, y: 0, running: false },
-            combat: idleCombat(),
-        };
-        advanceSeconds(world, movingWhileIdle, 1 / 60);
+        clickGround(world, 1000, 0);
+        advanceSeconds(world, idleInput(), 1 / 60);
         expect(player.x).toBeGreaterThan(0);
     });
 });
@@ -330,17 +344,18 @@ describe("Melee style", () => {
     it("does not swing when the enemy is out of reach, and walks the player toward it instead", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
-        world.spawnEnemy(0, 200, 0, makeEnemyType(1, 2, 3));
+        world.spawnEnemy(0, 1000, 0, makeEnemyType(1, 2, 3));
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
+        issue(world, pressOnEnemy(enemy));
 
-        advanceSeconds(world, holdBasicAttack(at(enemy)), 0.02);
+        advanceSeconds(world, idleInput(), 0.02);
 
         expect(enemy.health).toBe(enemy.maxHealth);
         expect(player.abilityRuntime.isBusy(world.timeSeconds)).toBe(false);
         expect(player.y).toBeGreaterThan(0);
-        expect(player.y).toBeLessThan(200);
+        expect(player.y).toBeLessThan(1000);
     });
 
     it("does not chase an out-of-range target when a melee skill is held", () => {
@@ -366,8 +381,9 @@ describe("Melee style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
+        issue(world, pressOnEnemy(enemy));
 
-        advanceSeconds(world, holdBasicAttack(at(enemy)), impactOf(SCIMITAR_SLASH) + 0.05);
+        advanceSeconds(world, idleInput(), impactOf(SCIMITAR_SLASH) + 0.05);
 
         expect(enemy.health).toBe(enemy.maxHealth - minDamage(SCIMITAR_SLASH));
     });
@@ -416,8 +432,9 @@ describe("Melee cone basic attack", () => {
             throw new Error("expected a CONE delivery");
         }
         const reach = delivery.reach + player.hitRadius + enemy.hitRadius;
+        issue(world, pressOnEnemy(enemy));
 
-        advanceSeconds(world, holdBasicAttack(at(enemy)), 3);
+        advanceSeconds(world, idleInput(), 3);
 
         const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
         expect(distance).toBeLessThanOrEqual(reach);
@@ -438,7 +455,8 @@ describe("Melee cone basic attack", () => {
         world.spawnEnemy(0, 500, 0, makeStationaryEnemyType(1, 2, 3)); // dead ahead, beyond reach
         const [aimed, insideArc, outsideArc, behind, beyondReach] = world.enemies;
 
-        advanceSeconds(world, holdBasicAttack(at(aimed)), impactOf(DRAGON_2H_SWORD_SLASH) + 0.05);
+        issue(world, pressOnEnemy(aimed));
+        advanceSeconds(world, idleInput(), impactOf(DRAGON_2H_SWORD_SLASH) + 0.05);
 
         expect(aimed.health).toBeLessThan(aimed.maxHealth);
         expect(insideArc.health).toBeLessThan(insideArc.maxHealth);
@@ -629,7 +647,10 @@ describe("Magic style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MAGIC;
 
-        advanceSeconds(world, holdBasicAttack(at(world.enemies[0])), impactOf(MAGIC_BOLT) + 0.01);
+        issue(world, pressOnEnemy(world.enemies[0]));
+        advanceSeconds(world, idleInput(), impactOf(MAGIC_BOLT) + 0.01);
+        // Clicking the player's own spot is how OSRS stops an attack: a walk that ends at once.
+        clickGround(world, player.x, player.y);
         advanceSeconds(world, idleInput(), 0.2);
 
         expect(player.mana).toBeGreaterThan(player.maxMana - MAGIC_BOLT.manaCost);
@@ -725,13 +746,10 @@ describe("Enemy attack cycle", () => {
         }
         expect(enemy.state).toBe(EnemyState.WINDUP);
 
-        const retreatInput: SimInput = {
-            movement: { x: 0, y: -1, running: true },
-            combat: idleCombat(),
-        };
+        clickGround(world, 0, -100000);
         guard = 0;
         while (enemy.state === EnemyState.WINDUP && guard < 1000) {
-            world.advance(frame, retreatInput);
+            world.advance(frame, runningInput());
             guard++;
         }
 
@@ -883,11 +901,8 @@ describe("Player death and respawn", () => {
         ).toBe(true);
         expect(player.isDead(world.timeSeconds)).toBe(true);
 
-        const moveInput: SimInput = {
-            movement: { x: 1, y: 0, running: true },
-            combat: idleCombat(),
-        };
-        advanceSeconds(world, moveInput, Player.DEATH_SECONDS - 0.05);
+        clickGround(world, 1000, 0);
+        advanceSeconds(world, runningInput(), Player.DEATH_SECONDS - 0.05);
         expect(player.x).toBe(10);
         expect(player.y).toBe(20);
         expect(player.health).toBe(0);
@@ -949,15 +964,12 @@ describe("Projectile telegraph", () => {
         world.spawnEnemy(0, 300, 0, makeEnemyType(1, 2, 3, [JAD_RANGED_STOMP]));
         const player = world.player!;
 
-        const runInput: SimInput = {
-            movement: { x: 1, y: 0, running: true },
-            combat: idleCombat(),
-        };
+        clickGround(world, 100000, 0);
         const tick = GameWorld.FIXED_STEP_SECONDS;
         let contactX: number | undefined;
         let contactY: number | undefined;
         for (let i = 0; i < 1000 && world.projectiles.length === 0; i++) {
-            world.advance(tick, runInput);
+            world.advance(tick, runningInput());
             if (world.projectiles.length > 0) {
                 contactX = player.x;
                 contactY = player.y;
@@ -978,6 +990,7 @@ describe("Projectile telegraph", () => {
         expect(world.visualEffects.length).toBe(1);
         expect(world.visualEffects[0].x).toBe(contactX);
         expect(world.visualEffects[0].y).toBe(contactY);
+        clickGround(world, player.x, player.y);
 
         const fallPositions: { x: number; y: number }[] = [];
         for (let i = 0; i < 1000 && world.projectiles.length > 0; i++) {
@@ -1141,10 +1154,7 @@ const STUB_INTERACTION_DURATION_SECONDS = STUB_FRAME_SECONDS * STUB_FRAME_COUNT;
 
 function startBossPhase(world: GameWorld): void {
     const interaction = world.waveEncounter!.activeInteractions[0];
-    world.advance(1 / 120, {
-        ...idleInput(),
-        interaction: { kind: "START", interactionId: interaction.id },
-    });
+    world.advance(1 / 120, { ...idleInput(), startInteraction: interaction.id });
     advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 }
 

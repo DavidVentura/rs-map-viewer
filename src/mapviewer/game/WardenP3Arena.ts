@@ -1,5 +1,6 @@
 import { TransformableGroundDecorations } from "./LocTransform";
 import { TILE_SIZE, Terrain } from "./Terrain";
+import type { WardenP3Tile } from "./WardenP3Director";
 import type { WardenP3SiphonLayout as SiphonLayout } from "./WardenP3SiphonLayout";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
 import { RandomSource } from "./abilityRules";
@@ -30,7 +31,7 @@ export type WardenP3ArenaRow = {
 
 declare const arenaFloorBrand: unique symbol;
 
-// The enrage pulls the floor a tile at a time from the furthest row inward and finishes a row
+// The enrage pulls the floor in chunks of tiles from the furthest row inward and finishes a row
 // before starting the next, so the pulled floor is always the rows beyond the edge row, gone whole,
 // plus whichever edge row tiles are already pulled. Only this module builds one, so no other shape
 // of removed floor can exist.
@@ -40,9 +41,9 @@ export type WardenP3ArenaFloor = {
     readonly [arenaFloorBrand]: true;
 };
 
-export type WardenP3PulledTile = {
+export type WardenP3PulledTiles = {
     readonly floor: WardenP3ArenaFloor;
-    readonly tile: WardenP3ArenaTile;
+    readonly tiles: readonly WardenP3ArenaTile[];
 };
 
 export const WARDEN_P3_FRONT_CENTRE_TILE = {
@@ -59,6 +60,9 @@ export const WARDEN_P3_SPAWN_TILE = {
     y: WARDEN_P3_FRONT_CENTRE_TILE.y - WARDEN_P3_NPC_HALF_SIZE,
     level: WARDEN_P3_LEVEL,
 } as const;
+
+// The row of the Warden's back edge, the far side from the floor.
+export const WARDEN_P3_BACK_TILE_Y = WARDEN_P3_SPAWN_TILE.y - WARDEN_P3_NPC_HALF_SIZE;
 
 // Read tile-by-tile from the cache's ground decoration locs (45646/45647/45648, level 1, map
 // square 61,80).
@@ -224,44 +228,97 @@ export function drawDistinctWardenP3Tiles(
     return shuffled.slice(0, drawCount);
 }
 
-// Pulls one random tile of the edge row; its last tile clears the row, so the next pull starts on
-// the row inside it.
-export function pullWardenP3ArenaTile(
-    floor: WardenP3ArenaFloor,
-    random: RandomSource,
-): WardenP3PulledTile {
-    const pullable = wardenP3PullableTiles(floor);
-    const [tile] = drawDistinctWardenP3Tiles(pullable, 1, random);
-    if (tile === undefined) {
+// How many tiles the next pull takes: a row goes in chunksPerRow chunks as even as its width
+// allows, the larger ones first, so a chunk's size follows from how much of the edge row is gone.
+export function wardenP3NextPullCount(floor: WardenP3ArenaFloor, chunksPerRow: number): number {
+    if (!Number.isInteger(chunksPerRow) || chunksPerRow < 1) {
+        throw new RangeError("A row must be pulled in a positive whole number of chunks");
+    }
+    if (wardenP3PullableTiles(floor).length === 0) {
         throw new Error("Only the Warden-adjacent row is left, and it is never pulled");
     }
-    if (pullable.length === 1) {
-        return { tile, floor: arenaFloor(floor.clearedRowCount + 1, new Set()) };
+    const width = wardenP3RowTiles(wardenP3ArenaRow(edgeRowDistance(floor))).length;
+    const pulled = floor.pulledEdgeTileXs.size;
+    const smallChunk = Math.floor(width / chunksPerRow);
+    const largeChunkCount = width % chunksPerRow;
+    let chunkEnd = 0;
+    for (let chunk = 0; chunk < chunksPerRow; chunk++) {
+        chunkEnd += smallChunk + (chunk < largeChunkCount ? 1 : 0);
+        if (chunkEnd > pulled) {
+            return chunkEnd - pulled;
+        }
+    }
+    throw new Error(`The edge row has ${pulled} of its ${width} tiles pulled and some left`);
+}
+
+// Pulls count random tiles of the edge row; its last tile clears the row, so the next pull starts
+// on the row inside it.
+export function pullWardenP3ArenaTiles(
+    floor: WardenP3ArenaFloor,
+    count: number,
+    random: RandomSource,
+): WardenP3PulledTiles {
+    const pullable = wardenP3PullableTiles(floor);
+    if (pullable.length === 0) {
+        throw new Error("Only the Warden-adjacent row is left, and it is never pulled");
+    }
+    if (!Number.isInteger(count) || count < 1 || count > pullable.length) {
+        throw new RangeError(
+            `A pull takes between 1 and the edge row's ${pullable.length} tiles, not ${count}`,
+        );
+    }
+    const tiles = drawDistinctWardenP3Tiles(pullable, count, random);
+    if (tiles.length === pullable.length) {
+        return { tiles, floor: arenaFloor(floor.clearedRowCount + 1, new Set()) };
     }
     return {
-        tile,
-        floor: arenaFloor(floor.clearedRowCount, new Set([...floor.pulledEdgeTileXs, tile.x])),
+        tiles,
+        floor: arenaFloor(
+            floor.clearedRowCount,
+            new Set([...floor.pulledEdgeTileXs, ...tiles.map((tile) => tile.x)]),
+        ),
     };
 }
 
-// Where a player standing on a pulled tile is thrown: the closest solid tile, the one nearer the
-// Warden on a tie, since the floor is pulled from the outside in. The Warden-adjacent row is never
-// pulled, so there always is one.
-export function nearestSolidWardenP3Tile(
+function isOccupied(
+    occupied: readonly WardenP3Tile[],
+    level: number,
+    x: number,
+    y: number,
+): boolean {
+    return occupied.some((tile) => tile.level === level && tile.x === x && tile.y === y);
+}
+
+// Where a player is thrown when the floor goes from under them or a siphon lands on them: the
+// closest solid tile nothing stands on, the one nearer the Warden on a tie, since the floor is
+// pulled from the outside in.
+export function nearestOpenWardenP3Tile(
     floor: WardenP3ArenaFloor,
+    occupied: readonly WardenP3Tile[],
     from: WardenP3ArenaTile,
 ): WardenP3ArenaTile {
     const distanceSquared = (tile: WardenP3ArenaTile) =>
         (tile.x - from.x) * (tile.x - from.x) + (tile.y - from.y) * (tile.y - from.y);
-    return wardenP3SolidFloorTiles(floor).reduce((nearest, candidate) =>
+    const open = wardenP3SolidFloorTiles(floor).filter(
+        (tile) => !isOccupied(occupied, tile.level, tile.x, tile.y),
+    );
+    if (open.length === 0) {
+        throw new Error("Every solid Wardens P3 floor tile is occupied");
+    }
+    return open.reduce((nearest, candidate) =>
         distanceSquared(candidate) < distanceSquared(nearest) ? candidate : nearest,
     );
 }
 
-// Composes the sim's base Terrain with the arena's floor state, so every movement path that
-// consults Terrain.canOccupy (pathing, chase steering, click-to-walk, the player's own movement)
-// rejects pulled tiles the same way it rejects any other blocked tile.
-export function wardenP3ArenaTerrain(base: Terrain, floor: WardenP3ArenaFloor): Terrain {
+// Composes the sim's base Terrain with the arena's floor state and whatever stands on it, so every
+// movement path that consults Terrain.canOccupy (pathing, chase steering, click-to-walk, the
+// player's own movement) rejects pulled and occupied tiles the same way it rejects any other
+// blocked tile.
+export function wardenP3ArenaTerrain(
+    base: Terrain,
+    floor: WardenP3ArenaFloor,
+    occupied: readonly WardenP3Tile[],
+): Terrain {
     return {
         isLoaded: (level, x, y) => base.isLoaded(level, x, y),
         getWallFlag: (level, tileX, tileY) => base.getWallFlag(level, tileX, tileY),
@@ -270,12 +327,17 @@ export function wardenP3ArenaTerrain(base: Terrain, floor: WardenP3ArenaFloor): 
             if (!base.canOccupy(level, x, y)) {
                 return false;
             }
+            const tileX = Math.floor(x / TILE_SIZE);
+            const tileY = Math.floor(y / TILE_SIZE);
+            if (isOccupied(occupied, level, tileX, tileY)) {
+                return false;
+            }
             if (level !== WARDEN_P3_LEVEL) {
                 return true;
             }
-            const tile = wardenP3ArenaTile(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
             return (
-                wardenP3TileOccupancy(floor, tile) !== WardenP3ArenaTileOccupancy.DESTROYED_FLOOR
+                wardenP3TileOccupancy(floor, wardenP3ArenaTile(tileX, tileY)) !==
+                WardenP3ArenaTileOccupancy.DESTROYED_FLOOR
             );
         },
     };

@@ -11,7 +11,11 @@ import {
     sfxClips,
     soundSeqIds,
 } from "../../src/mapviewer/audio/FrameSounds";
-import { EncounterId, getEncounter } from "../../src/mapviewer/game/Encounter";
+import {
+    EncounterId,
+    encounterScriptSounds,
+    getEncounter,
+} from "../../src/mapviewer/game/Encounter";
 import { loadSeqCatalog } from "../../src/mapviewer/game/SeqCatalog";
 import { CacheIndex } from "../../src/rs/cache/CacheIndex";
 import { IndexType } from "../../src/rs/cache/IndexType";
@@ -101,13 +105,14 @@ function main(): void {
 
     const clips = new Map<string, SfxClip>();
     for (const encounterId of Object.values(EncounterId)) {
-        const seqIds = soundSeqIds(getEncounter(encounterId));
+        const encounter = getEncounter(encounterId);
+        const seqIds = soundSeqIds(encounter);
         const catalog = loadSeqSoundCatalog(
             seqIds,
             loaders.seqTypeLoader,
             loadSeqCatalog(seqIds, loaders),
         );
-        const encounterClips = sfxClips(catalog);
+        const encounterClips = sfxClips(catalog, encounterScriptSounds(encounter));
         console.log(`${encounterId}: ${encounterClips.length} sounds`);
         for (const clip of encounterClips) {
             clips.set(sfxClipPath(clip), clip);

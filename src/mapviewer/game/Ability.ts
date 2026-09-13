@@ -42,8 +42,8 @@ export type TargetDelivery = {
 // POINT: the cone always swings toward the aimed ground point, ignoring any hovered combatant -
 // the right choice for a special that reads wrong when snapped onto a body (see aimModeFor).
 // TRACKED_TARGET: the cone is a basic attack's own ladder tier - it targets a combatant like
-// TargetDelivery (reach-gated, chased into range, see PlayerOrders.computeMeleeChaseInput/
-// canUseAbility) and swings toward wherever that combatant now stands once in reach.
+// TargetDelivery (reach-gated, chased into range, see PlayerOrders' ATTACK order/canUseAbility)
+// and swings toward wherever that combatant now stands once in reach.
 export enum ConeAim {
     POINT = 0,
     TRACKED_TARGET = 1,
@@ -209,11 +209,6 @@ export function liveAbilityTarget(target: AbilityTarget, level: number): Ability
     return { kind: AbilityTargetKind.POINT, x: combatant.x, y: combatant.y };
 }
 
-export function aimedCombatant(target: AbilityTarget, level: number): Combatant | undefined {
-    const live = liveAbilityTarget(target, level);
-    return live.kind === AbilityTargetKind.COMBATANT ? live.combatant : undefined;
-}
-
 // POINT_ONLY deliveries are line/arc skills that read wrong when snapped onto a hovered body, so
 // they always aim at the ground point; the rest prefer the hovered combatant and fall back to it.
 export enum AimMode {
@@ -241,8 +236,8 @@ export function aimModeFor(delivery: Delivery): AimMode {
 // COMBATANT_OR_POINT and so can be aimed at one: TargetDelivery always, and a TRACKED_TARGET
 // ConeDelivery (a melee basic attack's own ladder tier). undefined for anything else - a
 // POINT_ONLY cone special (no combatant to chase) or a CIRCLE/PROJECTILE delivery, which have
-// their own aim/range rules. PlayerOrders' melee chase-to-target movement and its canUseAbility
-// reach check both derive their reach from this, rather than special-casing DeliveryKind.TARGET.
+// their own aim/range rules. PlayerOrders' canUseAbility reach check and CastResolution's energy
+// siphon strike derive their reach from this, rather than special-casing DeliveryKind.TARGET.
 export function trackedDeliveryReach(delivery: Delivery): number | undefined {
     switch (delivery.kind) {
         case DeliveryKind.TARGET:
@@ -252,6 +247,26 @@ export function trackedDeliveryReach(delivery: Delivery): number | undefined {
         case DeliveryKind.CIRCLE:
         case DeliveryKind.PROJECTILE:
             return undefined;
+    }
+}
+
+// The centre-to-centre distance from which a caster can use the ability on a target: a melee reach
+// counts from both bodies' edges, a projectile flies its own range, and a circle is cast from
+// wherever the caster stands.
+export function abilityRange(
+    definition: AbilityDefinition,
+    casterHitRadius: number,
+    targetHitRadius: number,
+): number {
+    const delivery = definition.effect.delivery;
+    switch (delivery.kind) {
+        case DeliveryKind.TARGET:
+        case DeliveryKind.CONE:
+            return delivery.reach + casterHitRadius + targetHitRadius;
+        case DeliveryKind.PROJECTILE:
+            return delivery.spec.range;
+        case DeliveryKind.CIRCLE:
+            return Infinity;
     }
 }
 

@@ -36,8 +36,9 @@ export enum ProjectileKind {
     WARPED_SCEPTRE,
     SWAMP_TRIDENT,
     TUMEKENS_SHADOW,
-    ZEBAK_PHANTOM_MAGIC,
-    ZEBAK_PHANTOM_RANGED,
+    ZEBAK_PHANTOM_JUG,
+    ZEBAK_PHANTOM_ROCK,
+    ZEBAK_PHANTOM_ORB,
     ENERGY_SIPHON_LAUNCH,
     ENERGY_SIPHON_LEECH,
     ENERGY_SIPHON_RECALL,
@@ -177,7 +178,7 @@ export const JAD_MAGE_BLAST_SPEC: ProjectileSpec = {
 // reaches the ground on the last frame, 1.3s in), so the projectile sits at the landing point and
 // does not move; it plays the sequence once and arrives as the last frame lands. range matches
 // the old ground-strike's cast range so Jad still engages at the same distance (see
-// Enemy.enemyAttackRange).
+// Ability.abilityRange).
 const JAD_RANGED_ROCK_FALL_SECONDS = 1.3;
 export const JAD_RANGED_ROCK_SEQ_ID = 2660;
 
@@ -215,7 +216,7 @@ const TZHAAR_CASTER_LANDING: ProjectileLanding = {
 
 // Tok-Xil's ranged shot: SpotAnimType id 443, a static spike model with no sequence and no impact
 // graphic (picked by the user by eye). range matches the old ground-strike's cast range so Tok-Xil
-// still engages at the same distance (see Enemy.enemyAttackRange).
+// still engages at the same distance (see Ability.abilityRange).
 export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
     kind: ProjectileKind.TOK_XIL_SHOT,
     launchAngleRadians: 0,
@@ -229,7 +230,7 @@ export const TOK_XIL_SHOT_SPEC: ProjectileSpec = {
 // Ket-Zek's fire blast: SpotAnimType id 445 (picked by the user by eye; its sequence 2648 sits
 // directly after Ket-Zek's own animation block 2642-2647), with no impact graphic. Slower than
 // Tok-Xil's shot for a heavier-feeling cast. range matches the old ground-strike's cast range (see
-// Enemy.enemyAttackRange).
+// Ability.abilityRange).
 export const KET_ZEK_FIRE_BLAST_TRAVEL_SEQ_ID = 2648;
 
 export const KET_ZEK_FIRE_BLAST_SPEC: ProjectileSpec = {
@@ -267,31 +268,6 @@ export const TUMEKENS_SHADOW_SPEC: ProjectileSpec = {
     kind: ProjectileKind.TUMEKENS_SHADOW,
 };
 
-// Zebak's phantom lobs Zebak's own jug (magic) or rock (ranged) at where the player stood when it
-// let go. The landing point is fixed at release, so moving off it before the shot lands dodges it.
-export const ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID = 9642;
-export const ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID = 9639;
-
-export const ZEBAK_PHANTOM_MAGIC_SPEC: ProjectileSpec = {
-    kind: ProjectileKind.ZEBAK_PHANTOM_MAGIC,
-    launchAngleRadians: (35 * Math.PI) / 180,
-    travelTime: { baseSeconds: 0.3, secondsPerTile: 1 / 10 },
-    range: 24 * TILE_SIZE,
-    landing: {
-        kind: "FIXED_POINT",
-        endHeight: 0,
-        hitRadius: 0.5 * TILE_SIZE,
-        origin: { kind: "CASTER" },
-    },
-    travelPlayback: AnimationPlayback.LOOP,
-    modelOrientation: ProjectileModelOrientation.LEVEL,
-};
-
-export const ZEBAK_PHANTOM_RANGED_SPEC: ProjectileSpec = {
-    ...ZEBAK_PHANTOM_MAGIC_SPEC,
-    kind: ProjectileKind.ZEBAK_PHANTOM_RANGED,
-};
-
 // A flight whose duration is not its own but whatever the encounter's sequences leave it, so it
 // becomes a ProjectileSpec only once those are resolved (see timedProjectileSpec).
 export type TimedProjectileFlight = Omit<ProjectileSpec, "travelTime">;
@@ -302,6 +278,48 @@ export function timedProjectileSpec(
 ): ProjectileSpec {
     return { ...flight, travelTime: { baseSeconds: travelSeconds, secondsPerTile: 0 } };
 }
+
+// Zebak's phantom throws Zebak's jug (ZEBAK_MAGE_PROJANIM_INITIAL's tumble) up over the player,
+// where it bursts and lets a rock shard (PROJECTILE_ZEBAK_RANGED01) or a red orb (ZUK_PROJ) fall.
+export const ZEBAK_PHANTOM_JUG_TRAVEL_SEQ_ID = 9642;
+export const ZEBAK_PHANTOM_ROCK_TRAVEL_SEQ_ID = 9639;
+export const ZEBAK_PHANTOM_ORB_TRAVEL_SEQ_ID = 7571;
+
+// How high over the floor the jug bursts.
+export const ZEBAK_PHANTOM_JUG_BURST_HEIGHT = 1100;
+
+export const ZEBAK_PHANTOM_JUG_FLIGHT: TimedProjectileFlight = {
+    kind: ProjectileKind.ZEBAK_PHANTOM_JUG,
+    launchAngleRadians: (55 * Math.PI) / 180,
+    range: 24 * TILE_SIZE,
+    landing: {
+        kind: "FIXED_POINT",
+        endHeight: ZEBAK_PHANTOM_JUG_BURST_HEIGHT,
+        hitRadius: 0,
+        origin: { kind: "CASTER" },
+    },
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+// The piece drops from the burst without being thrown, so it only ever falls.
+const ZEBAK_PHANTOM_PIECE_FALL: Omit<TimedProjectileFlight, "kind"> = {
+    launchAngleRadians: 0,
+    range: 24 * TILE_SIZE,
+    landing: { kind: "FIXED_POINT", endHeight: 0, hitRadius: 0, origin: { kind: "CASTER" } },
+    travelPlayback: AnimationPlayback.LOOP,
+    modelOrientation: ProjectileModelOrientation.LEVEL,
+};
+
+export const ZEBAK_PHANTOM_ROCK_FLIGHT: TimedProjectileFlight = {
+    ...ZEBAK_PHANTOM_PIECE_FALL,
+    kind: ProjectileKind.ZEBAK_PHANTOM_ROCK,
+};
+
+export const ZEBAK_PHANTOM_ORB_FLIGHT: TimedProjectileFlight = {
+    ...ZEBAK_PHANTOM_PIECE_FALL,
+    kind: ProjectileKind.ZEBAK_PHANTOM_ORB,
+};
 
 // The Warden throws its siphons out as red skulls (FX_WARDENS_BOMB01), leeches through them with
 // Warden phase flames (SPOTANIM_WARDENS_PHASE01_BALL02) and pulls them back in as phase orbs
@@ -341,15 +359,16 @@ export const ENERGY_SIPHON_RECALL_FLIGHT: TimedProjectileFlight = {
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };
 
-// An enrage floor tile the Warden pulls lifts out of the floor and tumbles into it
-// (SpotAnimType 2228), playing its tumble once over the flight.
+// An enrage floor tile the Warden pulls lifts out of the floor and tumbles away high into the sky
+// behind the Warden (SpotAnimType 2228), playing its tumble once over the flight. Where in the sky
+// each one goes is the enrage's to pick (see wardenP3PulledTileSkyPoint).
 export const WARDENS_PULLED_TILE_TRAVEL_SEQ_ID = 9722;
 
 export const WARDENS_PULLED_TILE_FLIGHT: TimedProjectileFlight = {
     kind: ProjectileKind.WARDENS_PULLED_TILE,
     launchAngleRadians: (50 * Math.PI) / 180,
-    range: 24 * TILE_SIZE,
-    landing: INTO_WARDEN_LANDING,
+    range: 40 * TILE_SIZE,
+    landing: { kind: "FIXED_POINT", endHeight: 1600, hitRadius: 0, origin: { kind: "CASTER" } },
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };

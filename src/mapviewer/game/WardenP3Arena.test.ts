@@ -6,12 +6,13 @@ import {
     WardenP3ArenaTile,
     WardenP3ArenaTileOccupancy,
     canOccupyWardenP3ArenaTile,
-    nearestSolidWardenP3Tile,
-    pullWardenP3ArenaTile,
+    nearestOpenWardenP3Tile,
+    pullWardenP3ArenaTiles,
     wardenP3ArenaRow,
     wardenP3ArenaTerrain,
     wardenP3ArenaTile,
     wardenP3FloorSlamTiles,
+    wardenP3NextPullCount,
     wardenP3PullableTiles,
     wardenP3RowForTile,
     wardenP3RowTileY,
@@ -37,14 +38,13 @@ function pullWholeFloor(random: () => number): {
     const pulls: WardenP3ArenaTile[] = [];
     let floor = WARDEN_P3_INITIAL_ARENA_FLOOR;
     while (wardenP3PullableTiles(floor).length > 0) {
-        const pull = pullWardenP3ArenaTile(floor, random);
-        expect(wardenP3TileOccupancy(floor, pull.tile)).toBe(
-            WardenP3ArenaTileOccupancy.SOLID_FLOOR,
-        );
-        expect(wardenP3TileOccupancy(pull.floor, pull.tile)).toBe(
+        const pull = pullWardenP3ArenaTiles(floor, 1, random);
+        const [tile] = pull.tiles;
+        expect(wardenP3TileOccupancy(floor, tile)).toBe(WardenP3ArenaTileOccupancy.SOLID_FLOOR);
+        expect(wardenP3TileOccupancy(pull.floor, tile)).toBe(
             WardenP3ArenaTileOccupancy.DESTROYED_FLOOR,
         );
-        pulls.push(pull.tile);
+        pulls.push(tile);
         floor = pull.floor;
     }
     return { pulls, floor };
@@ -53,7 +53,7 @@ function pullWholeFloor(random: () => number): {
 function pullTiles(count: number, random: () => number): WardenP3ArenaFloor {
     let floor = WARDEN_P3_INITIAL_ARENA_FLOOR;
     for (let index = 0; index < count; index++) {
-        floor = pullWardenP3ArenaTile(floor, random).floor;
+        floor = pullWardenP3ArenaTiles(floor, 1, random).floor;
     }
     return floor;
 }
@@ -135,7 +135,7 @@ describe("Wardens P3 arena", () => {
         const { floor } = pullWholeFloor(seededRandom(7));
 
         expect(wardenP3PullableTiles(floor)).toEqual([]);
-        expect(() => pullWardenP3ArenaTile(floor, seededRandom(7))).toThrow();
+        expect(() => pullWardenP3ArenaTiles(floor, 1, seededRandom(7))).toThrow();
         expect(wardenP3SolidFloorTiles(floor)).toEqual(wardenP3RowTiles(wardenP3ArenaRow(1)));
         expect(wardenP3TileOccupancy(floor, wardenP3ArenaTile(3936, 5158))).toBe(
             WardenP3ArenaTileOccupancy.DESTROYED_FLOOR,
@@ -147,11 +147,12 @@ describe("Wardens P3 arena", () => {
             const random = seededRandom(seed);
             let floor = WARDEN_P3_INITIAL_ARENA_FLOOR;
             for (let pull = 0; pull < 60; pull++) {
-                const pulled = pullWardenP3ArenaTile(floor, random);
+                const pulled = pullWardenP3ArenaTiles(floor, 1, random);
                 floor = pulled.floor;
-                const refuge = nearestSolidWardenP3Tile(floor, pulled.tile);
+                const [pulledTile] = pulled.tiles;
+                const refuge = nearestOpenWardenP3Tile(floor, [], pulledTile);
                 const distance = (tile: WardenP3ArenaTile) =>
-                    Math.hypot(tile.x - pulled.tile.x, tile.y - pulled.tile.y);
+                    Math.hypot(tile.x - pulledTile.x, tile.y - pulledTile.y);
 
                 expect(canOccupyWardenP3ArenaTile(floor, refuge)).toBe(true);
                 for (const tile of wardenP3SolidFloorTiles(floor)) {
@@ -165,13 +166,59 @@ describe("Wardens P3 arena", () => {
         const floor = pullTiles(wardenP3RowTiles(wardenP3ArenaRow(9)).length + 1, () => 0);
         const pulled = wardenP3ArenaTile(3926, 5164);
         expect(canOccupyWardenP3ArenaTile(floor, pulled)).toBe(false);
-        expect(nearestSolidWardenP3Tile(floor, pulled)).toEqual(wardenP3ArenaTile(3926, 5163));
+        expect(nearestOpenWardenP3Tile(floor, [], pulled)).toEqual(wardenP3ArenaTile(3926, 5163));
+    });
+
+    it("never throws a player onto a tile something stands on", () => {
+        const from = wardenP3ArenaTile(3936, 5160);
+        const occupied = [wardenP3ArenaTile(3936, 5160), wardenP3ArenaTile(3936, 5159)];
+
+        const refuge = nearestOpenWardenP3Tile(WARDEN_P3_INITIAL_ARENA_FLOOR, occupied, from);
+
+        expect(occupied).not.toContainEqual(refuge);
+        expect(Math.hypot(refuge.x - from.x, refuge.y - from.y)).toBe(1);
+    });
+
+    it("sizes a row's chunks as evenly as its width allows, the larger ones first", () => {
+        const chunkSizes = (floor: WardenP3ArenaFloor, chunksPerRow: number): number[] => {
+            const row = floor.clearedRowCount;
+            const sizes: number[] = [];
+            let current = floor;
+            while (current.clearedRowCount === row) {
+                const count = wardenP3NextPullCount(current, chunksPerRow);
+                sizes.push(count);
+                current = pullWardenP3ArenaTiles(current, count, seededRandom(sizes.length)).floor;
+            }
+            return sizes;
+        };
+
+        expect(chunkSizes(WARDEN_P3_INITIAL_ARENA_FLOOR, 4)).toEqual([6, 5, 5, 5]);
+        const rowSix = pullTiles(21 * 3, seededRandom(3));
+        expect(wardenP3RowTiles(wardenP3ArenaRow(6))).toHaveLength(19);
+        expect(chunkSizes(rowSix, 4)).toEqual([5, 5, 5, 4]);
+        expect(chunkSizes(rowSix, 1)).toEqual([19]);
+    });
+
+    it("sizes the next chunk as what is left of the current one when a row was pulled unevenly", () => {
+        expect(wardenP3NextPullCount(pullTiles(4, seededRandom(1)), 4)).toBe(2);
+        expect(wardenP3NextPullCount(pullTiles(6, seededRandom(1)), 4)).toBe(5);
+    });
+
+    it("pulls a chunk of distinct edge row tiles and clears the row with its last one", () => {
+        const chunk = pullWardenP3ArenaTiles(WARDEN_P3_INITIAL_ARENA_FLOOR, 6, seededRandom(4));
+        expect(new Set(chunk.tiles.map((tile) => tile.x)).size).toBe(6);
+        expect(chunk.tiles.every((tile) => tile.y === 5165)).toBe(true);
+        expect(wardenP3PullableTiles(chunk.floor)).toHaveLength(15);
+
+        const cleared = pullWardenP3ArenaTiles(chunk.floor, 15, seededRandom(4));
+        expect(cleared.floor.clearedRowCount).toBe(1);
+        expect(() => pullWardenP3ArenaTiles(chunk.floor, 16, seededRandom(4))).toThrow(RangeError);
     });
 
     it("composes a Terrain that rejects pulled tiles while keeping the base terrain's rules", () => {
-        const pulled = pullWardenP3ArenaTile(WARDEN_P3_INITIAL_ARENA_FLOOR, () => 0);
-        expect(pulled.tile).toEqual(wardenP3ArenaTile(3926, 5165));
-        const terrain = wardenP3ArenaTerrain(ALWAYS_OPEN_TERRAIN, pulled.floor);
+        const pulled = pullWardenP3ArenaTiles(WARDEN_P3_INITIAL_ARENA_FLOOR, 1, () => 0);
+        expect(pulled.tiles).toEqual([wardenP3ArenaTile(3926, 5165)]);
+        const terrain = wardenP3ArenaTerrain(ALWAYS_OPEN_TERRAIN, pulled.floor, []);
 
         expect(terrain.canOccupy(0, 3926 * 128, 5165 * 128)).toBe(false);
         expect(terrain.canOccupy(0, 3927 * 128, 5165 * 128)).toBe(true);
@@ -183,7 +230,24 @@ describe("Wardens P3 arena", () => {
 
         const blockedBase: Terrain = { ...ALWAYS_OPEN_TERRAIN, canOccupy: () => false };
         expect(
-            wardenP3ArenaTerrain(blockedBase, pulled.floor).canOccupy(0, 3936 * 128, 5157 * 128),
+            wardenP3ArenaTerrain(blockedBase, pulled.floor, []).canOccupy(
+                0,
+                3936 * 128,
+                5157 * 128,
+            ),
         ).toBe(false);
+    });
+
+    it("composes a Terrain that rejects the whole of each occupied tile on its own level only", () => {
+        const occupied = { x: 3929, y: 5159, level: 0 };
+        const terrain = wardenP3ArenaTerrain(ALWAYS_OPEN_TERRAIN, WARDEN_P3_INITIAL_ARENA_FLOOR, [
+            occupied,
+        ]);
+
+        expect(terrain.canOccupy(0, 3929 * 128, 5159 * 128)).toBe(false);
+        expect(terrain.canOccupy(0, 3929 * 128 + 127, 5159 * 128 + 127)).toBe(false);
+        expect(terrain.canOccupy(0, 3930 * 128, 5159 * 128)).toBe(true);
+        expect(terrain.canOccupy(0, 3929 * 128, 5160 * 128)).toBe(true);
+        expect(terrain.canOccupy(1, 3929 * 128, 5159 * 128)).toBe(true);
     });
 });

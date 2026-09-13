@@ -1,4 +1,4 @@
-import { WardenP3ArenaFloor, wardenP3PullableTiles } from "./WardenP3Arena";
+import { WardenP3ArenaFloor, wardenP3NextPullCount, wardenP3PullableTiles } from "./WardenP3Arena";
 import { WardenSlamTarget } from "./WardenP3SlamTarget";
 
 export { WardenSlamTarget } from "./WardenP3SlamTarget";
@@ -26,12 +26,6 @@ export enum WardenPhantom {
 export enum ZebakPhantomStyle {
     MAGIC = "magic",
     RANGED = "ranged",
-}
-
-export enum WardenSlamTempo {
-    NORMAL = "normal",
-    // The enrage phase's quicker slams.
-    FAST = "fast",
 }
 
 // What the Warden is doing between slams: channelling through a siphon intermission, standing
@@ -93,20 +87,27 @@ export type WardenPhantomAttackTiming = {
     readonly durationSeconds: number;
 };
 
+// The enrage pulls each row away in chunksPerRow chunks of random tiles, then pauses before it
+// starts on the next row in.
+export type WardenP3TilePullRhythm = {
+    readonly chunksPerRow: number;
+    // From one chunk to the next within a row.
+    readonly chunkIntervalSeconds: number;
+    // Added to the chunk interval after the chunk that clears a row.
+    readonly rowPauseSeconds: number;
+};
+
 export type WardenP3HazardTiming = {
     // From the end of a phantom's attack sequence to the start of its next one, so every attack
     // plays out in full before the phantom winds up again.
     readonly phantomAttackRestSeconds: number;
     // From one enrage lightning volley to the next.
     readonly lightningIntervalSeconds: number;
-    // Short enough against a pulled tile's flight that a few are always in the air together.
-    readonly tilePullIntervalSeconds: number;
+    readonly tilePulls: WardenP3TilePullRhythm;
 };
 
 export type WardenP3Timing = WardenP3HazardTiming & {
-    readonly slams: Readonly<
-        Record<WardenSlamTempo, Readonly<Record<WardenSlamTarget, WardenSlamTiming>>>
-    >;
+    readonly slams: Readonly<Record<WardenSlamTarget, WardenSlamTiming>>;
     readonly stances: Readonly<Record<WardenStance, WardenStanceTiming>>;
     readonly phantomAttacks: Readonly<Record<WardenPhantom, WardenPhantomAttackTiming>>;
     // From the start of the Warden's charge to the frame it throws the siphons out.
@@ -174,10 +175,10 @@ export type WardenP3SiphonState = WardenP3CommonState & {
     readonly siphons: ChargingSiphons | LaunchedSiphons;
 };
 
+// The Warden stops slamming once enraged; its floor goes and lightning falls instead.
 export type WardenP3EnrageState = {
     readonly phase: WardenP3Phase.ENRAGE;
     readonly phantoms: readonly ActivePhantom[];
-    readonly slam: WardenSlamState;
     readonly nextLightningAtSeconds: number;
     readonly nextTilePullAtSeconds: number;
 };
@@ -195,7 +196,6 @@ export type WardenP3State =
 export type BeginSlamCommand = {
     readonly kind: "BEGIN_SLAM";
     readonly target: WardenSlamTarget;
-    readonly tempo: WardenSlamTempo;
 };
 
 export type ChangeWardenStanceCommand = {
@@ -257,9 +257,10 @@ export type CallLightningCommand = {
     readonly kind: "CALL_LIGHTNING";
 };
 
-// Which edge row tile goes is the world's to pick (see pullWardenP3ArenaTile).
-export type PullArenaTileCommand = {
-    readonly kind: "PULL_ARENA_TILE";
+// Which of the edge row's tiles go is the world's to pick (see pullWardenP3ArenaTiles).
+export type PullArenaTilesCommand = {
+    readonly kind: "PULL_ARENA_TILES";
+    readonly count: number;
 };
 
 export type CompleteEncounterCommand = {
@@ -278,7 +279,7 @@ export type WardenP3Command =
     | ReleasePhantomAttackCommand
     | EnterEnrageCommand
     | CallLightningCommand
-    | PullArenaTileCommand
+    | PullArenaTilesCommand
     | CompleteEncounterCommand;
 
 export type WardenP3Result = {
@@ -299,7 +300,9 @@ const SIPHON_REVERSAL_DAMAGE_FRACTION = 0.05;
 export const WARDEN_P3_HAZARD_TIMING: WardenP3HazardTiming = {
     phantomAttackRestSeconds: 2.4,
     lightningIntervalSeconds: 2.4,
-    tilePullIntervalSeconds: 0.3,
+    // Two game ticks between chunks, as recordings of the fight show, and three more before the
+    // next row so each row reads as its own wave.
+    tilePulls: { chunksPerRow: 4, chunkIntervalSeconds: 1.2, rowPauseSeconds: 1.8 },
 };
 
 function assertFiniteNonNegative(value: number, description: string): void {
@@ -317,16 +320,17 @@ function assertFinitePositive(value: number, description: string): void {
 export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
     assertFinitePositive(timing.phantomAttackRestSeconds, "phantomAttackRestSeconds");
     assertFinitePositive(timing.lightningIntervalSeconds, "lightningIntervalSeconds");
-    assertFinitePositive(timing.tilePullIntervalSeconds, "tilePullIntervalSeconds");
-    for (const [tempo, slams] of Object.entries(timing.slams)) {
-        for (const [target, slam] of Object.entries(slams)) {
-            assertFinitePositive(slam.durationSeconds, `The ${tempo} ${target} slam's duration`);
-            assertFiniteNonNegative(slam.impactSeconds, `The ${tempo} ${target} slam's impact`);
-            if (slam.impactSeconds >= slam.durationSeconds) {
-                throw new RangeError(
-                    `The ${tempo} ${target} slam must land before its sequence ends`,
-                );
-            }
+    const { tilePulls } = timing;
+    if (!Number.isInteger(tilePulls.chunksPerRow) || tilePulls.chunksPerRow < 1) {
+        throw new RangeError("The enrage must pull each row in a positive whole number of chunks");
+    }
+    assertFinitePositive(tilePulls.chunkIntervalSeconds, "The tile pull chunk interval");
+    assertFiniteNonNegative(tilePulls.rowPauseSeconds, "The tile pull row pause");
+    for (const [target, slam] of Object.entries(timing.slams)) {
+        assertFinitePositive(slam.durationSeconds, `The ${target} slam's duration`);
+        assertFiniteNonNegative(slam.impactSeconds, `The ${target} slam's impact`);
+        if (slam.impactSeconds >= slam.durationSeconds) {
+            throw new RangeError(`The ${target} slam must land before its sequence ends`);
         }
     }
     for (const [stance, { transitionSeconds }] of Object.entries(timing.stances)) {
@@ -537,7 +541,6 @@ function activateIntermissionPhantom(
 function stepSlam(
     slam: WardenSlamState,
     timeSeconds: number,
-    tempo: WardenSlamTempo,
     timing: WardenP3Timing,
 ): {
     readonly slam: WardenSlamState;
@@ -548,7 +551,7 @@ function stepSlam(
             if (timeSeconds < slam.beginsAtSeconds) {
                 return { slam, commands: [] };
             }
-            const slamTiming = timing.slams[tempo][slam.target];
+            const slamTiming = timing.slams[slam.target];
             return {
                 slam: {
                     kind: "swinging",
@@ -556,7 +559,7 @@ function stepSlam(
                     landsAtSeconds: timeSeconds + slamTiming.impactSeconds,
                     nextBeginsAtSeconds: timeSeconds + slamTiming.durationSeconds,
                 },
-                commands: [{ kind: "BEGIN_SLAM", target: slam.target, tempo }],
+                commands: [{ kind: "BEGIN_SLAM", target: slam.target }],
             };
         }
         case "swinging":
@@ -596,6 +599,7 @@ function completeEncounter(): WardenP3Result {
     };
 }
 
+// A slam still swinging as the Warden enrages never lands.
 function enterEnrage(
     normal: WardenP3NormalState,
     timeSeconds: number,
@@ -606,14 +610,8 @@ function enterEnrage(
         nextState: {
             phase: WardenP3Phase.ENRAGE,
             phantoms: normal.phantoms,
-            slam: slamAfterStanceChange(
-                WardenStance.ENRAGED,
-                activeSlamTarget(normal.slam),
-                timeSeconds,
-                timing,
-            ),
             nextLightningAtSeconds: timeSeconds + timing.lightningIntervalSeconds,
-            nextTilePullAtSeconds: timeSeconds + timing.tilePullIntervalSeconds,
+            nextTilePullAtSeconds: timeSeconds + timing.tilePulls.chunkIntervalSeconds,
         },
         commands: [
             { kind: "ENTER_ENRAGE", healAmount: wardenMaximumHealth * ENRAGE_HEAL_FRACTION },
@@ -732,12 +730,7 @@ function stepNormal(
             commands: [...phantomStep.commands, ...enrage.commands],
         };
     }
-    const slamStep = stepSlam(
-        workingState.slam,
-        snapshot.timeSeconds,
-        WardenSlamTempo.NORMAL,
-        timing,
-    );
+    const slamStep = stepSlam(workingState.slam, snapshot.timeSeconds, timing);
     return {
         nextState: { ...workingState, slam: slamStep.slam },
         commands: [...phantomStep.commands, ...slamStep.commands],
@@ -787,29 +780,47 @@ function stepEnrage(
     }
     const { timeSeconds } = snapshot;
     const phantomStep = stepPhantoms(state.phantoms, timeSeconds, timing);
-    const slamStep = stepSlam(state.slam, timeSeconds, WardenSlamTempo.FAST, timing);
     const lightningDue = timeSeconds >= state.nextLightningAtSeconds;
-    // Once only the Warden-adjacent row is left the pulls stop for good.
-    const tilePullDue =
-        timeSeconds >= state.nextTilePullAtSeconds &&
-        wardenP3PullableTiles(snapshot.arenaFloor).length > 0;
+    const pull = dueTilePull(state, snapshot.arenaFloor, timeSeconds, timing.tilePulls);
     const hazardCommands: readonly WardenP3Command[] = [
         ...(lightningDue ? [{ kind: "CALL_LIGHTNING" } as const] : []),
-        ...(tilePullDue ? [{ kind: "PULL_ARENA_TILE" } as const] : []),
+        ...(pull.command === undefined ? [] : [pull.command]),
     ];
     return {
         nextState: {
             phase: WardenP3Phase.ENRAGE,
             phantoms: phantomStep.phantoms,
-            slam: slamStep.slam,
             nextLightningAtSeconds: lightningDue
                 ? timeSeconds + timing.lightningIntervalSeconds
                 : state.nextLightningAtSeconds,
-            nextTilePullAtSeconds: tilePullDue
-                ? timeSeconds + timing.tilePullIntervalSeconds
-                : state.nextTilePullAtSeconds,
+            nextTilePullAtSeconds: pull.nextTilePullAtSeconds,
         },
-        commands: [...phantomStep.commands, ...slamStep.commands, ...hazardCommands],
+        commands: [...phantomStep.commands, ...hazardCommands],
+    };
+}
+
+// The floor in the snapshot is the one before this step's pull, so whether the chunk clears its row
+// is known before the world picks its tiles. Once only the Warden-adjacent row is left the pulls
+// stop for good.
+function dueTilePull(
+    state: WardenP3EnrageState,
+    floor: WardenP3ArenaFloor,
+    timeSeconds: number,
+    rhythm: WardenP3TilePullRhythm,
+): {
+    readonly command: PullArenaTilesCommand | undefined;
+    readonly nextTilePullAtSeconds: number;
+} {
+    const pullable = wardenP3PullableTiles(floor).length;
+    if (timeSeconds < state.nextTilePullAtSeconds || pullable === 0) {
+        return { command: undefined, nextTilePullAtSeconds: state.nextTilePullAtSeconds };
+    }
+    const count = wardenP3NextPullCount(floor, rhythm.chunksPerRow);
+    const clearsRow = count === pullable;
+    return {
+        command: { kind: "PULL_ARENA_TILES", count },
+        nextTilePullAtSeconds:
+            timeSeconds + rhythm.chunkIntervalSeconds + (clearsRow ? rhythm.rowPauseSeconds : 0),
     };
 }
 

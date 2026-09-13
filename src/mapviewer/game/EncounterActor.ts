@@ -1,6 +1,7 @@
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { ResolvedEnemyType } from "./EnemyType";
 import { EnergySiphon, EnergySiphonState } from "./EnergySiphon";
+import { turnRotationTowards } from "./projectileMath";
 
 export enum EncounterActorKind {
     ENERGY_SIPHON = "energy_siphon",
@@ -31,6 +32,8 @@ export type EncounterActor =
           // The rotation the siphon turns to once reversed (the layout's authored facing; the
           // actor spawns facing the opposite way, see createEnergySiphonActor).
           readonly reversedRotation: number;
+          // In rotation units a second (see WardenSiphonAnimationIds.turnUnitsPerSecond).
+          readonly turnUnitsPerSecond: number;
       })
     | (EncounterActorCommon & { readonly kind: EncounterActorKind.PHANTOM });
 
@@ -44,6 +47,7 @@ export function createEnergySiphonActor(
     type: ResolvedEnemyType,
     facingRotation: number,
     siphon: EnergySiphon,
+    turnUnitsPerSecond: number,
 ): EnergySiphonActor {
     return {
         kind: EncounterActorKind.ENERGY_SIPHON,
@@ -53,12 +57,19 @@ export function createEnergySiphonActor(
         level,
         type,
         animation: new AnimationState(type.seqs.idle),
-        // The siphon spawns facing away from its reversed pose, and turns to face
-        // reversedRotation once a basic melee attack reverses it.
-        rotation: (facingRotation + 1024) % 2048,
+        rotation: energySiphonFacing(facingRotation, siphon),
         reversedRotation: facingRotation,
+        turnUnitsPerSecond,
         siphon,
     };
+}
+
+// A siphon faces away from its reversed pose until a basic melee attack reverses it, and then
+// turns about to face reversedRotation.
+function energySiphonFacing(reversedRotation: number, siphon: EnergySiphon): number {
+    return siphon.state === EnergySiphonState.REVERSED
+        ? reversedRotation
+        : (reversedRotation + 1024) % 2048;
 }
 
 export function createPhantomActor(
@@ -105,8 +116,16 @@ export function playEncounterActorSeq(actor: EncounterActor, seq: SeqTiming): vo
 }
 
 // Advances the actor's animation for one tick: whatever activeSeq was last set to plays once and
-// then falls back to idle, otherwise idle loops continuously.
+// then falls back to idle, otherwise idle loops continuously. A siphon also turns toward the facing
+// its state calls for.
 export function updateEncounterActor(actor: EncounterActor, deltaTimeSeconds: number): void {
+    if (actor.kind === EncounterActorKind.ENERGY_SIPHON) {
+        actor.rotation = turnRotationTowards(
+            actor.rotation,
+            energySiphonFacing(actor.reversedRotation, actor.siphon),
+            actor.turnUnitsPerSecond * deltaTimeSeconds,
+        );
+    }
     if (actor.activeSeq) {
         if (actor.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE)) {
             actor.activeSeq = undefined;

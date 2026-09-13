@@ -1,4 +1,4 @@
-import { AbilityDefinition, DeliveryKind, ResolvedAbility, aimAtCombatant } from "./Ability";
+import { AbilityDefinition, ResolvedAbility, abilityRange, aimAtCombatant } from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
@@ -65,23 +65,6 @@ export function decideEnemyState(current: EnemyState, inputs: EnemyDecisionInput
         return EnemyState.WINDUP;
     }
     return EnemyState.CHASE;
-}
-
-export function enemyAttackRange(
-    definition: AbilityDefinition,
-    casterHitRadius: number,
-    targetHitRadius: number,
-): number {
-    const delivery = definition.effect.delivery;
-    switch (delivery.kind) {
-        case DeliveryKind.TARGET:
-        case DeliveryKind.CONE:
-            return delivery.reach + casterHitRadius + targetHitRadius;
-        case DeliveryKind.PROJECTILE:
-            return delivery.spec.range;
-        case DeliveryKind.CIRCLE:
-            return Infinity;
-    }
 }
 
 export function computeChaseMovement(
@@ -430,12 +413,12 @@ export class Enemy implements Combatant, SteeringBody {
             if (!this.abilityRuntime.canUse(ability, 0, timeSeconds)) {
                 return false;
             }
-            return distanceToPlayer <= enemyAttackRange(ability, this.hitRadius, player.hitRadius);
+            return distanceToPlayer <= abilityRange(ability, this.hitRadius, player.hitRadius);
         });
     }
 
     private attackWindowFor(ability: AbilityDefinition, player: Combatant): AttackWindow {
-        const max = enemyAttackRange(ability, this.hitRadius, player.hitRadius);
+        const max = abilityRange(ability, this.hitRadius, player.hitRadius);
         const min = isBandedEnemyType(this.type) ? this.type.engagement.minRange : 0;
         return { min, max };
     }
@@ -468,7 +451,7 @@ export class Enemy implements Combatant, SteeringBody {
         if (!isBandedEnemyType(this.type)) {
             return { x: 0, y: 0 };
         }
-        const maxRange = enemyAttackRange(this.type.abilities[0], this.hitRadius, player.hitRadius);
+        const maxRange = abilityRange(this.type.abilities[0], this.hitRadius, player.hitRadius);
         const kiteDirection = computeKeepDistanceMovement(
             deltaX,
             deltaY,

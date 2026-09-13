@@ -29,8 +29,9 @@ import {
     TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
     WARDENS_PULLED_TILE_TRAVEL_SEQ_ID,
     WARPED_SCEPTRE_TRAVEL_SEQ_ID,
-    ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID,
-    ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
+    ZEBAK_PHANTOM_JUG_TRAVEL_SEQ_ID,
+    ZEBAK_PHANTOM_ORB_TRAVEL_SEQ_ID,
+    ZEBAK_PHANTOM_ROCK_TRAVEL_SEQ_ID,
 } from "../game/Projectile";
 import {
     ARROW_LAUNCH_SEQ_ID,
@@ -49,8 +50,7 @@ import {
     VisualEffectKind,
     WARDENS_LIGHTNING_SEQ_ID,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
-    ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID,
-    ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID,
+    ZEBAK_PHANTOM_SPLIT_SEQ_ID,
 } from "../game/VisualEffect";
 import { wardenP3AnimationSeqIds } from "../game/WardenP3Animations";
 import { WardenPhantom } from "../game/WardenP3Director";
@@ -231,15 +231,16 @@ const TUMEKENS_SHADOW_CAST_SPOTANIM_ID = 2125;
 const FIRE_BOLT_CAST_SPOTANIM_ID = 126;
 
 const WARDENS_LIGHTNING_SPOTANIM_ID = 2197;
-const WARDENS_LIGHTNING_WARNING_SPOTANIM_ID = 2198;
 const WARDENS_PULLED_TILE_SPOTANIM_ID = 2228;
 
-// Zebak's own projectiles (SpotAnimType ids): 2176 ZEBAK_MAGE_PROJANIM_INITIAL, a jug, and 2178
-// ZEBAK_RANGE_PROJANIM_INITIAL, a rock shard; 2186/2185 are the bursts they break into.
-const ZEBAK_PHANTOM_MAGIC_PROJECTILE_SPOTANIM_ID = 2176;
-const ZEBAK_PHANTOM_RANGED_PROJECTILE_SPOTANIM_ID = 2178;
-const ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID = 2186;
-const ZEBAK_PHANTOM_RANGED_IMPACT_SPOTANIM_ID = 2185;
+// Zebak's own projectiles (SpotAnimType ids): 2176 ZEBAK_MAGE_PROJANIM_INITIAL, the jug thrown up,
+// then 2178 ZEBAK_RANGE_PROJANIM_INITIAL, a rock shard, or 2181 ZEBAK_MAGE_PROJANIM_SPLIT, a red
+// orb, falling out of its burst. 2185 ZEBAK_RANGED_SPLIT is the debris of the burst and of the rock
+// landing; 2186 ZEBAK_MAGE_SPLIT was turned down by eye.
+const ZEBAK_PHANTOM_JUG_SPOTANIM_ID = 2176;
+const ZEBAK_PHANTOM_ROCK_SPOTANIM_ID = 2178;
+const ZEBAK_PHANTOM_ORB_SPOTANIM_ID = 2181;
+const ZEBAK_PHANTOM_SPLIT_SPOTANIM_ID = 2185;
 const BABA_ROCK_FALL_SPOTANIM_ID = 2252;
 
 // Energy siphon flights (SpotAnimType ids): 2224 FX_WARDENS_BOMB01 flies out, 2238
@@ -302,13 +303,17 @@ export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> 
         TUMEKENS_SHADOW_PROJECTILE_SPOTANIM_ID,
         TUMEKENS_SHADOW_TRAVEL_SEQ_ID,
     ),
-    [ProjectileKind.ZEBAK_PHANTOM_MAGIC]: animatedSpotAnim(
-        ZEBAK_PHANTOM_MAGIC_PROJECTILE_SPOTANIM_ID,
-        ZEBAK_PHANTOM_MAGIC_TRAVEL_SEQ_ID,
+    [ProjectileKind.ZEBAK_PHANTOM_JUG]: animatedSpotAnim(
+        ZEBAK_PHANTOM_JUG_SPOTANIM_ID,
+        ZEBAK_PHANTOM_JUG_TRAVEL_SEQ_ID,
     ),
-    [ProjectileKind.ZEBAK_PHANTOM_RANGED]: animatedSpotAnim(
-        ZEBAK_PHANTOM_RANGED_PROJECTILE_SPOTANIM_ID,
-        ZEBAK_PHANTOM_RANGED_TRAVEL_SEQ_ID,
+    [ProjectileKind.ZEBAK_PHANTOM_ROCK]: animatedSpotAnim(
+        ZEBAK_PHANTOM_ROCK_SPOTANIM_ID,
+        ZEBAK_PHANTOM_ROCK_TRAVEL_SEQ_ID,
+    ),
+    [ProjectileKind.ZEBAK_PHANTOM_ORB]: animatedSpotAnim(
+        ZEBAK_PHANTOM_ORB_SPOTANIM_ID,
+        ZEBAK_PHANTOM_ORB_TRAVEL_SEQ_ID,
     ),
     [ProjectileKind.ENERGY_SIPHON_LAUNCH]: animatedSpotAnim(
         ENERGY_SIPHON_LAUNCH_SPOTANIM_ID,
@@ -385,17 +390,9 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
         WARDENS_LIGHTNING_SPOTANIM_ID,
         WARDENS_LIGHTNING_SEQ_ID,
     ),
-    [VisualEffectKind.WARDENS_LIGHTNING_WARNING]: animatedSpotAnim(
-        WARDENS_LIGHTNING_WARNING_SPOTANIM_ID,
-        WARDENS_LIGHTNING_SEQ_ID,
-    ),
-    [VisualEffectKind.ZEBAK_PHANTOM_MAGIC_IMPACT]: animatedSpotAnim(
-        ZEBAK_PHANTOM_MAGIC_IMPACT_SPOTANIM_ID,
-        ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID,
-    ),
-    [VisualEffectKind.ZEBAK_PHANTOM_RANGED_IMPACT]: animatedSpotAnim(
-        ZEBAK_PHANTOM_RANGED_IMPACT_SPOTANIM_ID,
-        ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID,
+    [VisualEffectKind.ZEBAK_PHANTOM_SPLIT]: animatedSpotAnim(
+        ZEBAK_PHANTOM_SPLIT_SPOTANIM_ID,
+        ZEBAK_PHANTOM_SPLIT_SEQ_ID,
     ),
     [VisualEffectKind.BABA_ROCK_FALL]: animatedSpotAnim(
         BABA_ROCK_FALL_SPOTANIM_ID,

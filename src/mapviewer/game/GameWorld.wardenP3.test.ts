@@ -1,11 +1,13 @@
-import { AbilityTargetKind, WeaponStyle } from "./Ability";
+import { WeaponStyle } from "./Ability";
 import { CombatEventKind, applyDamage } from "./CombatEvent";
+import { WARDENS_P3_SOUNDS } from "./Encounter";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
 import { GameWorld } from "./GameWorld";
-import { SimInput } from "./PlayerOrders";
+import { OrderEventKind, OrderTargetKind, PlayerOrderKind, SimInput } from "./PlayerOrders";
 import { ProjectileKind } from "./Projectile";
+import { SoundPlay } from "./SoundCue";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 import {
@@ -27,12 +29,15 @@ import {
     WardenPhantom,
     WardenSiphonStatus,
     WardenSlamTarget,
-    WardenSlamTempo,
     WardenStance,
 } from "./WardenP3Director";
 import { WARDEN_P3_LIGHTNING } from "./WardenP3Enrage";
 import { FloorSlam, floorSlamArrivalSeconds, floorSlamEndsAtSeconds } from "./WardenP3FloorSlam";
-import { WARDEN_P3_PHANTOM_DAMAGE, wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
+import {
+    WARDEN_P3_PHANTOM_DAMAGE,
+    ZEBAK_PHANTOM_SHOT,
+    wardenPhantomEnemyTypeId,
+} from "./WardenP3Phantoms";
 import { WardenP3Runtime } from "./WardenP3Runtime";
 import { stubEncounterAnimations } from "./testLoaders";
 
@@ -54,10 +59,7 @@ class FlatTerrain implements Terrain {
     }
 }
 
-const EMPTY_INPUT: SimInput = {
-    movement: { x: 0, y: 0, running: false },
-    combat: { basicAttack: { held: false }, skills: [] },
-};
+const EMPTY_INPUT: SimInput = { orders: [], running: false, skills: [] };
 
 function energySiphons(world: GameWorld): EnergySiphonActor[] {
     return world.encounterActors.filter(
@@ -67,14 +69,21 @@ function energySiphons(world: GameWorld): EnergySiphonActor[] {
 
 function attackSiphon(siphon: EnergySiphonActor): SimInput {
     return {
-        movement: { x: 0, y: 0, running: false },
-        combat: {
-            basicAttack: {
-                held: true,
-                target: { kind: AbilityTargetKind.ENERGY_SIPHON, siphon },
+        ...EMPTY_INPUT,
+        orders: [
+            {
+                kind: OrderEventKind.PRESS,
+                target: { kind: OrderTargetKind.ENERGY_SIPHON, siphon },
             },
-            skills: [],
-        },
+        ],
+    };
+}
+
+function runTowards(x: number, y: number): SimInput {
+    return {
+        orders: [{ kind: OrderEventKind.PRESS, target: { kind: OrderTargetKind.GROUND, x, y } }],
+        running: true,
+        skills: [],
     };
 }
 
@@ -122,7 +131,13 @@ function createWardenWorld(
     world.spawnPlayer(0, 0, 0);
     const wardenId = world.spawnEnemy(128, 0, 0, ANIMATIONS.enemyType(EnemyTypeId.TUMEKENS_WARDEN));
     addPhantoms(world);
-    const wardens = new WardenP3Runtime(world, wardenId, WARDEN_P3_SOLO_SIPHON_LAYOUT, startPhase);
+    const wardens = new WardenP3Runtime(
+        world,
+        wardenId,
+        WARDEN_P3_SOLO_SIPHON_LAYOUT,
+        WARDENS_P3_SOUNDS,
+        startPhase,
+    );
     world.encounterScript = wardens;
     return { world, wardenId, wardens };
 }
@@ -152,11 +167,20 @@ function stepUntilSiphonsLand(world: GameWorld): EnergySiphonActor[] {
     return siphons;
 }
 
+// Orders a basic melee attack on the siphon from where it stands and steps until that order is over:
+// reversed on the swing's contact frame, or refused outright by a siphon that can't be struck.
 function reverseSiphon(world: GameWorld, siphon: EnergySiphonActor): void {
     world.player!.style = WeaponStyle.MELEE;
     world.player!.x = siphon.x;
     world.player!.y = siphon.y;
     world.step(attackSiphon(siphon), STEP_SECONDS);
+    for (let step = 0; step < 200; step++) {
+        if (world.playerOrders.order.kind !== PlayerOrderKind.ATTACK) {
+            return;
+        }
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+    }
+    throw new Error("Expected the siphon attack order to end");
 }
 
 function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
@@ -174,8 +198,8 @@ describe("Wardens P3 world runtime", () => {
     it("plays each slam on the Warden and sets the floor wave off at the slam's impact frame", () => {
         const { world, wardenId } = createWardenWorld();
         const warden = world.findEnemy(wardenId)!;
-        const right = WARDEN_ANIMATIONS.slams[WardenSlamTempo.NORMAL][WardenSlamTarget.RIGHT];
-        const left = WARDEN_ANIMATIONS.slams[WardenSlamTempo.NORMAL][WardenSlamTarget.LEFT];
+        const right = WARDEN_ANIMATIONS.slams[WardenSlamTarget.RIGHT];
+        const left = WARDEN_ANIMATIONS.slams[WardenSlamTarget.LEFT];
 
         world.step(EMPTY_INPUT, STEP_SECONDS);
         const beganAtSeconds = world.timeSeconds;
@@ -334,6 +358,84 @@ describe("Wardens P3 world runtime", () => {
         expect(world.findEnergySiphon(thrown.id)?.siphon.state).toBe(EnergySiphonState.REVERSED);
     });
 
+    function siphonTile(siphon: EnergySiphonActor): WardenP3ArenaTile {
+        return wardenP3ArenaTile(
+            Math.floor(siphon.x / TILE_SIZE),
+            Math.floor(siphon.y / TILE_SIZE),
+        );
+    }
+
+    it("blocks the player from walking onto a landed siphon's tile but not one still in flight", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        const [siphon] = stepUntilSiphonsThrown(world);
+        expect(world.terrain.canOccupy(siphon.level, siphon.x, siphon.y)).toBe(true);
+
+        stepUntilSiphonsLand(world);
+        expect(world.terrain.canOccupy(siphon.level, siphon.x, siphon.y)).toBe(false);
+
+        const tile = siphonTile(siphon);
+        placePlayerOn(world, wardenP3ArenaTile(tile.x + 1, tile.y));
+        world.step(runTowards(world.player!.x - 10000, world.player!.y), 1);
+        expect(playerTile(world)).toEqual(wardenP3ArenaTile(tile.x + 1, tile.y));
+    });
+
+    it("sets a player standing where a siphon lands down on the nearest open tile, unhurt", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        const [siphon] = stepUntilSiphonsThrown(world);
+        world.player!.x = siphon.x;
+        world.player!.y = siphon.y;
+        const startingHealth = world.player!.health;
+
+        stepUntilSiphonsLand(world);
+
+        const tile = siphonTile(siphon);
+        expect(playerTile(world)).not.toEqual(tile);
+        expect(
+            Math.abs(playerTile(world).x - tile.x) + Math.abs(playerTile(world).y - tile.y),
+        ).toBe(1);
+        expect(world.terrain.canOccupy(0, world.player!.x, world.player!.y)).toBe(true);
+        expect(world.player!.health).toBe(startingHealth);
+    });
+
+    it("cues the siphon landing sound at each siphon as it lands", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        stepUntilSiphonsThrown(world);
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.siphonLanding)).toEqual([]);
+
+        const siphons = stepUntilSiphonsLand(world);
+
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.siphonLanding)).toEqual(
+            siphons.map((siphon) => ({
+                sound: WARDENS_P3_SOUNDS.siphonLanding,
+                x: siphon.x,
+                y: siphon.y,
+            })),
+        );
+    });
+
+    it("turns a reversed siphon about at its turn rate rather than snapping", () => {
+        const { world, wardenId } = createWardenWorld();
+        world.findEnemy(wardenId)!.health = 80;
+        stepUntilSiphonsThrown(world);
+        const [siphon] = stepUntilSiphonsLand(world);
+        const hostileFacing = (siphon.reversedRotation + 1024) % 2048;
+        expect(siphon.rotation).toBe(hostileFacing);
+        const { turnUnitsPerSecond } = WARDEN_ANIMATIONS.siphons;
+
+        siphon.siphon = { state: EnergySiphonState.REVERSED };
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(siphon.rotation).toBeCloseTo(hostileFacing + turnUnitsPerSecond * STEP_SECONDS);
+
+        const halfTurnSeconds = 1024 / turnUnitsPerSecond;
+        world.step(EMPTY_INPUT, halfTurnSeconds - 2 * STEP_SECONDS);
+        expect(siphon.rotation).not.toBe(siphon.reversedRotation);
+        world.step(EMPTY_INPUT, 2 * STEP_SECONDS);
+        expect(siphon.rotation).toBe(siphon.reversedRotation);
+    });
+
     it("resolves a siphon intermission when its authored deadline expires after the siphons land", () => {
         const { world, wardenId } = createWardenWorld();
         world.findEnemy(wardenId)!.health = 80;
@@ -439,11 +541,11 @@ describe("Wardens P3 world runtime", () => {
 
         // Runs straight at the destroyed row (y+1): movement must stop at the row boundary
         // instead of crossing onto it.
-        world.step({ movement: { x: 0, y: 1, running: true }, combat: EMPTY_INPUT.combat }, 1);
+        world.step(runTowards(world.player!.x, world.player!.y + 10000), 1);
         expect(Math.floor(world.player!.y / 128)).toBe(solidTile.y);
 
         // The remaining floor is still walkable.
-        world.step({ movement: { x: 1, y: 0, running: true }, combat: EMPTY_INPUT.combat }, 0.05);
+        world.step(runTowards(world.player!.x + 10000, world.player!.y), 0.05);
         expect(world.player!.x).toBeGreaterThan((solidTile.x + 0.5) * 128);
     });
 
@@ -497,43 +599,114 @@ describe("Wardens P3 world runtime", () => {
         return world;
     }
 
-    // The siphons thrown during the intermission fly and leech alongside Zebak's shots.
-    function zebakShots(world: GameWorld) {
+    function soundCuesOf(world: GameWorld, sound: SoundPlay) {
+        return world.drainSoundCues().filter((cue) => cue.sound === sound);
+    }
+
+    function zebakJugs(world: GameWorld) {
         return world.projectiles.filter(
-            (projectile) =>
-                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_MAGIC ||
-                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_RANGED,
+            (projectile) => projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_JUG,
         );
     }
 
-    function stepUntilShotLands(world: GameWorld): void {
-        while (zebakShots(world).length > 0) {
-            world.step(EMPTY_INPUT, STEP_SECONDS);
-        }
+    function zebakPieces(world: GameWorld) {
+        return world.projectiles.filter(
+            (projectile) =>
+                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_ROCK ||
+                projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_ORB,
+        );
     }
 
-    it("lands Zebak's phantom shot where the player stood at release, hurting only if they stayed", () => {
+    // Steps from Zebak's first release to just past its jug's burst.
+    function stepUntilJugBursts(world: GameWorld, beforeBurst = () => {}): void {
+        const burstsAtSeconds =
+            world.timeSeconds + WARDEN_ANIMATIONS.phantoms.zebakShot.riseSeconds;
+        while (world.timeSeconds + STEP_SECONDS < burstsAtSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        beforeBurst();
+        expect(zebakPieces(world)).toEqual([]);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(zebakPieces(world)).toHaveLength(1);
+    }
+
+    function zebakShotShadowTiles(world: GameWorld): WardenP3ArenaTile[] {
+        return world.visualEffects
+            .filter((effect) => effect.kind === WARDEN_ANIMATIONS.phantoms.zebakShot.fallShadow)
+            .map((effect) => {
+                // The shadow sits on the landing tile's centre.
+                expect(effect.x % TILE_SIZE).toBe(TILE_SIZE / 2);
+                expect(effect.y % TILE_SIZE).toBe(TILE_SIZE / 2);
+                return wardenP3ArenaTile(
+                    Math.floor(effect.x / TILE_SIZE),
+                    Math.floor(effect.y / TILE_SIZE),
+                );
+            });
+    }
+
+    it("throws Zebak's jug up over the player, bursting it high in the air into a falling piece", () => {
         const world = createZebakWorld();
         const zebak = world.encounterActors.find(
             (actor) => actor.type.id === wardenPhantomEnemyTypeId(WardenPhantom.ZEBAK),
         )!;
-        const startingHealth = world.player!.health;
 
         stepUntilRelease(world, WardenPhantom.ZEBAK);
         expect(zebak.animation.seqId).toBe(
             WARDEN_ANIMATIONS.phantoms.attacks[WardenPhantom.ZEBAK].seq.seqId,
         );
-        expect(zebakShots(world)).toHaveLength(1);
-        stepUntilShotLands(world);
+        expect(zebakJugs(world)).toHaveLength(1);
+        world.drainSoundCues();
+
+        stepUntilJugBursts(world);
+        const bursts = world.visualEffects.filter(
+            (effect) => effect.kind === ZEBAK_PHANTOM_SHOT.burstEffect,
+        );
+        expect(bursts).toHaveLength(1);
+        expect(bursts[0].height).toBe(ZEBAK_PHANTOM_SHOT.burstHeight);
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.zebakShotBurst)).toHaveLength(1);
+    });
+
+    it("lands Zebak's shot on the centre of the player's tile at the burst, hurting only if they stay on it", () => {
+        const world = createZebakWorld();
+        // Off the tile's centre: the shot still aims at the centre and still hits anywhere on it.
+        world.player!.x = 3936 * TILE_SIZE + 10;
+        const startingHealth = world.player!.health;
+        stepUntilRelease(world, WardenPhantom.ZEBAK);
+        stepUntilJugBursts(world, () => placePlayerOn(world, wardenP3ArenaTile(3938, 5161)));
+        world.player!.x += 40;
+        expect(zebakShotShadowTiles(world)).toEqual([wardenP3ArenaTile(3938, 5161)]);
+        world.drainSoundCues();
+
+        const landsAtSeconds = world.timeSeconds + WARDEN_ANIMATIONS.phantoms.zebakShot.fallSeconds;
+        while (world.timeSeconds + STEP_SECONDS < landsAtSeconds - STEP_SECONDS) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(world.player!.health).toBe(startingHealth);
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.zebakShotLanding)).toEqual([]);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
         expect(world.player!.health).toBe(
             startingHealth - WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.ZEBAK],
         );
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.zebakShotLanding)).toEqual([
+            {
+                sound: WARDENS_P3_SOUNDS.zebakShotLanding,
+                x: 3938.5 * TILE_SIZE,
+                y: 5161.5 * TILE_SIZE,
+            },
+        ]);
 
         const dodgingWorld = createZebakWorld();
         const dodgingHealth = dodgingWorld.player!.health;
         stepUntilRelease(dodgingWorld, WardenPhantom.ZEBAK);
+        stepUntilJugBursts(dodgingWorld);
         placePlayerOn(dodgingWorld, wardenP3ArenaTile(3939, 5162));
-        stepUntilShotLands(dodgingWorld);
+        while (zebakPieces(dodgingWorld).length > 0) {
+            dodgingWorld.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        dodgingWorld.step(EMPTY_INPUT, STEP_SECONDS);
         expect(dodgingWorld.player!.health).toBe(dodgingHealth);
     });
 
@@ -549,27 +722,22 @@ describe("Wardens P3 world runtime", () => {
     }
 
     // Leaves the Warden in its third siphon intermission, where Ba-Ba's phantom has just woken, and
-    // steps to Ba-Ba's first release. Zebak's shots are cleared as they fly so only rocks can hurt.
-    function releaseBabaRocks(playerTile: WardenP3ArenaTile): {
-        readonly world: GameWorld;
-        readonly clearZebakShots: () => void;
-    } {
+    // steps to Ba-Ba's first release. Zebak's first jug is still rising when the rocks land, so only
+    // rocks can hurt.
+    function releaseBabaRocks(playerTile: WardenP3ArenaTile): GameWorld {
         const wardenWorld = createWardenWorld(() => 0.5);
         const { world, wardenId } = wardenWorld;
         placePlayerOn(world, playerTile);
         clearIntermission(wardenWorld, 0.8);
         clearIntermission(wardenWorld, 0.6);
         world.findEnemy(wardenId)!.health = 40;
-        const clearZebakShots = () => {
-            world.projectiles = [];
-        };
-        stepUntilRelease(world, WardenPhantom.BABA, clearZebakShots);
-        return { world, clearZebakShots };
+        stepUntilRelease(world, WardenPhantom.BABA);
+        return world;
     }
 
     it("drops Ba-Ba's phantom rocks on solid floor and the player's tile, hitting only as they land", () => {
         const playerTile = wardenP3ArenaTile(3936, 5162);
-        const { world, clearZebakShots } = releaseBabaRocks(playerTile);
+        const world = releaseBabaRocks(playerTile);
         const landsAtSeconds =
             world.timeSeconds + WARDEN_ANIMATIONS.phantoms.rockFall.landingSeconds;
         const struck = shadowTiles(world);
@@ -581,7 +749,6 @@ describe("Wardens P3 world runtime", () => {
         const startingHealth = world.player!.health;
 
         while (world.timeSeconds + STEP_SECONDS < landsAtSeconds) {
-            clearZebakShots();
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
         expect(world.player!.health).toBe(startingHealth);
@@ -593,7 +760,7 @@ describe("Wardens P3 world runtime", () => {
     });
 
     it("lets the player step out from under Ba-Ba's phantom rock before it lands", () => {
-        const { world, clearZebakShots } = releaseBabaRocks(wardenP3ArenaTile(3936, 5162));
+        const world = releaseBabaRocks(wardenP3ArenaTile(3936, 5162));
         const landsAtSeconds =
             world.timeSeconds + WARDEN_ANIMATIONS.phantoms.rockFall.landingSeconds;
         const struck = shadowTiles(world);
@@ -604,7 +771,6 @@ describe("Wardens P3 world runtime", () => {
         const startingHealth = world.player!.health;
 
         while (world.timeSeconds < landsAtSeconds + 0.5) {
-            clearZebakShots();
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
         expect(world.player!.health).toBe(startingHealth);
@@ -693,21 +859,28 @@ describe("Wardens P3 world runtime", () => {
         },
     );
 
-    it("pulls the enrage floor a tile at a time from the furthest row, flying each into the Warden", () => {
+    it("pulls the enrage floor in chunks from the furthest row, flying each tile up and away behind the Warden", () => {
         const { world } = createWardenWorld(seededRandom(5), WardenP3StartPhase.ENRAGE);
         placePlayerOn(world, wardenP3ArenaTile(3936, 5158));
 
-        for (let pull = 1; pull <= 3; pull++) {
-            stepUntilCommand(world, "PULL_ARENA_TILE");
-            const pulled = pulledTiles(world);
-            expect(pulled).toHaveLength(pull);
-            expect(pulled.every((tile) => tile.y === 5165)).toBe(true);
-        }
-        expect(
+        stepUntilCommand(world, "PULL_ARENA_TILES");
+        const pulled = pulledTiles(world);
+        expect(pulled).toHaveLength(6);
+        expect(pulled.every((tile) => tile.y === 5165)).toBe(true);
+        const flights = () =>
             world.projectiles.filter(
                 (projectile) => projectile.spec.kind === ProjectileKind.WARDENS_PULLED_TILE,
-            ),
-        ).toHaveLength(3);
+            );
+        expect(flights()).toHaveLength(6);
+        const risen = flights().map((flight) => ({ y: flight.y, height: flight.height }));
+        world.step(EMPTY_INPUT, 0.1);
+        flights().forEach((flight, index) => {
+            expect(flight.y).toBeLessThan(risen[index].y);
+            expect(flight.height).toBeGreaterThan(risen[index].height);
+        });
+
+        stepUntilCommand(world, "PULL_ARENA_TILES");
+        expect(pulledTiles(world)).toHaveLength(11);
     });
 
     it("moves a player off a pulled tile onto the nearest solid floor without hurting them", () => {
@@ -717,9 +890,9 @@ describe("Wardens P3 world runtime", () => {
         placePlayerOn(world, doomed);
         const startingHealth = world.player!.health;
 
-        stepUntilCommand(world, "PULL_ARENA_TILE");
+        stepUntilCommand(world, "PULL_ARENA_TILES");
 
-        expect(pulledTiles(world)).toEqual([doomed]);
+        expect(pulledTiles(world)).toContainEqual(doomed);
         const floor = world.encounterScript!.renderState.arenaFloor;
         expect(canOccupyWardenP3ArenaTile(floor, playerTile(world))).toBe(true);
         expect(playerTile(world)).toEqual(wardenP3ArenaTile(3926, 5164));

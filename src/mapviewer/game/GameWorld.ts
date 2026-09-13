@@ -21,8 +21,16 @@ import {
 } from "./EnemyType";
 import { EquipmentChange, EquipmentGrantId, createEquipmentGrant } from "./Equipment";
 import { GroundItem, pendingGroundItemPaths, rollDropPath } from "./GroundItem";
-import { Player } from "./Player";
-import { SimInput, applyPlayerInput } from "./PlayerOrders";
+import { Player, STAND_STILL } from "./Player";
+import {
+    IDLE_PLAYER_ORDERS,
+    OrderEvent,
+    PlayerOrders,
+    SimInput,
+    applyOrderEvents,
+    interruptsInteraction,
+    stepPlayer,
+} from "./PlayerOrders";
 import { Experience } from "./Progression";
 import {
     Projectile,
@@ -31,6 +39,7 @@ import {
     ProjectileSpec,
     ProjectileTarget,
 } from "./Projectile";
+import { SoundCue } from "./SoundCue";
 import { SpatialGrid } from "./SpatialGrid";
 import { MAGIC_MANA_REFUND_PER_ENEMY, recordStationaryRangedHit } from "./StanceMechanics";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -66,7 +75,9 @@ export class GameWorld implements WorldContext {
     // MAX_VISUAL_EFFECTS budget from the moment they're scheduled.
     pendingVisualEffects: ScheduledVisualEffect[] = [];
     groundItems: GroundItem[] = [];
+    playerOrders: PlayerOrders = IDLE_PLAYER_ORDERS;
     readonly events: CombatEvent[] = [];
+    private readonly soundCues: SoundCue[] = [];
     waveEncounter?: WaveEncounterRuntime;
     encounterScript?: EncounterScript;
 
@@ -116,6 +127,7 @@ export class GameWorld implements WorldContext {
         const spawn = resolveSpawn(this.terrain, level, x, y);
         this.player = new Player(spawn.x, spawn.y, level, this.animations.player);
         this.player.godMode = this.godMode;
+        this.playerOrders = IDLE_PLAYER_ORDERS;
         if (this.gearOverride.length > 0) {
             this.player.equipGrant(
                 createEquipmentGrant(
@@ -160,6 +172,7 @@ export class GameWorld implements WorldContext {
 
     abortEncounter(): void {
         this.player = undefined;
+        this.playerOrders = IDLE_PLAYER_ORDERS;
         this.enemies = [];
         this.encounterActors = [];
         this.projectiles = [];
@@ -248,15 +261,20 @@ export class GameWorld implements WorldContext {
         return combatants;
     }
 
+    // A frame's order events are applied up front rather than handed to each fixed step, so a click
+    // lands exactly once whether the frame runs no step at all or several.
     advance(deltaSeconds: number, input: SimInput): void {
+        this.issuePlayerOrders(input.orders);
+        const stepInput: SimInput = { ...input, orders: [] };
         this.accumulatedSeconds += Math.min(deltaSeconds, GameWorld.MAX_ACCUMULATED_SECONDS);
         while (this.accumulatedSeconds >= GameWorld.FIXED_STEP_SECONDS) {
-            this.step(input, GameWorld.FIXED_STEP_SECONDS);
+            this.step(stepInput, GameWorld.FIXED_STEP_SECONDS);
             this.accumulatedSeconds -= GameWorld.FIXED_STEP_SECONDS;
         }
     }
 
     step(input: SimInput, dtSeconds: number): void {
+        this.issuePlayerOrders(input.orders);
         this.timeSeconds += dtSeconds;
 
         const waves = this.waveEncounter;
@@ -303,9 +321,27 @@ export class GameWorld implements WorldContext {
         return this.events.splice(0);
     }
 
+    playSound(cue: SoundCue): void {
+        this.soundCues.push(cue);
+    }
+
+    drainSoundCues(): SoundCue[] {
+        return this.soundCues.splice(0);
+    }
+
+    private issuePlayerOrders(events: readonly OrderEvent[]): void {
+        if (!this.player || events.length === 0) {
+            return;
+        }
+        this.playerOrders = applyOrderEvents(this.playerOrders, events);
+        if (interruptsInteraction(events)) {
+            this.waveEncounter?.interruptInteraction();
+        }
+    }
+
     private updatePlayer(player: Player, input: SimInput, dtSeconds: number): void {
         if (player.isDead(this.timeSeconds)) {
-            player.update(input.movement, dtSeconds, this.timeSeconds, this.terrain);
+            player.update(STAND_STILL, dtSeconds, this.timeSeconds, this.terrain);
             return;
         }
         if (player.isAwaitingRespawn(this.timeSeconds)) {
@@ -314,9 +350,13 @@ export class GameWorld implements WorldContext {
             return;
         }
         if (this.waveEncounter?.updateInteraction(player, input, dtSeconds)) {
+            this.playerOrders = IDLE_PLAYER_ORDERS;
             return;
         }
-        applyPlayerInput(this, player, input, dtSeconds);
+        this.playerOrders = {
+            ...this.playerOrders,
+            order: stepPlayer(this, player, this.playerOrders.order, input, dtSeconds),
+        };
     }
 
     private updateEnemy(enemy: Enemy, neighbours: readonly Enemy[], dtSeconds: number): void {
@@ -456,11 +496,13 @@ export class GameWorld implements WorldContext {
             return;
         }
         player.die(this.timeSeconds);
+        this.playerOrders = IDLE_PLAYER_ORDERS;
         this.events.push({ kind: CombatEventKind.PLAYER_DIED, target: player });
     }
 
     private resetEncounter(): void {
         this.player?.resetProgression();
+        this.playerOrders = IDLE_PLAYER_ORDERS;
         this.groundItems = [];
         this.encounterActors = [];
         this.projectiles = [];

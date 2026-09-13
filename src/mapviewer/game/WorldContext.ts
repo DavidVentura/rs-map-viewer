@@ -9,6 +9,7 @@ import { GroundItem } from "./GroundItem";
 import { Player } from "./Player";
 import { Experience } from "./Progression";
 import { ProjectileImpact, ProjectileSpec, ProjectileTarget } from "./Projectile";
+import { SoundCue } from "./SoundCue";
 import { Terrain } from "./Terrain";
 import { VisualEffect, VisualEffectAnchor } from "./VisualEffect";
 import { RandomSource } from "./abilityRules";
@@ -62,6 +63,7 @@ export interface WorldContext {
         target: ProjectileTarget,
     ): void;
     pushVisualEffect(effect: VisualEffect): void;
+    playSound(cue: SoundCue): void;
     dropGroundItem(drop: Omit<GroundItem, "id">): void;
     grantPlayerExperience(amount: Experience): void;
     clearBattlefield(): void;

@@ -41,11 +41,41 @@ import {
     composeModifiers,
 } from "./upgrades";
 
-export type PlayerInput = {
-    x: number;
-    y: number;
-    running: boolean;
-};
+export enum PlayerMovementKind {
+    STAND = 0,
+    APPROACH = 1,
+}
+
+// Every walk the player takes heads for a point until within stopDistance of it: a clicked
+// destination (0), a target's attack range, a ground item's pickup radius, an interaction's pose.
+export type PlayerMovement =
+    | { readonly kind: PlayerMovementKind.STAND }
+    | {
+          readonly kind: PlayerMovementKind.APPROACH;
+          readonly x: number;
+          readonly y: number;
+          readonly stopDistance: number;
+          readonly running: boolean;
+      };
+
+export const STAND_STILL: PlayerMovement = { kind: PlayerMovementKind.STAND };
+
+export enum MovementOutcome {
+    // Dead, or held in place by a cast animation.
+    LOCKED = 0,
+    STOOD = 1,
+    MOVED = 2,
+    // Walls or unwalkable floor ate most of the step.
+    BLOCKED = 3,
+}
+
+// Below this share of the attempted step the player is pressing into a wall rather than sliding
+// along it, so a walk towards a point behind the wall gives up instead of creeping forever.
+const MIN_STEP_PROGRESS = 0.25;
+
+// The stride that reaches a point lands on it only up to floating-point error, so anything closer
+// counts as there.
+export const ARRIVAL_TOLERANCE = 1e-6;
 
 export type StanceSeqs = {
     readonly idle: SeqTiming;
@@ -314,14 +344,14 @@ export class Player implements Combatant, ManaPool {
     }
 
     update(
-        input: PlayerInput,
+        movement: PlayerMovement,
         deltaTimeSeconds: number,
         timeSeconds: number,
         terrain: Terrain,
-    ): void {
+    ): MovementOutcome {
         if (this.isDead(timeSeconds)) {
             this.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE);
-            return;
+            return MovementOutcome.LOCKED;
         }
 
         this.mana = Math.min(
@@ -340,33 +370,52 @@ export class Player implements Combatant, ManaPool {
                 AnimationPlayback.ONCE,
                 activeCast.definition.castSpeed,
             );
-            return;
+            return MovementOutcome.LOCKED;
         }
 
-        const length = Math.hypot(input.x, input.y);
-        if (length === 0) {
-            this.animation.setSequence(this.activeStance.idle);
-            this.animation.advance(deltaTimeSeconds);
-            return;
+        if (movement.kind === PlayerMovementKind.STAND) {
+            return this.standIdle(deltaTimeSeconds, MovementOutcome.STOOD);
+        }
+        const deltaX = movement.x - this.x;
+        const deltaY = movement.y - this.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        if (distance <= Math.max(movement.stopDistance, ARRIVAL_TOLERANCE)) {
+            return this.standIdle(deltaTimeSeconds, MovementOutcome.STOOD);
         }
 
+        // A full stride may carry the player up to one step inside stopDistance, so whoever asked
+        // for the walk finds itself strictly within its range once it stops, but never past the
+        // point itself.
         const speed =
-            (input.running ? Player.RUN_SPEED : Player.WALK_SPEED) *
+            (movement.running ? Player.RUN_SPEED : Player.WALK_SPEED) *
             this.modifiers.moveSpeedMultiplier;
-        const scale = (speed * deltaTimeSeconds) / length;
+        const step = Math.min(speed * deltaTimeSeconds, distance);
         const position = resolveMovement(
             terrain,
             this.level,
             this.x,
             this.y,
-            input.x * scale,
-            input.y * scale,
+            (deltaX / distance) * step,
+            (deltaY / distance) * step,
         );
+        const moved = Math.hypot(position.x - this.x, position.y - this.y);
         this.x = position.x;
         this.y = position.y;
-        this.rotation = directionToRotation(input.x, input.y);
-        this.animation.setSequence(input.running ? this.activeStance.run : this.activeStance.walk);
+        this.rotation = directionToRotation(deltaX, deltaY);
+        if (moved < step * MIN_STEP_PROGRESS) {
+            return this.standIdle(deltaTimeSeconds, MovementOutcome.BLOCKED);
+        }
+        this.animation.setSequence(
+            movement.running ? this.activeStance.run : this.activeStance.walk,
+        );
         this.animation.advance(deltaTimeSeconds);
+        return MovementOutcome.MOVED;
+    }
+
+    private standIdle(deltaTimeSeconds: number, outcome: MovementOutcome): MovementOutcome {
+        this.animation.setSequence(this.activeStance.idle);
+        this.animation.advance(deltaTimeSeconds);
+        return outcome;
     }
 
     beginCast(ability: ResolvedAbility, target: AbilityTarget, timeSeconds: number): void {

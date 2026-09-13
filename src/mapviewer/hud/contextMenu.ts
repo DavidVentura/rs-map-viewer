@@ -73,7 +73,10 @@ export type MenuAction =
     | { readonly kind: MenuActionKind.ATTACK_ENERGY_SIPHON; readonly siphonId: number }
     | { readonly kind: MenuActionKind.CANCEL };
 
-function actionForTarget(target: MenuTarget): MenuAction {
+export type TargetMenuAction = Exclude<MenuAction, { readonly kind: MenuActionKind.CANCEL }>;
+
+// Also what a left click on the target does: OSRS runs the top menu entry on a left click.
+export function actionForTarget(target: MenuTarget): TargetMenuAction {
     switch (target.kind) {
         case MenuTargetKind.WORLD_OBJECT:
             return {
@@ -101,7 +104,7 @@ export enum MenuEntryKind {
 export type TargetMenuEntry = {
     readonly kind: MenuEntryKind.TARGET;
     readonly target: MenuTarget;
-    readonly action: MenuAction;
+    readonly action: TargetMenuAction;
 };
 
 export type CancelMenuEntry = {

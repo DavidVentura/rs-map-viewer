@@ -13,6 +13,7 @@ import {
     rotationToDirection,
     stepFlight,
     sweepCircleHitFraction,
+    turnRotationTowards,
 } from "./projectileMath";
 
 class FakeCombatant {
@@ -330,5 +331,34 @@ describe("generateSpreadDirections", () => {
         const directions = generateSpreadDirections(1024, spreadAngleRadians, 5);
         const outerDifference = rotationAngleDifference(directions[0], directions[4]);
         expect((outerDifference * (2 * Math.PI)) / 2048).toBeCloseTo(spreadAngleRadians);
+    });
+});
+
+describe("turnRotationTowards", () => {
+    it("turns by at most the step the short way round, across the wrap", () => {
+        expect(turnRotationTowards(100, 400, 50)).toBe(150);
+        expect(turnRotationTowards(400, 100, 50)).toBe(350);
+        expect(turnRotationTowards(2000, 100, 50)).toBe(2);
+        expect(turnRotationTowards(100, 2000, 50)).toBe(50);
+    });
+
+    it("lands exactly on the target instead of overshooting it", () => {
+        expect(turnRotationTowards(100, 130, 50)).toBe(130);
+        expect(turnRotationTowards(2040, 10, 50)).toBe(10);
+        expect(turnRotationTowards(512, 512, 50)).toBe(512);
+    });
+
+    it("turns a half turn the increasing way, like the client", () => {
+        expect(turnRotationTowards(0, 1024, 16)).toBe(16);
+        expect(turnRotationTowards(1024, 0, 16)).toBe(1040);
+    });
+
+    it("keeps fractional steps, so a turn spread over many small steps adds up", () => {
+        let rotation = 1024;
+        for (let step = 0; step < 64; step++) {
+            rotation = turnRotationTowards(rotation, 0, 16.25);
+        }
+        expect(rotation).toBe(0);
+        expect(turnRotationTowards(1024, 0, 0.5)).toBe(1024.5);
     });
 });

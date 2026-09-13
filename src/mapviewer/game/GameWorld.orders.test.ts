@@ -1,0 +1,270 @@
+import { AbilityDefinition, WeaponStyle, abilityRange } from "./Ability";
+import { PayloadKind } from "./Effect";
+import { EnergySiphonActor, createEnergySiphonActor } from "./EncounterActor";
+import { Enemy } from "./Enemy";
+import { EnemyTypeId, ResolvedEnemyType } from "./EnemyType";
+import { EnergySiphonState, HOSTILE_ENERGY_SIPHON } from "./EnergySiphon";
+import { GameWorld } from "./GameWorld";
+import { Player } from "./Player";
+import {
+    OrderEvent,
+    OrderEventKind,
+    OrderTargetKind,
+    PlayerOrderKind,
+    SimInput,
+} from "./PlayerOrders";
+import { TILE_SIZE, Terrain } from "./Terrain";
+import { BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH } from "./abilities";
+import { stubEncounterAnimations } from "./testLoaders";
+
+class FlatTerrain implements Terrain {
+    isLoaded(): boolean {
+        return true;
+    }
+
+    canOccupy(): boolean {
+        return true;
+    }
+
+    getWallFlag(): number {
+        return 0;
+    }
+
+    getHeight(): number {
+        return 0;
+    }
+}
+
+const ANIMATIONS = stubEncounterAnimations();
+const STEP_SECONDS = GameWorld.FIXED_STEP_SECONDS;
+const IDLE_INPUT: SimInput = { orders: [], running: false, skills: [] };
+
+// Never walks, so a test measures the player's own chase rather than two bodies converging.
+const TARGET_DUMMY: ResolvedEnemyType = {
+    ...ANIMATIONS.enemyType(EnemyTypeId.GOBLIN),
+    walkSpeed: 0,
+    maxHealth: 20,
+};
+
+function makeWorld(): GameWorld {
+    const world = new GameWorld(new FlatTerrain(), ANIMATIONS, () => 0);
+    world.spawnPlayer(0, 0, 0);
+    return world;
+}
+
+function spawnDummy(world: GameWorld, x: number, y: number): Enemy {
+    return world.findEnemy(world.spawnEnemyAtExactPosition(x, y, 0, TARGET_DUMMY))!;
+}
+
+function issue(world: GameWorld, ...orders: OrderEvent[]): void {
+    world.advance(0, { ...IDLE_INPUT, orders });
+}
+
+function pressOnGround(x: number, y: number): OrderEvent {
+    return { kind: OrderEventKind.PRESS, target: { kind: OrderTargetKind.GROUND, x, y } };
+}
+
+function pressOnEnemy(enemy: Enemy): OrderEvent {
+    return { kind: OrderEventKind.PRESS, target: { kind: OrderTargetKind.ENEMY, enemy } };
+}
+
+const RELEASE: OrderEvent = { kind: OrderEventKind.RELEASE };
+
+function advanceSeconds(world: GameWorld, seconds: number): void {
+    const endsAt = world.timeSeconds + seconds;
+    while (world.timeSeconds < endsAt) {
+        world.step(IDLE_INPUT, STEP_SECONDS);
+    }
+}
+
+function distanceBetween(player: Player, other: { x: number; y: number }): number {
+    return Math.hypot(other.x - player.x, other.y - player.y);
+}
+
+function maxDamage(definition: AbilityDefinition): number {
+    const payload = definition.effect.payloads.find(
+        (candidate) => candidate.kind === PayloadKind.DAMAGE,
+    );
+    if (!payload || payload.kind !== PayloadKind.DAMAGE) {
+        throw new Error(`${definition.id} has no DAMAGE payload`);
+    }
+    return payload.roll.max;
+}
+
+describe("walk orders", () => {
+    it("walks to a clicked point and stops exactly on it", () => {
+        const world = makeWorld();
+        issue(world, pressOnGround(300, 200), RELEASE);
+
+        advanceSeconds(world, 2);
+
+        expect(world.player!.x).toBeCloseTo(300, 6);
+        expect(world.player!.y).toBeCloseTo(200, 6);
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+    });
+
+    it("follows the held pointer, then keeps walking to its last point once released", () => {
+        const world = makeWorld();
+        const player = world.player!;
+        issue(world, pressOnGround(1000, 0));
+        advanceSeconds(world, 0.1);
+        expect(player.x).toBeGreaterThan(0);
+
+        issue(world, { kind: OrderEventKind.DRAG, x: 0, y: 1000 });
+        const xWhenSteered = player.x;
+        advanceSeconds(world, 0.2);
+        expect(player.x).toBeLessThan(xWhenSteered);
+        expect(player.y).toBeGreaterThan(0);
+
+        issue(world, RELEASE, { kind: OrderEventKind.DRAG, x: -1000, y: -1000 });
+        advanceSeconds(world, 5);
+        expect(player.x).toBeCloseTo(0, 6);
+        expect(player.y).toBeCloseTo(1000, 6);
+    });
+});
+
+describe("attack orders", () => {
+    it.each([
+        [WeaponStyle.MELEE, SCIMITAR_SLASH],
+        [WeaponStyle.RANGED, BOW_SHOT],
+        [WeaponStyle.MAGIC, MAGIC_BOLT],
+    ])(
+        "chases into range and keeps attacking with style %s until the target dies",
+        (style, basicAttack) => {
+            const world = makeWorld();
+            const player = world.player!;
+            player.style = style;
+            const enemy = spawnDummy(world, 0, 1000);
+            expect(maxDamage(basicAttack)).toBeLessThan(enemy.maxHealth);
+            issue(world, pressOnEnemy(enemy), RELEASE);
+
+            for (let step = 0; step < 2000 && enemy.health > 0; step++) {
+                world.step(IDLE_INPUT, STEP_SECONDS);
+            }
+            expect(enemy.health).toBeLessThanOrEqual(0);
+            // A projectile's killing blow lands after the player's own step.
+            world.step(IDLE_INPUT, STEP_SECONDS);
+
+            expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+            expect(distanceBetween(player, enemy)).toBeLessThanOrEqual(
+                abilityRange(player.basicAttack, player.hitRadius, enemy.hitRadius),
+            );
+
+            advanceSeconds(world, GameWorld.ENEMY_RESPAWN_SECONDS + 1);
+            expect(enemy.health).toBe(enemy.maxHealth);
+        },
+    );
+
+    it("stops attacking once a skill key is pressed", () => {
+        const world = makeWorld();
+        world.player!.style = WeaponStyle.MELEE;
+        const enemy = spawnDummy(world, 0, 150);
+        issue(world, pressOnEnemy(enemy), RELEASE);
+        advanceSeconds(world, world.player!.basicAttack.timing.impactSeconds + 0.05);
+        const healthAfterFirstSwing = enemy.health;
+        expect(healthAfterFirstSwing).toBeLessThan(enemy.maxHealth);
+
+        issue(world, { kind: OrderEventKind.SKILL_KEY });
+        advanceSeconds(world, 3);
+
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+        expect(enemy.health).toBe(healthAfterFirstSwing);
+    });
+
+    it("gives up the chase for a walk when the ground is clicked", () => {
+        const world = makeWorld();
+        world.player!.style = WeaponStyle.MELEE;
+        const enemy = spawnDummy(world, 0, 2000);
+        issue(world, pressOnEnemy(enemy), RELEASE);
+        advanceSeconds(world, 0.5);
+
+        issue(world, pressOnGround(-500, 0), RELEASE);
+        advanceSeconds(world, 5);
+
+        expect(world.player!.x).toBeCloseTo(-500, 6);
+        expect(world.player!.y).toBeCloseTo(0, 6);
+        expect(enemy.health).toBe(enemy.maxHealth);
+    });
+
+    it("lands a basic melee hit on a target a tile away without stepping in", () => {
+        const world = makeWorld();
+        const player = world.player!;
+        player.style = WeaponStyle.MELEE;
+        const edgeGap = TILE_SIZE - 1;
+        const enemy = spawnDummy(world, player.hitRadius + edgeGap + TARGET_DUMMY.hitRadius, 0);
+        issue(world, pressOnEnemy(enemy), RELEASE);
+
+        advanceSeconds(world, player.basicAttack.timing.impactSeconds + 0.05);
+
+        expect(enemy.health).toBeLessThan(enemy.maxHealth);
+        expect(player.x).toBe(0);
+        expect(player.y).toBe(0);
+    });
+});
+
+describe("energy siphon attack orders", () => {
+    function placeSiphon(world: GameWorld, x: number, y: number): EnergySiphonActor {
+        const siphon = createEnergySiphonActor(
+            world.allocateActorId(),
+            x,
+            y,
+            0,
+            ANIMATIONS.enemyType(EnemyTypeId.ENERGY_SIPHON),
+            0,
+            HOSTILE_ENERGY_SIPHON,
+            1,
+        );
+        world.encounterActors.push(siphon);
+        return siphon;
+    }
+
+    function pressOnSiphon(siphon: EnergySiphonActor): OrderEvent {
+        return {
+            kind: OrderEventKind.PRESS,
+            target: { kind: OrderTargetKind.ENERGY_SIPHON, siphon },
+        };
+    }
+
+    it("walks into melee reach and reverses the siphon on the swing's contact frame", () => {
+        const world = makeWorld();
+        const player = world.player!;
+        player.style = WeaponStyle.MELEE;
+        const siphon = placeSiphon(world, 1000, 0);
+        issue(world, pressOnSiphon(siphon), RELEASE);
+
+        for (let step = 0; step < 2000 && !player.isBusy(world.timeSeconds); step++) {
+            world.step(IDLE_INPUT, STEP_SECONDS);
+        }
+        const swing = player.basicAttack;
+        const contactAt = world.timeSeconds + swing.timing.impactSeconds;
+        expect(player.x).toBeGreaterThan(0);
+        expect(distanceBetween(player, siphon)).toBeLessThanOrEqual(
+            abilityRange(swing, player.hitRadius, siphon.type.hitRadius),
+        );
+
+        while (world.timeSeconds + STEP_SECONDS < contactAt) {
+            world.step(IDLE_INPUT, STEP_SECONDS);
+            expect(siphon.siphon.state).toBe(EnergySiphonState.HOSTILE);
+            expect(player.animation.seqId).toBe(swing.castSeq.seqId);
+        }
+        world.step(IDLE_INPUT, STEP_SECONDS);
+        world.step(IDLE_INPUT, STEP_SECONDS);
+
+        expect(siphon.siphon.state).toBe(EnergySiphonState.REVERSED);
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+    });
+
+    it("refuses the order outright with a non-melee basic attack", () => {
+        const world = makeWorld();
+        const player = world.player!;
+        player.style = WeaponStyle.RANGED;
+        const siphon = placeSiphon(world, 1000, 0);
+        issue(world, pressOnSiphon(siphon), RELEASE);
+
+        advanceSeconds(world, 2);
+
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+        expect(siphon.siphon.state).toBe(EnergySiphonState.HOSTILE);
+        expect(player.x).toBe(0);
+    });
+});

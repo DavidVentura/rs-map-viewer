@@ -21,9 +21,7 @@ export enum VisualEffectKind {
     TUMEKENS_SHADOW_CAST = 15,
     FIRE_BOLT_CAST = 16,
     WARDENS_LIGHTNING = 17,
-    WARDENS_LIGHTNING_WARNING = 18,
-    ZEBAK_PHANTOM_MAGIC_IMPACT = 20,
-    ZEBAK_PHANTOM_RANGED_IMPACT = 21,
+    ZEBAK_PHANTOM_SPLIT = 21,
     BABA_ROCK_FALL = 22,
 }
 
@@ -70,10 +68,9 @@ export const TUMEKENS_SHADOW_CAST_SEQ_ID = 9543;
 // confused with FIRE_BOLT_TRAVEL_SEQ_ID/FIRE_BOLT_HIT_SEQ_ID (Projectile.ts), the bolt itself.
 export const FIRE_BOLT_CAST_SEQ_ID = 658;
 export const WARDENS_LIGHTNING_SEQ_ID = 8680;
-// The bursts Zebak's jug and rock break into on landing (SpotAnimType 2186 ZEBAK_MAGE_SPLIT and 2185
-// ZEBAK_RANGED_SPLIT).
-export const ZEBAK_PHANTOM_MAGIC_IMPACT_SEQ_ID = 9638;
-export const ZEBAK_PHANTOM_RANGED_IMPACT_SEQ_ID = 9641;
+// The debris Zebak's jug bursts into high over the floor, and its rock shard into on landing
+// (SpotAnimType 2185 ZEBAK_RANGED_SPLIT).
+export const ZEBAK_PHANTOM_SPLIT_SEQ_ID = 9641;
 // Ba-Ba's falling rock (SpotAnimType 2252, TOA_BABA_ROCK_FALL_FASTEST): dust trickles down, the rock
 // falls and shatters on the floor, all within the graphic's own frames.
 export const BABA_ROCK_FALL_SEQ_ID = 9806;

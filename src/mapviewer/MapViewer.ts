@@ -37,6 +37,7 @@ import {
     Encounter,
     EncounterId,
     buildPreviewEncounter,
+    encounterScriptSounds,
     encounterStartingAt,
     getEncounter,
 } from "./game/Encounter";
@@ -163,7 +164,9 @@ export class MapViewer {
     // The sound effect files are fetched while the encounter loads, so a missing one fails the load.
     async init(): Promise<void> {
         this.syncMusicTrack();
-        await this.sfxPlayer.load(sfxClips(this.seqSounds));
+        await this.sfxPlayer.load(
+            sfxClips(this.seqSounds, encounterScriptSounds(getEncounter(this.encounterId))),
+        );
     }
 
     // Sets the music player's track to the current encounter's, if it isn't already. Cheap to

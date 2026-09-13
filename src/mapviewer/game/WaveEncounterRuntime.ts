@@ -7,6 +7,7 @@ import { planGrantDrops } from "./GroundItem";
 import {
     IDLE_INTERACTION,
     Interaction,
+    InteractionId,
     InteractionState,
     WorldAction,
     WorldObject,
@@ -22,8 +23,8 @@ import {
     worldObjectVariant,
 } from "./Interaction";
 import { PhaseLifecycle, currentPhase, initialPhaseLifecycle, transitionPhase } from "./Phase";
-import { Player } from "./Player";
-import { InteractionIntent, SimInput } from "./PlayerOrders";
+import { Player, PlayerMovementKind } from "./Player";
+import { SimInput } from "./PlayerOrders";
 import { createExperience } from "./Progression";
 import { Reward } from "./Reward";
 import {
@@ -123,8 +124,17 @@ export class WaveEncounterRuntime {
 
     updateInteraction(player: Player, input: SimInput, dtSeconds: number): boolean {
         this.cancelInteractionForPlayerAction(input);
-        this.processInteractionIntent(input.interaction);
-        return this.advanceInteraction(player, input.movement.running, dtSeconds);
+        this.startInteraction(input.startInteraction);
+        return this.advanceInteraction(player, input.running, dtSeconds);
+    }
+
+    // A fresh player order (see GameWorld.issuePlayerOrders) walks the player away from the lever or
+    // chest it was operating.
+    interruptInteraction(): void {
+        if (this.interactionState.kind === "IDLE") {
+            return;
+        }
+        this.interactionState = cancelInteraction(this.interactionState);
     }
 
     applyUpgradeChoice(choiceIndex: number | undefined): void {
@@ -194,33 +204,22 @@ export class WaveEncounterRuntime {
     }
 
     private cancelInteractionForPlayerAction(input: SimInput): void {
-        if (this.interactionState.kind === "IDLE" || input.interaction?.kind === "START") {
+        if (this.interactionState.kind === "IDLE" || input.startInteraction !== undefined) {
             return;
         }
-        const moved = input.movement.x !== 0 || input.movement.y !== 0;
-        const attacked =
-            input.combat.basicAttack.held || input.combat.skills.some((skill) => skill.held);
-        if (!moved && !attacked && input.styleSwitch === undefined && !input.pickupTarget) {
+        const castingSkill = input.skills.some((skill) => skill.held);
+        if (!castingSkill && input.styleSwitch === undefined) {
             return;
         }
         this.interactionState = cancelInteraction(this.interactionState);
     }
 
-    private processInteractionIntent(intent: InteractionIntent | undefined): void {
-        if (!intent) {
-            return;
-        }
-        if (intent.kind === "CANCEL") {
-            if (this.interactionState.kind !== "IDLE") {
-                this.interactionState = cancelInteraction(this.interactionState);
-            }
-            return;
-        }
-        if (this.interactionState.kind !== "IDLE") {
+    private startInteraction(interactionId: InteractionId | undefined): void {
+        if (interactionId === undefined || this.interactionState.kind !== "IDLE") {
             return;
         }
         const interaction = this.activeInteractions.find(
-            (candidate) => candidate.id === intent.interactionId,
+            (candidate) => candidate.id === interactionId,
         );
         if (!interaction) {
             return;
@@ -274,7 +273,13 @@ export class WaveEncounterRuntime {
             return true;
         }
         player.update(
-            { x: deltaX / distance, y: deltaY / distance, running },
+            {
+                kind: PlayerMovementKind.APPROACH,
+                x: state.pose.position.x,
+                y: state.pose.position.y,
+                stopDistance: 0,
+                running,
+            },
             dtSeconds,
             world.timeSeconds,
             world.terrain,

@@ -1,6 +1,12 @@
 import { HitEffect } from "./Effect";
 import { EnemyTypeId } from "./EnemyType";
-import { ProjectileSpec, ZEBAK_PHANTOM_MAGIC_SPEC, ZEBAK_PHANTOM_RANGED_SPEC } from "./Projectile";
+import {
+    TimedProjectileFlight,
+    ZEBAK_PHANTOM_JUG_BURST_HEIGHT,
+    ZEBAK_PHANTOM_JUG_FLIGHT,
+    ZEBAK_PHANTOM_ORB_FLIGHT,
+    ZEBAK_PHANTOM_ROCK_FLIGHT,
+} from "./Projectile";
 import { VisualEffectKind } from "./VisualEffect";
 import {
     WardenP3ArenaFloor,
@@ -10,19 +16,30 @@ import {
 import { WardenP3Tile, WardenPhantom, ZebakPhantomStyle } from "./WardenP3Director";
 import { RandomSource } from "./abilityRules";
 
-export type ZebakPhantomShot = {
-    readonly spec: ProjectileSpec;
-    readonly hitEffect: HitEffect;
+// What falls out of the jug's burst: the style only changes the look, since the fight has no
+// damage types.
+export type ZebakPhantomPiece = {
+    readonly fall: TimedProjectileFlight;
+    readonly landingEffect: VisualEffectKind | undefined;
 };
 
-export const ZEBAK_PHANTOM_SHOTS: Readonly<Record<ZebakPhantomStyle, ZebakPhantomShot>> = {
-    [ZebakPhantomStyle.MAGIC]: {
-        spec: ZEBAK_PHANTOM_MAGIC_SPEC,
-        hitEffect: { kind: VisualEffectKind.ZEBAK_PHANTOM_MAGIC_IMPACT, height: 0 },
-    },
-    [ZebakPhantomStyle.RANGED]: {
-        spec: ZEBAK_PHANTOM_RANGED_SPEC,
-        hitEffect: { kind: VisualEffectKind.ZEBAK_PHANTOM_RANGED_IMPACT, height: 0 },
+export type ZebakPhantomShot = {
+    readonly jug: TimedProjectileFlight;
+    readonly burstHeight: number;
+    readonly burstEffect: VisualEffectKind;
+    readonly pieces: Readonly<Record<ZebakPhantomStyle, ZebakPhantomPiece>>;
+};
+
+export const ZEBAK_PHANTOM_SHOT: ZebakPhantomShot = {
+    jug: ZEBAK_PHANTOM_JUG_FLIGHT,
+    burstHeight: ZEBAK_PHANTOM_JUG_BURST_HEIGHT,
+    burstEffect: VisualEffectKind.ZEBAK_PHANTOM_SPLIT,
+    pieces: {
+        [ZebakPhantomStyle.RANGED]: {
+            fall: ZEBAK_PHANTOM_ROCK_FLIGHT,
+            landingEffect: VisualEffectKind.ZEBAK_PHANTOM_SPLIT,
+        },
+        [ZebakPhantomStyle.MAGIC]: { fall: ZEBAK_PHANTOM_ORB_FLIGHT, landingEffect: undefined },
     },
 };
 

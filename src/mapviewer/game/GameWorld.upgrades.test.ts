@@ -13,7 +13,7 @@ import {
     createWorldPosition,
 } from "./Interaction";
 import { createPhase, createPhaseId } from "./Phase";
-import { SimInput } from "./PlayerOrders";
+import { OrderEventKind, OrderTargetKind, SimInput } from "./PlayerOrders";
 import {
     createNamedEquipmentGrantReward,
     createRewardId,
@@ -173,10 +173,7 @@ function equipmentRewardingEncounter(): WaveEncounter {
 }
 
 function idleInput(): SimInput {
-    return {
-        movement: { x: 0, y: 0, running: false },
-        combat: { basicAttack: { held: false }, skills: [] },
-    };
+    return { orders: [], running: false, skills: [] };
 }
 
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {
@@ -191,10 +188,7 @@ function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): voi
 
 function startPhase(world: GameWorld): void {
     const interaction = world.waveEncounter!.activeInteractions[0];
-    world.advance(1 / 120, {
-        ...idleInput(),
-        interaction: { kind: "START", interactionId: interaction.id },
-    });
+    world.advance(1 / 120, { ...idleInput(), startInteraction: interaction.id });
     advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 }
 
@@ -227,19 +221,21 @@ describe("phased wave encounters", () => {
         expect(world.enemies.filter((enemy) => enemy.state !== EnemyState.DEAD)).toHaveLength(1);
     });
 
-    it("cancels an interaction when the player gives movement input", () => {
+    it("cancels an interaction when the player clicks to walk away", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS, () => 0);
         world.startEncounter(phaseEncounter([FIRST_WAVE]), 0, 0, 0);
         const interaction = world.waveEncounter!.activeInteractions[0];
-        world.advance(1 / 120, {
-            ...idleInput(),
-            interaction: { kind: "START", interactionId: interaction.id },
-        });
+        world.advance(1 / 120, { ...idleInput(), startInteraction: interaction.id });
         expect(world.waveEncounter!.interactionState.kind).toBe("EXECUTING");
 
         world.advance(1 / 120, {
             ...idleInput(),
-            movement: { x: 1, y: 0, running: false },
+            orders: [
+                {
+                    kind: OrderEventKind.PRESS,
+                    target: { kind: OrderTargetKind.GROUND, x: 1000, y: 0 },
+                },
+            ],
         });
 
         expect(world.waveEncounter!.interactionState.kind).toBe("IDLE");
@@ -256,10 +252,7 @@ describe("phased wave encounters", () => {
         expect(world.waveEncounter!.phaseLifecycle.kind).toBe("REWARDS");
         expect(world.waveEncounter!.pendingUpgradeOffer).toBeUndefined();
         const rewardInteraction = world.waveEncounter!.activeInteractions[0];
-        world.advance(1 / 120, {
-            ...idleInput(),
-            interaction: { kind: "START", interactionId: rewardInteraction.id },
-        });
+        world.advance(1 / 120, { ...idleInput(), startInteraction: rewardInteraction.id });
         advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 
         expect(world.waveEncounter!.pendingUpgradeOffer?.map(({ id }) => id)).toEqual([
@@ -284,10 +277,7 @@ describe("phased wave encounters", () => {
 
         const killDropIds = new Set(world.groundItems.map((item) => item.id));
         const rewardInteraction = world.waveEncounter!.activeInteractions[0];
-        world.advance(1 / 120, {
-            ...idleInput(),
-            interaction: { kind: "START", interactionId: rewardInteraction.id },
-        });
+        world.advance(1 / 120, { ...idleInput(), startInteraction: rewardInteraction.id });
         advanceSeconds(world, idleInput(), STUB_INTERACTION_DURATION_SECONDS + 0.05);
 
         const chestItems = world.groundItems.filter((item) => !killDropIds.has(item.id));

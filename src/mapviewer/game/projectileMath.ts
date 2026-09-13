@@ -5,6 +5,19 @@ export function directionToRotation(directionX: number, directionY: number): num
     return ((Math.atan2(directionX, directionY) / (Math.PI * 2)) * 2048 + 1024) & 2047;
 }
 
+// Turns from `current` toward `target` by at most maxStep rotation units, the short way round, the
+// way the client turns an npc to a new facing: a half turn goes the increasing way.
+export function turnRotationTowards(current: number, target: number, maxStep: number): number {
+    const wrap = (rotation: number) => ((rotation % 2048) + 2048) % 2048;
+    const delta = wrap(target - current);
+    const remaining = delta > 1024 ? 2048 - delta : delta;
+    if (remaining <= maxStep) {
+        return wrap(target);
+    }
+    const direction = delta > 1024 ? -1 : 1;
+    return wrap(current + direction * maxStep);
+}
+
 export function pitchRadiansToRotationUnits(pitchRadians: number): number {
     return Math.round(pitchRadians / RS_TO_RADIANS) & 2047;
 }

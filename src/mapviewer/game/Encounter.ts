@@ -1,5 +1,6 @@
 import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
 import { Scene } from "../../rs/scene/Scene";
+import { createSoundEffectId } from "../../rs/sound/SoundEffect";
 import { WeaponStyle } from "./Ability";
 import { EnemyTypeId } from "./EnemyType";
 import { EquipmentGrant, styleSetGrant } from "./Equipment";
@@ -17,6 +18,7 @@ import { TransformableGroundDecorations, isTileInMapSquare } from "./LocTransfor
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
+import { SoundPlay } from "./SoundCue";
 import { VisualEffectKind } from "./VisualEffect";
 import {
     WardenP3AnimationIds,
@@ -32,7 +34,6 @@ import {
     WardenP3StartPhase,
     WardenPhantom,
     WardenSlamTarget,
-    WardenSlamTempo,
     WardenStance,
 } from "./WardenP3Director";
 import { wardenPhantomEnemyTypeId } from "./WardenP3Phantoms";
@@ -157,6 +158,13 @@ export type WardenPhantomSpawn = {
     readonly phantom: WardenPhantom;
 };
 
+// The moments of the fight whose sounds the OSRS server sends rather than any animation frame.
+export type WardenP3Sounds = {
+    readonly siphonLanding: SoundPlay;
+    readonly zebakShotBurst: SoundPlay;
+    readonly zebakShotLanding: SoundPlay;
+};
+
 export type WardensP3Script = {
     readonly kind: EncounterScriptKind.WARDENS_P3;
     readonly wardenSpawn: EnemySpawnPoint;
@@ -166,6 +174,7 @@ export type WardensP3Script = {
     readonly wardenAnimations: WardenP3AnimationIds;
     readonly phantomAnimations: WardenPhantomAnimationIds;
     readonly siphonAnimations: WardenSiphonAnimationIds;
+    readonly sounds: WardenP3Sounds;
 };
 
 export type ScriptedEncounter = EncounterCommon & {
@@ -835,22 +844,15 @@ const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
     { x: 3943, y: 5152, level: 0, phantom: WardenPhantom.BABA },
 ];
 
-// RuneLite's NPC_WARDENS_ATTACKLEFT/RIGHT/CENTER, 01 at the normal pace and 02 for the enrage.
-// ATTACKRIGHT is the one whose strike lands on the west half (LEFT), as checked in game. Each impact
-// frame sits on the seq's floor-impact sound. The stance seqs are NPC_WARDENS_CHARGE01/CHARGING01,
-// RELEASE01 back to its IDLE05 and ENRAGING01/ENRAGED01, picked by name.
+// RuneLite's NPC_WARDENS_ATTACKLEFT/RIGHT/CENTER01. ATTACKRIGHT is the one whose strike lands on
+// the west half (LEFT), as checked in game. Each impact frame sits on the seq's floor-impact sound.
+// The stance seqs are NPC_WARDENS_CHARGE01/CHARGING01, RELEASE01 back to its IDLE05 and
+// ENRAGING01/ENRAGED01, picked by name.
 const WARDENS_P3_WARDEN_ANIMATIONS: WardenP3AnimationIds = {
     slams: {
-        [WardenSlamTempo.NORMAL]: {
-            [WardenSlamTarget.LEFT]: { seqId: 9676, impactFrame: 90 },
-            [WardenSlamTarget.RIGHT]: { seqId: 9674, impactFrame: 90 },
-            [WardenSlamTarget.CENTRE]: { seqId: 9678, impactFrame: 86 },
-        },
-        [WardenSlamTempo.FAST]: {
-            [WardenSlamTarget.LEFT]: { seqId: 9677, impactFrame: 50 },
-            [WardenSlamTarget.RIGHT]: { seqId: 9675, impactFrame: 50 },
-            [WardenSlamTarget.CENTRE]: { seqId: 9679, impactFrame: 59 },
-        },
+        [WardenSlamTarget.LEFT]: { seqId: 9676, impactFrame: 90 },
+        [WardenSlamTarget.RIGHT]: { seqId: 9674, impactFrame: 90 },
+        [WardenSlamTarget.CENTRE]: { seqId: 9678, impactFrame: 86 },
     },
     stances: {
         [WardenStance.CHARGING]: { transitionSeqId: 9682, holdSeqId: 9683 },
@@ -862,24 +864,39 @@ const WARDENS_P3_WARDEN_ANIMATIONS: WardenP3AnimationIds = {
 // Zebak's is RuneLite's NPC_ZEBAK01_ATTACK_RANGED, released on the sound as he rears up to throw.
 // Ba-Ba's is NPC_MANDRILL_ATTACK_SPECIAL_JUMP01, released on its landing sound so the rocks come
 // down as the ground shakes. Each rock lands on the frame its graphic (TOA_BABA_ROCK_FALL_FASTEST)
-// switches from falling to shattering.
+// switches from falling to shattering. Zebak's jug bursts after one whole tumble, and what falls out
+// of it lands as the debris shadow under it nears full size, like a siphon.
 const WARDENS_P3_PHANTOM_ANIMATIONS: WardenPhantomAnimationIds = {
     attacks: {
         [WardenPhantom.ZEBAK]: { seqId: 9624, releaseFrame: 65 },
         [WardenPhantom.BABA]: { seqId: 9748, releaseFrame: 53 },
     },
     rockFall: { effect: VisualEffectKind.BABA_ROCK_FALL, landingFrame: 53 },
+    zebakShot: {
+        jugTumbles: 1,
+        fallShadow: { effect: VisualEffectKind.FALLING_SHADOW, landingFrame: 10 },
+    },
 };
 
 // The Warden throws its siphons on NPC_WARDENS_CHARGE01's three-sound burst and pulls them back
 // in on NPC_WARDENS_RELEASE01's second sound. They land as the Grotesque Guardians' debris shadow
 // (the same model and sequence as SPOTANIM_AMASCUT01_STRIKE01_HIGHLIGHT01) nears full size, and
-// leech right after the long opening hold of FX_WARDENS_ENERGY_GROUNDED01.
+// leech right after the long opening hold of FX_WARDENS_ENERGY_GROUNDED01. A reversed siphon turns
+// at the Energy Siphon npc's own rotation speed, 32 units a 20 ms client cycle.
 const WARDENS_P3_SIPHON_ANIMATIONS: WardenSiphonAnimationIds = {
     launchFrame: 84,
     landingShadow: { effect: VisualEffectKind.FALLING_SHADOW, landingFrame: 10 },
     leechFrame: 1,
     recallFrame: 52,
+    turnUnitsPerSecond: 32 / 0.02,
+};
+
+// Nothing names sound ids, so these come from the synths no sequence plays in the Warden's
+// (6030-6270) and Zebak's (5815-5945) blocks, where the ones the server sends must be.
+export const WARDENS_P3_SOUNDS: WardenP3Sounds = {
+    siphonLanding: { soundId: createSoundEffectId(6166), plays: 1, rangeTiles: 15 },
+    zebakShotBurst: { soundId: createSoundEffectId(5865), plays: 1, rangeTiles: 15 },
+    zebakShotLanding: { soundId: createSoundEffectId(5896), plays: 1, rangeTiles: 15 },
 };
 
 const WARDENS_P3: ScriptedEncounter = {
@@ -912,6 +929,7 @@ const WARDENS_P3: ScriptedEncounter = {
         wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
         phantomAnimations: WARDENS_P3_PHANTOM_ANIMATIONS,
         siphonAnimations: WARDENS_P3_SIPHON_ANIMATIONS,
+        sounds: WARDENS_P3_SOUNDS,
     },
 };
 
@@ -934,6 +952,18 @@ export function parseEncounterId(value: string | null): EncounterId {
 
 // The debug ?phase= start (see MapViewerApp): the Wardens P3 fight opened straight into a later
 // phase. Any other encounter has no phases to start in.
+// The sounds an encounter's script plays at its own moments, which render-sfx renders and the
+// encounter loads beside its sequences' frame sounds.
+export function encounterScriptSounds(encounter: Encounter): readonly SoundPlay[] {
+    if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
+        return [];
+    }
+    switch (encounter.script.kind) {
+        case EncounterScriptKind.WARDENS_P3:
+            return Object.values(encounter.script.sounds);
+    }
+}
+
 export function encounterStartingAt(
     encounter: Encounter,
     startPhase: WardenP3StartPhase,

@@ -2,7 +2,7 @@ import { LocTransform, REST_LOC_TRANSFORM } from "./LocTransform";
 import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaTile,
-    pullWardenP3ArenaTile,
+    pullWardenP3ArenaTiles,
     wardenP3ArenaTile,
     wardenP3FloorSlamTiles,
     wardenP3SolidFloorTiles,
@@ -167,11 +167,13 @@ describe("Wardens P3 floor slam", () => {
     });
 
     it("hides pulled tiles, even under a slam, and leaves the rest of the floor alone", () => {
-        const first = pullWardenP3ArenaTile(WARDEN_P3_INITIAL_ARENA_FLOOR, () => 0.5);
-        const second = pullWardenP3ArenaTile(first.floor, () => 0.5);
-        const floor = second.floor;
+        const { floor, tiles } = pullWardenP3ArenaTiles(
+            WARDEN_P3_INITIAL_ARENA_FLOOR,
+            2,
+            () => 0.5,
+        );
         const slam = slamAt(WardenSlamTarget.CENTRE, 0);
-        for (const pulled of [first.tile, second.tile]) {
+        for (const pulled of tiles) {
             const arrival = floorSlamArrivalSeconds(slam, pulled) ?? 0;
             expect(wardenP3FloorTilePose([slam], floor, pulled, arrival + 0.05)).toEqual({
                 kind: "HIDDEN",

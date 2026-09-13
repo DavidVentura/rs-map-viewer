@@ -1,19 +1,14 @@
 import { SeqSoundEffect } from "../../rs/config/seqtype/SeqType";
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { SoundEffectId, createSoundEffectId } from "../../rs/sound/SoundEffect";
+import { createSoundEffectId } from "../../rs/sound/SoundEffect";
 import { actorAssets } from "../assets/ActorAssets";
 import { declaredSeqIds } from "../assets/cacheRoots";
 import { Encounter } from "../game/Encounter";
 import { SeqCatalog } from "../game/SeqCatalog";
+import { SoundPlay } from "../game/SoundCue";
 
 // A sound a sequence plays when one of its frames is entered.
-export type FrameSound = {
-    readonly soundId: SoundEffectId;
-    // Every play after the first repeats only the sound's own loop (see repeatSoundLoop).
-    readonly plays: number;
-    // Tiles over which the sound fades out around its source; 0 plays it at full volume anywhere.
-    readonly rangeTiles: number;
-};
+export type FrameSound = SoundPlay;
 
 export type SeqFrameSounds = {
     // The frames the game plays of the sequence (see SeqTiming).
@@ -25,7 +20,7 @@ export type SeqFrameSounds = {
 export type SeqSoundCatalog = ReadonlyMap<number, SeqFrameSounds>;
 
 // A rendered file: a sound at a play count, since repeats are rendered into it (see render-sfx).
-export type SfxClip = Pick<FrameSound, "soundId" | "plays">;
+export type SfxClip = Pick<SoundPlay, "soundId" | "plays">;
 
 export const SFX_DIR = "audio/sfx";
 
@@ -97,13 +92,14 @@ export function loadSeqSoundCatalog(
     return catalog;
 }
 
-export function sfxClips(catalog: SeqSoundCatalog): SfxClip[] {
+// Every file an encounter plays: its sequences' frame sounds and the sounds its script cues at its
+// own moments (see encounterScriptSounds).
+export function sfxClips(catalog: SeqSoundCatalog, scriptSounds: readonly SoundPlay[]): SfxClip[] {
+    const frameSounds = [...catalog.values()].flatMap(({ byFrame }) => [...byFrame.values()]);
     const clips = new Map<string, SfxClip>();
-    for (const { byFrame } of catalog.values()) {
-        for (const { soundId, plays } of byFrame.values()) {
-            const clip = { soundId, plays };
-            clips.set(sfxClipPath(clip), clip);
-        }
+    for (const { soundId, plays } of [...frameSounds, ...scriptSounds]) {
+        const clip = { soundId, plays };
+        clips.set(sfxClipPath(clip), clip);
     }
     return [...clips.values()];
 }
