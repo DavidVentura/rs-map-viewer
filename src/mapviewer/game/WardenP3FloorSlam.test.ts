@@ -57,6 +57,58 @@ function peakPose(slam: FloorSlam, tile: WardenP3ArenaTile) {
     return peak;
 }
 
+type EdgeName = "NORTH" | "EAST" | "SOUTH" | "WEST";
+
+// A point on the tile's top, in world units from its centre.
+type TopPoint = { readonly east: number; readonly north: number };
+
+const HALF_TILE = 64;
+
+const EDGE_CORNERS: Readonly<Record<EdgeName, readonly [TopPoint, TopPoint]>> = {
+    NORTH: [
+        { east: -HALF_TILE, north: HALF_TILE },
+        { east: HALF_TILE, north: HALF_TILE },
+    ],
+    EAST: [
+        { east: HALF_TILE, north: -HALF_TILE },
+        { east: HALF_TILE, north: HALF_TILE },
+    ],
+    SOUTH: [
+        { east: -HALF_TILE, north: -HALF_TILE },
+        { east: HALF_TILE, north: -HALF_TILE },
+    ],
+    WEST: [
+        { east: -HALF_TILE, north: -HALF_TILE },
+        { east: -HALF_TILE, north: HALF_TILE },
+    ],
+};
+
+const OPPOSITE_EDGE_NAME: Readonly<Record<EdgeName, EdgeName>> = {
+    NORTH: "SOUTH",
+    EAST: "WEST",
+    SOUTH: "NORTH",
+    WEST: "EAST",
+};
+
+// Height above rest of a point on the tile's top once posed the way the loc shader does it: north
+// tilt, then east tilt, then lift, in model space where y points down and z north.
+function poseHeight(pose: Extract<LocTransform, { readonly kind: "SHOWN" }>, point: TopPoint) {
+    const y = -point.north * Math.sin(pose.northTilt);
+    return pose.lift - (y * Math.cos(pose.eastTilt) - point.east * Math.sin(pose.eastTilt));
+}
+
+// The one edge whose corners both stay at rest height.
+function hingeOf(pose: Extract<LocTransform, { readonly kind: "SHOWN" }>): EdgeName {
+    const edges = Object.keys(EDGE_CORNERS) as EdgeName[];
+    const hinges = edges.filter((edge) =>
+        EDGE_CORNERS[edge].every((corner) => Math.abs(poseHeight(pose, corner)) < 1e-6),
+    );
+    if (hinges.length !== 1) {
+        throw new Error(`Expected one edge at rest height, found ${hinges.join(", ") || "none"}`);
+    }
+    return hinges[0];
+}
+
 describe("Wardens P3 floor slam", () => {
     it("reaches each tile in Chebyshev rings from the Warden-adjacent origin", () => {
         const slam = slamAt(WardenSlamTarget.RIGHT, 2);
@@ -91,7 +143,7 @@ describe("Wardens P3 floor slam", () => {
         }
     });
 
-    it("mirrors a left slam onto a right slam, tipping each side outward", () => {
+    it("mirrors a left slam's front onto a right slam's", () => {
         const right = slamAt(WardenSlamTarget.RIGHT, 0);
         const left = slamAt(WardenSlamTarget.LEFT, 0);
 
@@ -99,24 +151,85 @@ describe("Wardens P3 floor slam", () => {
             const mirrored = wardenP3ArenaTile(2 * CENTRE_X - tile.x, tile.y);
             expect(arrival(left, mirrored)).toBeCloseTo(arrival(right, tile), 9);
         }
+    });
 
-        const rightSideLeg = peakPose(right, wardenP3ArenaTile(3942, 5159));
-        const leftSideLeg = peakPose(left, wardenP3ArenaTile(3930, 5159));
-        expect(rightSideLeg.eastTilt).toBeGreaterThan(0);
-        expect(leftSideLeg.eastTilt).toBeLessThan(0);
-        expect(rightSideLeg.northTilt).toBe(0);
-        expect(leftSideLeg.northTilt).toBe(0);
+    it("tips every tile on one edge, which holds rest height while the opposite edge rises", () => {
+        const slam = slamAt(WardenSlamTarget.RIGHT, 0);
+        for (const tile of wardenP3FloorSlamTiles(WardenSlamTarget.RIGHT)) {
+            const pose = peakPose(slam, tile);
+            const hinge = hingeOf(pose);
+            const [freeA, freeB] = EDGE_CORNERS[OPPOSITE_EDGE_NAME[hinge]];
 
-        const rightFarLeg = peakPose(right, wardenP3ArenaTile(3937, 5165));
-        const leftFarLeg = peakPose(left, wardenP3ArenaTile(3935, 5165));
-        expect(rightFarLeg.northTilt).toBeGreaterThan(0);
-        expect(leftFarLeg.northTilt).toBeGreaterThan(0);
-        expect(rightFarLeg.eastTilt).toBe(0);
-        expect(leftFarLeg.eastTilt).toBe(0);
+            expect(pose.lift).toBeGreaterThan(0);
+            expect(poseHeight(pose, freeA)).toBeCloseTo(2 * pose.lift, 6);
+            expect(poseHeight(pose, freeB)).toBeCloseTo(2 * pose.lift, 6);
+        }
+    });
 
-        const rightCorner = peakPose(right, wardenP3ArenaTile(3940, 5161));
-        expect(rightCorner.eastTilt).toBeGreaterThan(0);
-        expect(rightCorner.northTilt).toBeGreaterThan(0);
+    it("hinges tiles on varied edges, mostly the one facing the front's origin", () => {
+        const slam = slamAt(WardenSlamTarget.RIGHT, 0);
+        const counts = new Map<string, number>();
+        let facingOrigin = 0;
+        let legTiles = 0;
+        for (const tile of wardenP3FloorSlamTiles(WardenSlamTarget.RIGHT)) {
+            const offsetX = tile.x - CENTRE_X;
+            const offsetY = tile.y - NEAREST_ROW_Y;
+            if (Math.abs(offsetX) === Math.abs(offsetY)) {
+                continue;
+            }
+            const hinge = hingeOf(peakPose(slam, tile));
+            const towardOrigin =
+                Math.abs(offsetX) > Math.abs(offsetY)
+                    ? offsetX > 0
+                        ? "WEST"
+                        : "EAST"
+                    : offsetY > 0
+                    ? "SOUTH"
+                    : "NORTH";
+            counts.set(hinge, (counts.get(hinge) ?? 0) + 1);
+            legTiles++;
+            if (hinge === towardOrigin) {
+                facingOrigin++;
+            }
+        }
+
+        expect(counts.size).toBeGreaterThanOrEqual(3);
+        expect(facingOrigin).toBeGreaterThan(legTiles / 2);
+        expect(facingOrigin).toBeLessThan(legTiles);
+    });
+
+    it("swings each tile back past flat exactly once before it rests", () => {
+        const slam = slamAt(WardenSlamTarget.LEFT, 0);
+        for (const tile of wardenP3FloorSlamTiles(WardenSlamTarget.LEFT)) {
+            const tileArrival = floorSlamArrivalSeconds(slam, tile);
+            if (tileArrival === undefined) {
+                continue;
+            }
+            const signs: number[] = [];
+            for (let time = tileArrival; time <= floorSlamEndsAtSeconds(slam); time += 0.001) {
+                const sign = Math.sign(shown(floorTilePose([slam], tile, time)).lift);
+                if (sign !== 0 && sign !== signs[signs.length - 1]) {
+                    signs.push(sign);
+                }
+            }
+            expect(signs).toEqual([1, -1]);
+        }
+    });
+
+    it("poses a tile the same way for the same time since the slam, whenever it starts", () => {
+        const early = slamAt(WardenSlamTarget.CENTRE, 0);
+        const late = slamAt(WardenSlamTarget.CENTRE, 7.5);
+        const again = slamAt(WardenSlamTarget.CENTRE, 0);
+        for (const tile of wardenP3FloorSlamTiles(WardenSlamTarget.CENTRE)) {
+            for (let time = 0; time <= floorSlamEndsAtSeconds(early); time += 0.037) {
+                const pose = shown(floorTilePose([early], tile, time));
+                const latePose = shown(floorTilePose([late], tile, time + 7.5));
+                expect(floorTilePose([again], tile, time)).toEqual(pose);
+                expect(latePose.lift).toBeCloseTo(pose.lift, 6);
+                expect(latePose.northTilt).toBeCloseTo(pose.northTilt, 6);
+                expect(latePose.eastTilt).toBeCloseTo(pose.eastTilt, 6);
+            }
+        }
     });
 
     it("never moves or damages the centre column in a centre slam", () => {

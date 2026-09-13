@@ -346,8 +346,11 @@ export const WARDEN_P3_ARENA_ROW_COUNT = ARENA_ROW_COUNT;
 
 // The floor's ground decorations sit on the map square's level 1 while the fight's actors stand on
 // level 0 (see WARDEN_P3_LEVEL), hence the separate level.
+// 2228 SPOTANIM_WARDENS_TILES01 is the tile the Warden pulls, drawn as a slab: 45648's top with
+// sides and a bottom.
 export const WARDEN_P3_FLOOR_DECORATIONS: TransformableGroundDecorations = {
     level: 1,
     locIds: [45646, 45647, 45648],
     tiles: WARDEN_P3_FLOOR_TILES,
+    slabSpotAnimId: 2228,
 };

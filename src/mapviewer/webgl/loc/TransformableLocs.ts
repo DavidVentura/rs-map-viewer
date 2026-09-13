@@ -28,8 +28,29 @@ export type TransformableLocData = {
     readonly tile: LocTile;
 };
 
+// The faces of a lit slab model that reach below its top plane, where a flat ground decoration's
+// top lies (model y points down): the slab's sides and bottom. The rest are hidden the way the
+// cache hides a face.
+function slabUnderside(slab: Model): Model {
+    const underside = Model.copy(slab);
+    for (let face = 0; face < underside.faceCount; face++) {
+        const vertices = [
+            underside.indices1[face],
+            underside.indices2[face],
+            underside.indices3[face],
+        ];
+        if (!vertices.some((vertex) => underside.verticesY[vertex] > 0)) {
+            underside.faceColors3[face] = -2;
+        }
+    }
+    return underside;
+}
+
+// Each resolved decoration carries its declaration's slab underside (see slabSpotAnimId), cut from
+// the lit model loadSpotAnimModel returns.
 export function resolveTransformableGroundDecorations(
     locTypeLoader: LocTypeLoader,
+    loadSpotAnimModel: (spotAnimId: number) => Model,
     scene: Scene,
     declarations: readonly TransformableGroundDecorations[],
     baseX: number,
@@ -39,7 +60,8 @@ export function resolveTransformableGroundDecorations(
 ): TransformableSceneLoc[] {
     const sceneOffset = borderSize * -128;
     const resolved: TransformableSceneLoc[] = [];
-    for (const { level, locIds, tiles } of declarations) {
+    for (const { level, locIds, tiles, slabSpotAnimId } of declarations) {
+        const underside = slabUnderside(loadSpotAnimModel(slabSpotAnimId));
         for (const tile of tiles) {
             const tileX = tile.x - baseX;
             const tileY = tile.y - baseY;
@@ -74,11 +96,17 @@ export function resolveTransformableGroundDecorations(
                     `The ground decoration at ${where} is animated or varbit driven, which loc transforms do not pose`,
                 );
             }
+            // Merging drops the contour, which would move the decoration.
+            if (decoration.entity.contourVerticesY) {
+                throw new Error(
+                    `The ground decoration at ${where} follows the ground's contour, which its slab does not`,
+                );
+            }
             resolved.push({
                 sceneLoc: decoration,
                 sceneModel: createSceneModel(
                     locTypeLoader,
-                    decoration.entity,
+                    Model.merge([decoration.entity, underside], 2),
                     decoration,
                     sceneOffset,
                     sceneOffset,

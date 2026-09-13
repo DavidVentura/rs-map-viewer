@@ -16,6 +16,10 @@ export type TransformableGroundDecorations = {
     readonly level: number;
     readonly locIds: readonly number[];
     readonly tiles: readonly LocTile[];
+    // A spot anim whose model is one of these decorations as a slab. The decorations are flat, so
+    // the bake adds that model's faces below the top plane under each of them, and a lifted or
+    // tilted one shows the slab's sides; at rest the neighbouring tops hide them.
+    readonly slabSpotAnimId: number;
 };
 
 // Tilts are rotations about the loc's own origin; a positive northTilt raises its north (+y)

@@ -42,9 +42,26 @@ import { SkinAnimation } from "../skin/SkinAnimation";
 import { SkinPaletteBuilder } from "../skin/SkinPaletteBuilder";
 import { SkinnedMeshBuilder } from "../skin/SkinnedMeshBuilder";
 import { Skinning, skinnedGeometryTransferables } from "../skin/Skinning";
+import { buildSpotAnimModel } from "./ActorModels";
 import { SdMapData } from "./SdMapData";
 import { SdMapLoaderInput } from "./SdMapLoaderInput";
 import { buildTextureIdIndexMap } from "./TextureIndexMap";
+
+function loadSpotAnimModel(state: WorkerState, spotAnimId: number): Model {
+    const spotAnimTypeLoader = state.cacheLoaderFactory.getSpotAnimTypeLoader();
+    if (!spotAnimTypeLoader) {
+        throw new Error("Spot animations are not available in this cache");
+    }
+    const model = buildSpotAnimModel(
+        state.cacheLoaderFactory.getModelLoader(),
+        state.textureLoader,
+        spotAnimTypeLoader.load(spotAnimId),
+    );
+    if (!model) {
+        throw new Error(`Spot anim ${spotAnimId} has no model`);
+    }
+    return model;
+}
 
 function loadHeightMapTextureData(scene: Scene): Int16Array {
     const heightMapTextureData = new Int16Array(Scene.MAX_LEVELS * scene.sizeX * scene.sizeY);
@@ -536,6 +553,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
 
         const transformableLocs = resolveTransformableGroundDecorations(
             locTypeLoader,
+            (spotAnimId) => loadSpotAnimModel(state, spotAnimId),
             scene,
             transformableGroundDecorations,
             baseX,

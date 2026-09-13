@@ -108,17 +108,32 @@ export function declaredSeqIds(assets: ActorAssets): readonly number[] {
     return [...new Set(actorRoots(assets).seqIds)];
 }
 
-// The cache ids an encounter reads by game-declared id: its map squares and everything its actor
-// buffer is baked from. Whatever the cache itself references from these (models, frames, textures,
-// locs) is left for the pack resolver to follow, and the spawns inside the squares for the pack
-// server to add (see packRequest).
+// The slabs the map bake gives its transformable ground decorations.
+function transformableDecorationRoots(encounter: Encounter): RootIds {
+    return {
+        ...NO_ROOTS,
+        spotAnimIds: encounter.transformableGroundDecorations.map(
+            (declaration) => declaration.slabSpotAnimId,
+        ),
+    };
+}
+
+// The cache ids an encounter reads by game-declared id: its map squares, the slabs of its
+// transformable ground decorations and everything its actor buffer is baked from. Whatever the
+// cache itself references from these (models, frames, textures, locs) is left for the pack
+// resolver to follow, and the spawns inside the squares for the pack server to add (see
+// packRequest).
 export function cacheRoots(
     encounter: Encounter,
     preview: AnimPreviewParams | undefined,
 ): CacheRoots {
     return canonicalCacheRoots({
         mapSquares: encounter.mapSquares,
-        ...mergeRoots([actorRoots(actorAssets(encounter, preview)), hudRoots()]),
+        ...mergeRoots([
+            actorRoots(actorAssets(encounter, preview)),
+            transformableDecorationRoots(encounter),
+            hudRoots(),
+        ]),
     });
 }
 
