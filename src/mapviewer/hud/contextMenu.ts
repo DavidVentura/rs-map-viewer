@@ -10,6 +10,7 @@ export enum MenuTargetKind {
     WORLD_OBJECT = "WORLD_OBJECT",
     GROUND_ITEM = "GROUND_ITEM",
     ENEMY = "ENEMY",
+    ENERGY_SIPHON = "ENERGY_SIPHON",
 }
 
 // A lever/chest with an active interaction. verb/name come from the loc's own LocType (see
@@ -35,7 +36,19 @@ export type EnemyMenuTarget = {
     readonly combatLevel: number;
 };
 
-export type MenuTarget = WorldObjectMenuTarget | GroundItemMenuTarget | EnemyMenuTarget;
+// A hostile energy siphon under the cursor - a non-combat encounter actor (see EncounterActor.ts),
+// not an enemy, so it carries no combat level.
+export type EnergySiphonMenuTarget = {
+    readonly kind: MenuTargetKind.ENERGY_SIPHON;
+    readonly siphonId: number;
+    readonly name: string;
+};
+
+export type MenuTarget =
+    | WorldObjectMenuTarget
+    | GroundItemMenuTarget
+    | EnemyMenuTarget
+    | EnergySiphonMenuTarget;
 
 export const TAKE_VERB = "Take";
 export const ATTACK_VERB = "Attack";
@@ -49,6 +62,7 @@ export enum MenuActionKind {
     START_INTERACTION = "START_INTERACTION",
     PICK_UP_GROUND_ITEM = "PICK_UP_GROUND_ITEM",
     ATTACK_ENEMY = "ATTACK_ENEMY",
+    ATTACK_ENERGY_SIPHON = "ATTACK_ENERGY_SIPHON",
     CANCEL = "CANCEL",
 }
 
@@ -56,6 +70,7 @@ export type MenuAction =
     | { readonly kind: MenuActionKind.START_INTERACTION; readonly interactionId: InteractionId }
     | { readonly kind: MenuActionKind.PICK_UP_GROUND_ITEM; readonly groundItemId: number }
     | { readonly kind: MenuActionKind.ATTACK_ENEMY; readonly enemyId: number }
+    | { readonly kind: MenuActionKind.ATTACK_ENERGY_SIPHON; readonly siphonId: number }
     | { readonly kind: MenuActionKind.CANCEL };
 
 function actionForTarget(target: MenuTarget): MenuAction {
@@ -69,6 +84,8 @@ function actionForTarget(target: MenuTarget): MenuAction {
             return { kind: MenuActionKind.PICK_UP_GROUND_ITEM, groundItemId: target.groundItemId };
         case MenuTargetKind.ENEMY:
             return { kind: MenuActionKind.ATTACK_ENEMY, enemyId: target.enemyId };
+        case MenuTargetKind.ENERGY_SIPHON:
+            return { kind: MenuActionKind.ATTACK_ENERGY_SIPHON, siphonId: target.siphonId };
     }
 }
 
@@ -155,6 +172,11 @@ export function menuEntryTextRuns(entry: MenuEntry): readonly MenuTextRun[] {
                 { text: `${ATTACK_VERB} `, role: "verb" },
                 { text: target.name, role: "npcName" },
                 { text: ` (level-${target.combatLevel})`, role: "npcLevel" },
+            ];
+        case MenuTargetKind.ENERGY_SIPHON:
+            return [
+                { text: `${ATTACK_VERB} `, role: "verb" },
+                { text: target.name, role: "npcName" },
             ];
     }
 }

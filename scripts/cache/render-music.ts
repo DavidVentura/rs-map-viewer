@@ -28,6 +28,7 @@ type Track = {
 const TRACKS: readonly Track[] = [
     { dbRowName: "Harmony", outFile: "harmony.opus" },
     { dbRowName: "TzHaar!", outFile: "tzhaar.opus" },
+    { dbRowName: "Amascut's Promise", outFile: "amascuts-promise.opus" },
 ];
 
 function transcodeTrack(dbRowArchive: Archive, musicIndex: CacheIndex, dbRowName: string): Buffer {

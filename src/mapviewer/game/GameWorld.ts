@@ -23,6 +23,14 @@ import { Combatant } from "./Combatant";
 import { HitEffect, applyPayloads, hitEffectHoldSeconds } from "./Effect";
 import { affectedCombatants, coneTileSpawns } from "./EffectResolution";
 import { Encounter, EncounterScriptKind, EncounterSpawnMode, ScriptedEncounter } from "./Encounter";
+import {
+    EncounterActor,
+    EncounterActorKind,
+    EnergySiphonActor,
+    createEnergySiphonActor,
+    createPhantomActor,
+    updateEncounterActor,
+} from "./EncounterActor";
 import { EncounterAnimations } from "./EncounterAnimations";
 import { Enemy, EnemyState, computeChaseMovement } from "./Enemy";
 import {
@@ -33,10 +41,10 @@ import {
     resolveTriggeredBossPhase,
 } from "./EnemyType";
 import {
-    EnergySiphonActor,
     EnergySiphonImpactKind,
     EnergySiphonImpactResult,
     EnergySiphonState,
+    HOSTILE_ENERGY_SIPHON,
     resolveEnergySiphonImpact,
 } from "./EnergySiphon";
 import { EquipmentChange, EquipmentGrantId, createEquipmentGrant } from "./Equipment";
@@ -90,20 +98,19 @@ import {
     VisualEffect,
     VisualEffectAnchor,
     VisualEffectKind,
-    WardenFloorTileEffect,
     casterEffectAnchor,
     casterEffectTiming,
 } from "./VisualEffect";
 import {
-    WARDEN_P3_SLAM_ACTIVE_SECONDS,
-    WardenP3FloorSlam,
-    wardenP3ArenaRow,
-    wardenP3ArenaTile,
-    wardenP3FloorSlamWave,
-    wardenP3RowForTile,
+    WARDEN_P3_INITIAL_ARENA_FLOOR,
+    WardenP3ArenaFloor,
+    destroyFurthestWardenP3ArenaRow,
+    wardenP3ArenaTerrain,
+    wardenP3DestroyedRowDistances,
     wardenP3RowTiles,
 } from "./WardenP3Arena";
 import {
+    ParsedWardenP3Arena,
     WardenP3Arena,
     WardenP3Command,
     WardenP3Intermission,
@@ -114,8 +121,15 @@ import {
     WardenSiphonStatus,
     WardenSlamTarget,
     initialWardenP3State,
+    parseWardenP3Arena,
     stepWardenP3,
 } from "./WardenP3Director";
+import {
+    FloorSlam,
+    floorSlamEndsAtSeconds,
+    floorSlamTilesArriving,
+    wardenP3SlamShockwave,
+} from "./WardenP3FloorSlam";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import {
     WaveDirectorState,
@@ -169,13 +183,6 @@ export type ScheduledVisualEffect = {
     readonly hitEffect: HitEffect;
     readonly anchor: VisualEffectAnchor;
     readonly startsAt: number;
-    readonly speed: number;
-};
-
-type ScheduledWardenSlamTile = {
-    readonly tile: WardenP3Tile;
-    readonly startsAt: number;
-    readonly damaging: boolean;
 };
 
 export type WardenP3RenderState = {
@@ -188,11 +195,12 @@ export type WardenP3RenderState = {
     readonly lightningWarningTarget: WardenP3Tile | undefined;
     readonly lightningTarget: WardenP3Tile | undefined;
     readonly removedArenaRows: readonly number[];
+    readonly floorSlams: readonly FloorSlam[];
 };
 
 type WardenP3Runtime = {
     readonly wardenId: number;
-    readonly arena: WardenP3Arena;
+    readonly arena: ParsedWardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
     state: WardenP3State;
     siphonStatus: WardenSiphonStatus;
@@ -205,7 +213,12 @@ type WardenP3Runtime = {
     lastPhantomAttack: WardenPhantom | undefined;
     lightningWarningTarget: WardenP3Tile | undefined;
     lightningTarget: WardenP3Tile | undefined;
-    removedArenaRows: readonly number[];
+    floor: WardenP3ArenaFloor;
+    // Slams whose front is still travelling or whose last tiles are still settling.
+    floorSlams: readonly FloorSlam[];
+    // Arrivals up to this time have already hit, so each tile's arrival is resolved exactly once
+    // even when it lands on a step boundary.
+    floorSlamsResolvedUntilSeconds: number;
 };
 
 export class GameWorld {
@@ -213,7 +226,7 @@ export class GameWorld {
     static readonly MAX_ACCUMULATED_SECONDS = 0.1;
     static readonly MAX_PROJECTILES = 32;
     static readonly PROJECTILE_LAUNCH_OFFSET = 48;
-    static readonly MAX_VISUAL_EFFECTS = 256;
+    static readonly MAX_VISUAL_EFFECTS = 64;
     static readonly ENEMY_RESPAWN_SECONDS = 5;
     // How long a corpse stays after its death animation reaches its final pose, so long death
     // animations (Jad) play out in full while short ones get swept up quickly.
@@ -227,18 +240,21 @@ export class GameWorld {
     timeSeconds = 0;
     player?: Player;
     enemies: Enemy[] = [];
-    energySiphons: EnergySiphonActor[] = [];
+    // Non-combat encounter props (Wardens P3 phantoms and energy siphons) - never in combatants(),
+    // enemy AI, wave/kill bookkeeping or damage paths (see EncounterActor.ts).
+    encounterActors: EncounterActor[] = [];
     projectiles: Projectile[] = [];
     visualEffects: VisualEffect[] = [];
     // Effects due to start later (see landCone's outward ripple), holding their share of the
     // MAX_VISUAL_EFFECTS budget from the moment they're scheduled.
     pendingVisualEffects: ScheduledVisualEffect[] = [];
-    private pendingWardenSlamTiles: ScheduledWardenSlamTile[] = [];
     groundItems: GroundItem[] = [];
     private events: CombatEvent[] = [];
 
     private accumulatedSeconds = 0;
-    private nextEnemyId = 1;
+    // Shared with encounterActors so ids stay unique across both (hover picking looks an id up in
+    // either list without needing to know which kind it belongs to).
+    private nextActorId = 1;
     private nextGroundItemId = 1;
 
     private encounter?: Encounter;
@@ -258,10 +274,18 @@ export class GameWorld {
     private gearOverride: readonly EquipmentChange[] = [];
 
     constructor(
-        private readonly terrain: Terrain,
+        private readonly baseTerrain: Terrain,
         private readonly animations: EncounterAnimations,
         private readonly random: RandomSource = Math.random,
     ) {}
+
+    // Wardens P3 destroys arena floor rows at runtime; composing that over the base terrain here
+    // means every movement path that consults Terrain (pathing, chase steering, click-to-walk, the
+    // player's own movement) rejects destroyed rows without each caller knowing about the fight.
+    private get terrain(): Terrain {
+        const runtime = this.wardenP3Runtime;
+        return runtime ? wardenP3ArenaTerrain(this.baseTerrain, runtime.floor) : this.baseTerrain;
+    }
 
     // The debug god mode toggle (see MapViewerControls) survives across spawnPlayer calls, unlike
     // the Player instance itself, which is recreated on every startEncounter.
@@ -301,11 +325,10 @@ export class GameWorld {
         this.spawnPlayer(x, y, level);
         this.encounter = encounter;
         this.enemies = [];
-        this.energySiphons = [];
+        this.encounterActors = [];
         this.projectiles = [];
         this.visualEffects = [];
         this.pendingVisualEffects = [];
-        this.pendingWardenSlamTiles = [];
         this.groundItems = [];
         this.enemyWaveIndex.clear();
         this.triggeredBossPhases.clear();
@@ -336,11 +359,10 @@ export class GameWorld {
     abortEncounter(): void {
         this.player = undefined;
         this.enemies = [];
-        this.energySiphons = [];
+        this.encounterActors = [];
         this.projectiles = [];
         this.visualEffects = [];
         this.pendingVisualEffects = [];
-        this.pendingWardenSlamTiles = [];
         this.groundItems = [];
         this.encounter = undefined;
         this.phaseLifecycle = undefined;
@@ -369,7 +391,8 @@ export class GameWorld {
             lastPhantomAttack: runtime.lastPhantomAttack,
             lightningWarningTarget: runtime.lightningWarningTarget,
             lightningTarget: runtime.lightningTarget,
-            removedArenaRows: runtime.removedArenaRows,
+            removedArenaRows: wardenP3DestroyedRowDistances(runtime.floor),
+            floorSlams: runtime.floorSlams,
         };
     }
 
@@ -383,12 +406,13 @@ export class GameWorld {
             throw new Error(`Cannot start Wardens P3 without Warden enemy ${wardenId}`);
         }
         validateWardenP3SiphonLayout(siphonLayout);
+        const parsedArena = parseWardenP3Arena(arena);
         warden.invulnerable = false;
         this.wardenP3Runtime = {
             wardenId,
-            arena,
+            arena: parsedArena,
             siphonLayout,
-            state: initialWardenP3State(this.timeSeconds, arena),
+            state: initialWardenP3State(this.timeSeconds, parsedArena),
             siphonStatus: WardenSiphonStatus.NONE,
             siphonDeadlineAtSeconds: undefined,
             commands: [],
@@ -399,7 +423,9 @@ export class GameWorld {
             lastPhantomAttack: undefined,
             lightningWarningTarget: undefined,
             lightningTarget: undefined,
-            removedArenaRows: [],
+            floor: WARDEN_P3_INITIAL_ARENA_FLOOR,
+            floorSlams: [],
+            floorSlamsResolvedUntilSeconds: this.timeSeconds,
         };
     }
 
@@ -526,23 +552,25 @@ export class GameWorld {
     private startScriptedEncounter(encounter: ScriptedEncounter): void {
         switch (encounter.script.kind) {
             case EncounterScriptKind.WARDENS_P3: {
-                const { wardenSpawn, arena, siphonLayout } = encounter.script;
+                const { wardenSpawn, phantomSpawns, arena, siphonLayout } = encounter.script;
                 const wardenId = this.spawnEnemyAtExactPosition(
                     wardenSpawn.x,
                     wardenSpawn.y,
                     wardenSpawn.level,
                     this.animations.enemyType(EnemyTypeId.TUMEKENS_WARDEN),
                 );
-                this.spawnWardenPhantomObserver(3922, 5152, EnemyTypeId.ZEBAK_PHANTOM);
-                this.spawnWardenPhantomObserver(3946, 5152, EnemyTypeId.BABA_PHANTOM);
+                for (const phantomSpawn of phantomSpawns) {
+                    this.spawnWardenPhantomObserver(
+                        phantomSpawn.x,
+                        phantomSpawn.y,
+                        phantomSpawn.enemyTypeId,
+                    );
+                }
                 const platformFacing = directionToRotation(0, 1);
                 this.findEnemy(wardenId)!.rotation = platformFacing;
-                for (const enemy of this.enemies) {
-                    if (
-                        enemy.type.id === EnemyTypeId.ZEBAK_PHANTOM ||
-                        enemy.type.id === EnemyTypeId.BABA_PHANTOM
-                    ) {
-                        enemy.rotation = platformFacing;
+                for (const actor of this.encounterActors) {
+                    if (actor.kind === EncounterActorKind.PHANTOM) {
+                        actor.rotation = platformFacing;
                     }
                 }
                 this.startWardenP3Runtime(wardenId, arena, siphonLayout);
@@ -563,7 +591,7 @@ export class GameWorld {
         statsOverride?: EnemyStatsOverride,
     ): number {
         const spawn = resolveSpawn(this.terrain, level, x, y);
-        const id = this.nextEnemyId++;
+        const id = this.nextActorId++;
         this.enemies.push(
             new Enemy(id, spawn.x, spawn.y, level, spawn.x, spawn.y, enemyType, statsOverride),
         );
@@ -576,36 +604,39 @@ export class GameWorld {
         level: number,
         enemyType: ResolvedEnemyType,
     ): number {
-        const id = this.nextEnemyId++;
+        const id = this.nextActorId++;
         this.enemies.push(new Enemy(id, x, y, level, x, y, enemyType));
         return id;
     }
 
     private spawnWardenPhantomObserver(tileX: number, tileY: number, typeId: EnemyTypeId): void {
-        const id = this.spawnEnemyAtExactPosition(
-            (tileX + 2.5) * TILE_SIZE,
-            (tileY + 2.5) * TILE_SIZE,
-            0,
-            this.animations.enemyType(typeId),
+        this.encounterActors.push(
+            createPhantomActor(
+                this.nextActorId++,
+                (tileX + 2.5) * TILE_SIZE,
+                (tileY + 2.5) * TILE_SIZE,
+                0,
+                this.animations.enemyType(typeId),
+                0,
+            ),
         );
-        this.findEnemy(id)!.invulnerable = true;
     }
 
     findEnemy(id: number): Enemy | undefined {
         return this.enemies.find((enemy) => enemy.id === id);
     }
 
+    findEncounterActor(id: number): EncounterActor | undefined {
+        return this.encounterActors.find((actor) => actor.id === id);
+    }
+
     findEnergySiphon(id: number): EnergySiphonActor | undefined {
-        return this.energySiphons.find((siphon) => siphon.id === id);
+        const actor = this.findEncounterActor(id);
+        return actor?.kind === EncounterActorKind.ENERGY_SIPHON ? actor : undefined;
     }
 
     combatants(): Combatant[] {
-        const combatants: Combatant[] = this.enemies.filter(
-            (enemy) =>
-                enemy.type.id !== EnemyTypeId.ENERGY_SIPHON &&
-                enemy.type.id !== EnemyTypeId.ZEBAK_PHANTOM &&
-                enemy.type.id !== EnemyTypeId.BABA_PHANTOM,
-        );
+        const combatants: Combatant[] = [...this.enemies];
         if (this.player) {
             combatants.push(this.player);
         }
@@ -646,12 +677,14 @@ export class GameWorld {
         this.enemies = this.enemies.filter(
             (enemy) => enemy.despawnAt === undefined || this.timeSeconds < enemy.despawnAt,
         );
+        for (const actor of this.encounterActors) {
+            updateEncounterActor(actor, dtSeconds);
+        }
         this.advanceWardenP3Runtime();
         this.advanceWaveDirector();
 
         this.updateProjectiles(dtSeconds);
         this.startDueVisualEffects();
-        this.startDueWardenSlamTiles();
 
         this.visualEffects = this.visualEffects.filter((effect) =>
             effect.update(dtSeconds, this.timeSeconds),
@@ -691,12 +724,7 @@ export class GameWorld {
         if (movement.x !== 0 || movement.y !== 0) {
             player.stanceMechanics = resetRangedHits(player.stanceMechanics);
         }
-        const positionBeforeMovement = { x: player.x, y: player.y };
         player.update(movement, dtSeconds, this.timeSeconds, this.terrain);
-        if (this.isRemovedWardenFloor(player.x, player.y, player.level)) {
-            player.x = positionBeforeMovement.x;
-            player.y = positionBeforeMovement.y;
-        }
         this.resolveEnergySiphonBasicAttack(player, input);
         this.resolveReadyCast(player);
         this.resolvePickup(player, input);
@@ -1150,6 +1178,26 @@ export class GameWorld {
         for (const command of result.commands) {
             this.dispatchWardenP3Command(runtime, warden, command);
         }
+        this.resolveWardenFloorSlamArrivals(runtime);
+    }
+
+    // A tile hurts the player only as the front reaches it, so stepping onto tiles the front has
+    // already passed is safe.
+    private resolveWardenFloorSlamArrivals(runtime: WardenP3Runtime): void {
+        for (const slam of runtime.floorSlams) {
+            const arriving = floorSlamTilesArriving(
+                slam,
+                runtime.floorSlamsResolvedUntilSeconds,
+                this.timeSeconds,
+            );
+            for (const tile of arriving) {
+                this.damagePlayerOnWardenTile(tile, 30);
+            }
+        }
+        runtime.floorSlamsResolvedUntilSeconds = this.timeSeconds;
+        runtime.floorSlams = runtime.floorSlams.filter(
+            (slam) => this.timeSeconds < floorSlamEndsAtSeconds(slam),
+        );
     }
 
     private wardenP3SiphonStatus(runtime: WardenP3Runtime): WardenSiphonStatus {
@@ -1177,47 +1225,43 @@ export class GameWorld {
                 return;
             case "RESOLVE_FLOOR_SLAM":
                 runtime.resolvedSlamTarget = command.target;
-                this.resolveWardenFloorSlam(command.target);
+                runtime.floorSlams = [
+                    ...runtime.floorSlams,
+                    {
+                        shockwave: wardenP3SlamShockwave(command.target),
+                        startsAtSeconds: this.timeSeconds,
+                    },
+                ];
                 return;
             case "SET_WARDEN_VULNERABILITY":
                 warden.invulnerable = !command.vulnerable;
                 return;
-            case "SPAWN_ENERGY_SIPHONS":
+            case "SPAWN_ENERGY_SIPHONS": {
                 runtime.activeIntermission = command.intermission;
                 runtime.siphonDeadlineAtSeconds =
                     this.timeSeconds + runtime.siphonLayout.deadlineSeconds;
-                this.energySiphons = runtime.siphonLayout.spawns.map((spawn) => {
-                    const id = this.spawnEnemy(
+                const siphonType = this.animations.enemyType(EnemyTypeId.ENERGY_SIPHON);
+                const siphons = runtime.siphonLayout.spawns.map((spawn) =>
+                    createEnergySiphonActor(
+                        this.nextActorId++,
                         (spawn.x + 0.5) * TILE_SIZE,
                         (spawn.y + 0.5) * TILE_SIZE,
                         spawn.level,
-                        this.animations.enemyType(EnemyTypeId.ENERGY_SIPHON),
-                    );
-                    const actor = this.findEnemy(id)!;
-                    actor.invulnerable = true;
-                    actor.rotation = (spawn.rotation + 1024) % 2048;
-                    return {
-                        id,
-                        x: actor.x,
-                        y: actor.y,
-                        level: actor.level,
-                        rotation: spawn.rotation,
-                        state: EnergySiphonState.HOSTILE,
-                    };
-                });
+                        siphonType,
+                        spawn.rotation,
+                        HOSTILE_ENERGY_SIPHON,
+                    ),
+                );
+                this.encounterActors = [...this.encounterActors, ...siphons];
                 return;
+            }
             case "RESOLVE_ENERGY_SIPHONS":
                 runtime.activeIntermission = undefined;
                 runtime.siphonDeadlineAtSeconds = undefined;
-                if (command.status === WardenSiphonStatus.ALL_REVERSED) {
-                    warden.health = Math.max(0, warden.health - command.wardenDamage);
-                } else {
-                    if (this.player) {
-                        applyDamage(this.player, 80, this.events);
-                    }
-                }
-                this.removeEnergySiphonActors();
-                this.energySiphons = [];
+                warden.health = Math.max(0, warden.health - command.wardenDamage);
+                this.encounterActors = this.encounterActors.filter(
+                    (actor) => actor.kind !== EncounterActorKind.ENERGY_SIPHON,
+                );
                 return;
             case "ACTIVATE_PHANTOM":
                 runtime.activePhantoms = [...runtime.activePhantoms, command.phantom];
@@ -1241,74 +1285,23 @@ export class GameWorld {
                 this.spawnWardenTileEffect(VisualEffectKind.WARDENS_LIGHTNING, command.target);
                 this.damagePlayerOnWardenTile(command.target, 20);
                 return;
-            case "REMOVE_ARENA_ROW":
-                runtime.removedArenaRows = [
-                    ...runtime.removedArenaRows,
-                    command.distanceFromWarden,
-                ];
-                for (const tile of wardenP3RowTiles(wardenP3ArenaRow(command.distanceFromWarden))) {
+            case "REMOVE_ARENA_ROW": {
+                const destroyed = destroyFurthestWardenP3ArenaRow(runtime.floor);
+                if (!destroyed || destroyed.row.distanceFromWarden !== command.distanceFromWarden) {
+                    throw new Error(
+                        `Wardens P3 director requested row ${command.distanceFromWarden} but the furthest remaining row is ${destroyed?.row.distanceFromWarden}`,
+                    );
+                }
+                runtime.floor = destroyed.floor;
+                for (const tile of wardenP3RowTiles(destroyed.row)) {
                     this.spawnWardenTileEffect(VisualEffectKind.WARDENS_FALLING_TILE, tile);
                     this.damagePlayerOnWardenTile(tile, 1000);
                 }
                 return;
+            }
             case "COMPLETE_ENCOUNTER":
                 this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
                 return;
-        }
-    }
-
-    private resolveWardenFloorSlam(target: WardenSlamTarget): void {
-        const slam = this.wardenFloorSlam(target);
-        const player = this.player;
-        if (!player) {
-            return;
-        }
-        for (const waveTile of wardenP3FloorSlamWave(slam)) {
-            this.pendingWardenSlamTiles.push({
-                tile: waveTile.tile,
-                startsAt: this.timeSeconds + waveTile.delaySeconds,
-                damaging: waveTile.damaging,
-            });
-        }
-    }
-
-    private startDueWardenSlamTiles(): void {
-        const due = this.pendingWardenSlamTiles.filter(
-            (pending) => this.timeSeconds >= pending.startsAt,
-        );
-        this.pendingWardenSlamTiles = this.pendingWardenSlamTiles.filter(
-            (pending) => this.timeSeconds < pending.startsAt,
-        );
-        for (const pending of due) {
-            const tile = pending.tile;
-            this.visualEffects.push(
-                new WardenFloorTileEffect(
-                    {
-                        kind: "POINT",
-                        x: (tile.x + 0.5) * TILE_SIZE,
-                        y: (tile.y + 0.5) * TILE_SIZE,
-                        level: tile.level,
-                        rotation: 0,
-                    },
-                    this.animations.effects[VisualEffectKind.WARDENS_FALLING_TILE],
-                    WARDEN_P3_SLAM_ACTIVE_SECONDS,
-                    TILE_SIZE * 0.6,
-                ),
-            );
-            if (pending.damaging) {
-                this.damagePlayerOnWardenTile(pending.tile, 30);
-            }
-        }
-    }
-
-    private wardenFloorSlam(target: WardenSlamTarget): WardenP3FloorSlam {
-        switch (target) {
-            case WardenSlamTarget.RIGHT:
-                return WardenP3FloorSlam.RIGHT;
-            case WardenSlamTarget.LEFT:
-                return WardenP3FloorSlam.LEFT;
-            case WardenSlamTarget.CENTRE:
-                return WardenP3FloorSlam.CENTRE;
         }
     }
 
@@ -1335,17 +1328,6 @@ export class GameWorld {
         }
     }
 
-    private isRemovedWardenFloor(x: number, y: number, level: number): boolean {
-        const runtime = this.wardenP3Runtime;
-        if (!runtime || level !== 0) {
-            return false;
-        }
-        const row = wardenP3RowForTile(
-            wardenP3ArenaTile(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE)),
-        );
-        return !!row && runtime.removedArenaRows.includes(row.distanceFromWarden);
-    }
-
     private spawnWardenTileEffect(kind: VisualEffectKind, tile: WardenP3Tile): void {
         this.visualEffects.push(
             new VisualEffect(
@@ -1361,11 +1343,6 @@ export class GameWorld {
                 this.animations.effects[kind],
             ),
         );
-    }
-
-    private removeEnergySiphonActors(): void {
-        const ids = new Set(this.energySiphons.map((siphon) => siphon.id));
-        this.enemies = this.enemies.filter((enemy) => !ids.has(enemy.id));
     }
 
     private spawnWaveEnemy(encounter: Encounter, spawn: WaveSpawn): void {
@@ -1390,11 +1367,10 @@ export class GameWorld {
     private resetEncounter(): void {
         this.player?.resetProgression();
         this.groundItems = [];
-        this.energySiphons = [];
+        this.encounterActors = [];
         this.projectiles = [];
         this.visualEffects = [];
         this.pendingVisualEffects = [];
-        this.pendingWardenSlamTiles = [];
         this.wardenP3Runtime = undefined;
 
         const encounter = this.encounter;
@@ -1407,7 +1383,7 @@ export class GameWorld {
         }
         if (encounter.spawnMode === EncounterSpawnMode.SCRIPTED) {
             this.enemies = [];
-            this.energySiphons = [];
+            this.encounterActors = [];
             this.enemyWaveIndex.clear();
             this.triggeredBossPhases.clear();
             this.killsByWave = [];
@@ -1517,7 +1493,7 @@ export class GameWorld {
         if (distance > this.energySiphonInteractionReach(player)) {
             return;
         }
-        const impact = resolveEnergySiphonImpact(siphon, {
+        const impact = resolveEnergySiphonImpact(siphon.siphon, {
             kind: EnergySiphonImpactKind.PLAYER_BASIC_ATTACK,
             style: player.style,
         });
@@ -1529,11 +1505,12 @@ export class GameWorld {
         if (deltaX !== 0 || deltaY !== 0) {
             player.rotation = directionToRotation(deltaX, deltaY);
         }
-        this.energySiphons = this.energySiphons.map((candidate) =>
-            candidate.id === siphon.id ? { ...candidate, ...impact.siphon } : candidate,
+        siphon.siphon = impact.siphon;
+        siphon.rotation = siphon.reversedRotation;
+        const siphons = this.encounterActors.filter(
+            (actor): actor is EnergySiphonActor => actor.kind === EncounterActorKind.ENERGY_SIPHON,
         );
-        this.findEnemy(siphon.id)!.rotation = siphon.rotation;
-        if (this.energySiphons.every(({ state }) => state === EnergySiphonState.REVERSED)) {
+        if (siphons.every((candidate) => candidate.siphon.state === EnergySiphonState.REVERSED)) {
             const runtime = this.wardenP3Runtime;
             if (!runtime || runtime.state.phase !== WardenP3Phase.SIPHONS) {
                 throw new Error("Reversed Wardens siphons outside a siphon intermission");
@@ -1809,7 +1786,6 @@ export class GameWorld {
                 hitEffect,
                 anchor: { kind: "POINT", x: spawn.x, y: spawn.y, level: caster.level, rotation: 0 },
                 startsAt: this.timeSeconds + spawn.delaySeconds,
-                speed: 1,
             });
         }
     }
@@ -1821,15 +1797,13 @@ export class GameWorld {
         this.pendingVisualEffects = this.pendingVisualEffects.filter(
             (pending) => this.timeSeconds < pending.startsAt,
         );
-        for (const { hitEffect, anchor, speed } of due) {
+        for (const { hitEffect, anchor } of due) {
             this.visualEffects.push(
                 new VisualEffect(
                     hitEffect.kind,
                     anchor,
                     hitEffect.height,
                     this.animations.effects[hitEffect.kind],
-                    undefined,
-                    speed,
                 ),
             );
         }

@@ -73,7 +73,7 @@ describe("encounters", () => {
             enemySpawns: [{ x: 3936 * 128 + 64, y: 5154 * 128 + 64, level: 0 }],
             script: {
                 kind: EncounterScriptKind.WARDENS_P3,
-                arena: { furthestRowFromWarden: 10 },
+                arena: { furthestRowFromWarden: 9 },
             },
         });
         if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {

@@ -1,5 +1,9 @@
 import { ACTOR_INSTANCE_TEXELS } from "../actor/ActorInstanceData";
-import { LOC_INSTANCE_TEXELS } from "../loc/LocInstanceData";
+import {
+    LOC_INSTANCE_TEXELS,
+    LOC_LIFT_UNITS_PER_WORLD_UNIT,
+    LOC_TILT_UNITS_PER_RADIAN,
+} from "../loc/LocInstanceData";
 import { NPC_INSTANCE_TEXELS } from "../npc/NpcInstanceData";
 import { ProgramSource, ShaderDefine, prependDefines } from "./ShaderUtil";
 import actorVertShader from "./actor.vert.glsl";
@@ -38,6 +42,8 @@ export function createSkinnedLocProgram(
     const defines: ShaderDefine[] = [
         "SKINNED",
         { name: "LOC_INSTANCE_TEXELS", value: LOC_INSTANCE_TEXELS },
+        { name: "LOC_LIFT_UNITS_PER_WORLD_UNIT", value: LOC_LIFT_UNITS_PER_WORLD_UNIT },
+        { name: "LOC_TILT_UNITS_PER_RADIAN", value: LOC_TILT_UNITS_PER_RADIAN },
     ];
     if (hasMultiDraw) {
         defines.push("MULTI_DRAW");

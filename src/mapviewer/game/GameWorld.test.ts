@@ -462,7 +462,6 @@ describe("Scheduled visual effects", () => {
             hitEffect: dustWave,
             anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
             startsAt: 0.5,
-            speed: 1,
         });
 
         advanceSeconds(world, idleInput(), 0.4);
@@ -486,7 +485,6 @@ describe("Scheduled visual effects", () => {
                 hitEffect: dustWave,
                 anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
                 startsAt: 1000,
-                speed: 1,
             });
         }
 
@@ -516,7 +514,6 @@ describe("Maul Smash ground dust", () => {
             hitEffect: MAUL_SMASH.effect.hitEffect!,
             anchor: { kind: "POINT", x: 0, y: 0, level: 0, rotation: 0 },
             startsAt: 1000,
-            speed: 1,
         }));
         world.pendingVisualEffects.push(...placeholders);
 
@@ -1135,8 +1132,9 @@ function bossTestEncounter(): Encounter {
         interactions: [start],
         ambientNpcs: false,
         musicFile: "audio/test.opus",
-        initialCameraYaw: 1862,
+        initialCamera: { pitch: -245, yaw: 1862 },
         maximumRenderedLevel: 3,
+        transformableGroundDecorations: [],
     };
 }
 

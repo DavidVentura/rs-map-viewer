@@ -13,10 +13,16 @@ import {
     createWorldObjectId,
     createWorldPosition,
 } from "./Interaction";
+import { TransformableGroundDecorations, isTileInMapSquare } from "./LocTransform";
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
-import { WARDEN_P3_ARENA_ROW_COUNT, WARDEN_P3_SOLO_SIPHON_LAYOUT } from "./WardenP3Arena";
+import {
+    WARDEN_P3_ARENA_ROW_COUNT,
+    WARDEN_P3_FLOOR_DECORATIONS,
+    WARDEN_P3_SOLO_SIPHON_LAYOUT,
+    WARDEN_P3_SPAWN_TILE,
+} from "./WardenP3Arena";
 import { WardenP3Arena } from "./WardenP3Director";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import { UpgradeId } from "./upgrades";
@@ -87,6 +93,12 @@ export enum EncounterSpawnMode {
     SCRIPTED = "scripted",
 }
 
+// Pitch and yaw in RS angle units (2048 per turn); pitch is negative looking down.
+export type CameraFraming = {
+    readonly pitch: number;
+    readonly yaw: number;
+};
+
 type EncounterCommon = {
     readonly id: EncounterId;
     readonly mapSquares: readonly MapSquareCoord[];
@@ -96,8 +108,9 @@ type EncounterCommon = {
     readonly waves: readonly Wave[];
     readonly ambientNpcs: boolean;
     readonly musicFile: string;
-    readonly initialCameraYaw: number;
+    readonly initialCamera: CameraFraming;
     readonly maximumRenderedLevel: number;
+    readonly transformableGroundDecorations: readonly TransformableGroundDecorations[];
 };
 
 export type WaveEncounter = EncounterCommon & {
@@ -125,9 +138,17 @@ export enum EncounterScriptKind {
     WARDENS_P3 = "wardens_p3",
 }
 
+export type WardenPhantomSpawn = {
+    readonly x: number;
+    readonly y: number;
+    readonly level: number;
+    readonly enemyTypeId: EnemyTypeId;
+};
+
 export type WardensP3Script = {
     readonly kind: EncounterScriptKind.WARDENS_P3;
     readonly wardenSpawn: EnemySpawnPoint;
+    readonly phantomSpawns: readonly WardenPhantomSpawn[];
     readonly arena: WardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
 };
@@ -223,6 +244,35 @@ function validatePhaseInteractions(encounter: WaveEncounter): void {
     }
 }
 
+function validateTransformableGroundDecorations(
+    encounter: Encounter,
+    declaration: TransformableGroundDecorations,
+): void {
+    if (
+        !Number.isInteger(declaration.level) ||
+        declaration.level < 0 ||
+        declaration.level > encounter.maximumRenderedLevel
+    ) {
+        throw new RangeError(
+            `Transformable ground decorations must sit on a rendered level (0..${encounter.maximumRenderedLevel})`,
+        );
+    }
+    if (declaration.locIds.length === 0) {
+        throw new RangeError("Transformable ground decorations must name at least one loc id");
+    }
+    assertUnique(
+        declaration.tiles.map((tile) => `${tile.x},${tile.y}`),
+        "transformable ground decoration tiles",
+    );
+    for (const tile of declaration.tiles) {
+        if (!encounter.mapSquares.some((square) => isTileInMapSquare(tile, square))) {
+            throw new RangeError(
+                `Transformable ground decoration tile ${tile.x},${tile.y} lies outside the encounter's map squares`,
+            );
+        }
+    }
+}
+
 function validateScriptedEncounter(encounter: ScriptedEncounter): void {
     switch (encounter.script.kind) {
         case EncounterScriptKind.WARDENS_P3:
@@ -243,6 +293,9 @@ export function validateEncounter(encounter: Encounter): void {
         throw new RangeError(
             `Encounter maximum rendered level must be within 0..${Scene.MAX_LEVELS - 1}`,
         );
+    }
+    for (const declaration of encounter.transformableGroundDecorations) {
+        validateTransformableGroundDecorations(encounter, declaration);
     }
     assertUnique(encounter.enemyTypeIds, "enemy type ids");
     for (const wave of encounter.waves) {
@@ -298,6 +351,8 @@ function tileToWorld(tileX: number, tileY: number, tileCenter: boolean = false):
     return [tileX * 128 + offset, tileY * 128 + offset];
 }
 
+const DEFAULT_CAMERA_FRAMING: CameraFraming = { pitch: -245, yaw: 1862 };
+
 const LUMBRIDGE_PLAYER_TILE = { x: 3237, y: 3225 };
 const [lumbridgePlayerX, lumbridgePlayerY] = tileToWorld(
     LUMBRIDGE_PLAYER_TILE.x,
@@ -336,8 +391,9 @@ const LUMBRIDGE: StaticRespawnEncounter = {
     spawnMode: EncounterSpawnMode.STATIC_RESPAWN,
     ambientNpcs: true,
     musicFile: "audio/harmony.opus",
-    initialCameraYaw: 1862,
+    initialCamera: DEFAULT_CAMERA_FRAMING,
     maximumRenderedLevel: Scene.MAX_LEVELS - 1,
+    transformableGroundDecorations: [],
     phases: [],
     worldObjects: [],
     interactions: [],
@@ -649,8 +705,9 @@ const FIGHT_CAVES: WaveEncounter = {
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
     musicFile: "audio/tzhaar.opus",
-    initialCameraYaw: 1862,
+    initialCamera: DEFAULT_CAMERA_FRAMING,
     maximumRenderedLevel: Scene.MAX_LEVELS - 1,
+    transformableGroundDecorations: [],
     waves: FIGHT_CAVES_WAVES,
     phases: FIGHT_CAVES_PHASES,
     worldObjects: [FIGHT_CAVES_WORLD_OBJECTS.lever, FIGHT_CAVES_WORLD_OBJECTS.chest],
@@ -742,17 +799,21 @@ const SANDBOX: WaveEncounter = {
 };
 
 const WARDENS_P3_PLAYER_TILE = { x: 3936, y: 5162 };
-const WARDENS_P3_WARDEN_TILE = { x: 3934, y: 5152 };
 const [wardensP3PlayerX, wardensP3PlayerY] = tileToWorld(
     WARDENS_P3_PLAYER_TILE.x,
     WARDENS_P3_PLAYER_TILE.y,
     true,
 );
 const [wardensP3WardenX, wardensP3WardenY] = tileToWorld(
-    WARDENS_P3_WARDEN_TILE.x + 2,
-    WARDENS_P3_WARDEN_TILE.y + 2,
+    WARDEN_P3_SPAWN_TILE.x,
+    WARDEN_P3_SPAWN_TILE.y,
     true,
 );
+
+const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
+    { x: 3925, y: 5152, level: 0, enemyTypeId: EnemyTypeId.ZEBAK_PHANTOM },
+    { x: 3943, y: 5152, level: 0, enemyTypeId: EnemyTypeId.BABA_PHANTOM },
+];
 
 const WARDENS_P3: ScriptedEncounter = {
     id: EncounterId.WARDENS_P3,
@@ -767,9 +828,10 @@ const WARDENS_P3: ScriptedEncounter = {
     ],
     spawnMode: EncounterSpawnMode.SCRIPTED,
     ambientNpcs: false,
-    musicFile: "audio/tzhaar.opus",
-    initialCameraYaw: 1024,
+    musicFile: "audio/amascuts-promise.opus",
+    initialCamera: { pitch: -245, yaw: 1024 },
     maximumRenderedLevel: 1,
+    transformableGroundDecorations: [WARDEN_P3_FLOOR_DECORATIONS],
     waves: [],
     phases: [],
     worldObjects: [],
@@ -777,6 +839,7 @@ const WARDENS_P3: ScriptedEncounter = {
     script: {
         kind: EncounterScriptKind.WARDENS_P3,
         wardenSpawn: { x: wardensP3WardenX, y: wardensP3WardenY, level: 0 },
+        phantomSpawns: WARDENS_P3_PHANTOM_SPAWNS,
         arena: { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT },
         siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
     },

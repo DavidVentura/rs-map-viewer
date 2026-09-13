@@ -1,28 +1,28 @@
 import {
-    WardenP3Arena,
     WardenP3Command,
     WardenP3Intermission,
     WardenP3Phase,
     WardenP3Snapshot,
     WardenP3State,
     WardenP3Tile,
-    WardenP3Timing,
     WardenPhantom,
     WardenSiphonStatus,
     WardenSlamTarget,
     initialWardenP3State,
+    parseWardenP3Arena,
+    parseWardenP3Timing,
     stepWardenP3,
 } from "./WardenP3Director";
 
-const arena: WardenP3Arena = { furthestRowFromWarden: 5 };
-const timing: WardenP3Timing = {
+const arena = parseWardenP3Arena({ furthestRowFromWarden: 5 });
+const timing = parseWardenP3Timing({
     slamAimToImpactSeconds: 1,
     slamPostImpactRecoverySeconds: 2,
     phantomAttackIntervalSeconds: 3,
     lightningWarningSeconds: 0.5,
     lightningWarningIntervalSeconds: 1,
     rowRemovalIntervalSeconds: 2,
-};
+});
 const playerTile: WardenP3Tile = { x: 3200, y: 3201, level: 0 };
 
 function snapshot(
@@ -208,6 +208,9 @@ describe("Wardens P3 director", () => {
 
         expect(commandOfKind(failed.commands, "RESOLVE_ENERGY_SIPHONS").status).toBe(
             WardenSiphonStatus.DEADLINE_EXPIRED,
+        );
+        expect(commandOfKind(failed.commands, "RESOLVE_FLOOR_SLAM").target).toBe(
+            WardenSlamTarget.CENTRE,
         );
         expect(failed.nextState.phase).toBe(WardenP3Phase.NORMAL);
     });

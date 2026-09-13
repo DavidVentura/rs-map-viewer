@@ -53,7 +53,9 @@ export enum EnemyBehaviour {
     // Holds close to the player (approaching only past the leash range, never retreating) and
     // cycles a fixed attack pattern in order rather than picking the first ready ability.
     BOSS = "boss",
-    STATIONARY = "stationary",
+    // Never spawned as an Enemy - only its npcTypeId/seqs are used, to bake a non-combat
+    // EncounterActor's appearance through the same asset pipeline (see EncounterActor.ts).
+    PROP = "prop",
     SCRIPTED_BOSS = "scripted_boss",
 }
 
@@ -118,7 +120,7 @@ export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
           readonly behaviour:
               | EnemyBehaviour.RUSHER
               | EnemyBehaviour.TANK
-              | EnemyBehaviour.STATIONARY
+              | EnemyBehaviour.PROP
               | EnemyBehaviour.SCRIPTED_BOSS;
       })
     | (EnemyTypeCommon<A> & {
@@ -135,6 +137,10 @@ export type EnemyTypeSeqs = {
     readonly idle: SeqTiming;
     readonly walk: SeqTiming;
     readonly death: SeqTiming;
+    // Resolved generically for every enemy type (rather than only where an Enemy plays it through
+    // an ability's castSeq) so a non-combat EncounterActor can also be told to play it - e.g. a
+    // Wardens phantom's attack windup (see EncounterActor.playSeq).
+    readonly attack: SeqTiming;
 };
 
 export type ResolvedEnemyType = EnemyType<ResolvedAbility> & { readonly seqs: EnemyTypeSeqs };
@@ -148,6 +154,7 @@ export function resolveEnemyType(type: EnemyType, catalog: SeqCatalog): Resolved
         idle: catalog.get(type.idleSeqId),
         walk: catalog.get(type.walkSeqId),
         death: catalog.get(type.deathSeqId),
+        attack: catalog.get(type.attackSeqId),
     };
     if (type.behaviour === EnemyBehaviour.BOSS) {
         return { ...type, abilities, seqs, pattern: type.pattern.map(resolve) };
@@ -184,13 +191,13 @@ export function isBossEnemyType<A extends AbilityDefinition>(
     return type.behaviour === EnemyBehaviour.BOSS;
 }
 
-export function isStationaryEnemyType<A extends AbilityDefinition>(
+// SCRIPTED_BOSS (Tumeken's Warden) has no AI of its own - the encounter script drives its
+// position/rotation/vulnerability directly - so it only ever plays idle/death rather than running
+// Enemy's normal chase/attack state machine.
+export function isScriptedBossEnemyType<A extends AbilityDefinition>(
     type: EnemyType<A>,
-): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.STATIONARY }> {
-    return (
-        type.behaviour === EnemyBehaviour.STATIONARY ||
-        type.behaviour === EnemyBehaviour.SCRIPTED_BOSS
-    );
+): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.SCRIPTED_BOSS }> {
+    return type.behaviour === EnemyBehaviour.SCRIPTED_BOSS;
 }
 
 // Returns the index of the first not-yet-triggered phase whose threshold the current health
@@ -412,7 +419,7 @@ const TUMEKENS_WARDEN: EnemyType = {
     attackSeqId: 9654,
     hitRadius: 256,
     projectileLaunchHeight: 480,
-    maxHealth: 3200,
+    maxHealth: 100,
     experienceReward: createExperience(0),
     walkSpeed: 0,
     behaviour: EnemyBehaviour.SCRIPTED_BOSS,
@@ -429,10 +436,10 @@ const ZEBAK_PHANTOM: EnemyType = {
     attackSeqId: 9618,
     hitRadius: 160,
     projectileLaunchHeight: 240,
-    maxHealth: 1,
+    maxHealth: 0,
     experienceReward: createExperience(0),
     walkSpeed: 0,
-    behaviour: EnemyBehaviour.STATIONARY,
+    behaviour: EnemyBehaviour.PROP,
     abilities: [],
     dropTier: DropTier.NONE,
 };
@@ -446,10 +453,10 @@ const BABA_PHANTOM: EnemyType = {
     attackSeqId: 9741,
     hitRadius: 160,
     projectileLaunchHeight: 240,
-    maxHealth: 1,
+    maxHealth: 0,
     experienceReward: createExperience(0),
     walkSpeed: 0,
-    behaviour: EnemyBehaviour.STATIONARY,
+    behaviour: EnemyBehaviour.PROP,
     abilities: [],
     dropTier: DropTier.NONE,
 };
@@ -463,10 +470,10 @@ const ENERGY_SIPHON: EnemyType = {
     attackSeqId: 9736,
     hitRadius: 64,
     projectileLaunchHeight: 64,
-    maxHealth: 1,
+    maxHealth: 0,
     experienceReward: createExperience(0),
     walkSpeed: 0,
-    behaviour: EnemyBehaviour.STATIONARY,
+    behaviour: EnemyBehaviour.PROP,
     abilities: [],
     dropTier: DropTier.NONE,
 };

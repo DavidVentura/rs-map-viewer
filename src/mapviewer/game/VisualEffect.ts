@@ -129,7 +129,7 @@ export class VisualEffect {
     constructor(
         readonly kind: VisualEffectKind,
         private readonly anchor: VisualEffectAnchor,
-        private readonly baseHeight: number,
+        readonly height: number,
         seq: SeqTiming,
         private readonly holdUntilSeconds?: number,
         // A caster-anchored effect plays at its ability's own castSpeed (see
@@ -153,10 +153,6 @@ export class VisualEffect {
         return this.anchor.kind === "COMBATANT" ? this.anchor.combatant.level : this.anchor.level;
     }
 
-    get height(): number {
-        return this.baseHeight;
-    }
-
     update(deltaTimeSeconds: number, timeSeconds: number): boolean {
         const completed = this.animation.advance(
             deltaTimeSeconds,
@@ -167,27 +163,5 @@ export class VisualEffect {
             return !completed;
         }
         return timeSeconds < this.holdUntilSeconds;
-    }
-}
-
-export class WardenFloorTileEffect extends VisualEffect {
-    private elapsedSeconds = 0;
-
-    constructor(
-        anchor: VisualEffectAnchor,
-        seq: SeqTiming,
-        private readonly durationSeconds: number,
-        private readonly peakHeight: number,
-    ) {
-        super(VisualEffectKind.WARDENS_FALLING_TILE, anchor, 0, seq);
-    }
-
-    override get height(): number {
-        return Math.sin((this.elapsedSeconds / this.durationSeconds) * Math.PI) * this.peakHeight;
-    }
-
-    override update(deltaTimeSeconds: number): boolean {
-        this.elapsedSeconds += deltaTimeSeconds;
-        return this.elapsedSeconds < this.durationSeconds;
     }
 }

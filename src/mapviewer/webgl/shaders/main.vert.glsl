@@ -50,12 +50,44 @@ out float v_roofHidden;
 #include "./includes/vertex.glsl";
 
 #ifdef SKINNED
-// Animated locs: LOC_INSTANCE_TEXELS per draw in u_locDataTexture, the placement texel followed by
-// the skinned frame's matrix/alpha offsets (see LocInstanceData.ts).
+// Animated and transformable locs: LOC_INSTANCE_TEXELS per draw in u_locDataTexture, the
+// placement texel (hidden flag in .a) followed by the skinned frame's matrix/alpha offsets and the
+// loc transform's lift and tilts (see LocInstanceData.ts).
 #include "./includes/skinning.glsl";
 
 uniform highp usampler2D u_locDataTexture;
 uniform int u_locDataOffset;
+
+#define LOC_HIDDEN_FLAG 1u
+
+float decodeLocFixedPoint(uint word, int unitsPerValue) {
+    return float(int(word & 0xFFFFu) - 0x8000) / float(unitsPerValue);
+}
+
+// Tilts rotate about the loc's origin; model space is y down, so raising the north (+z) or east
+// (+x) edge moves it toward -y.
+vec3 transformLocVertex(vec3 position, uvec4 transformTexel) {
+    float lift = decodeLocFixedPoint(transformTexel.b, LOC_LIFT_UNITS_PER_WORLD_UNIT);
+    float northTilt = decodeLocFixedPoint(transformTexel.a, LOC_TILT_UNITS_PER_RADIAN);
+    float eastTilt = decodeLocFixedPoint(transformTexel.a >> 16u, LOC_TILT_UNITS_PER_RADIAN);
+
+    float northSin = sin(northTilt);
+    float northCos = cos(northTilt);
+    position = vec3(
+        position.x,
+        position.y * northCos - position.z * northSin,
+        position.y * northSin + position.z * northCos
+    );
+    float eastSin = sin(eastTilt);
+    float eastCos = cos(eastTilt);
+    position = vec3(
+        position.x * eastCos + position.y * eastSin,
+        position.y * eastCos - position.x * eastSin,
+        position.z
+    );
+    position.y -= lift;
+    return position;
+}
 #endif
 
 struct ModelInfo {
@@ -93,11 +125,10 @@ void main() {
 
 #ifdef SKINNED
     int locTexel = (DRAW_ID + u_locDataOffset) * LOC_INSTANCE_TEXELS;
-    ModelInfo modelInfo = decodeModelInfoTexel(
-        texelFetch(u_locDataTexture, getDataTexCoordFromIndex(locTexel), 0)
-    );
+    uvec4 placementTexel = texelFetch(u_locDataTexture, getDataTexCoordFromIndex(locTexel), 0);
+    ModelInfo modelInfo = decodeModelInfoTexel(placementTexel);
     uvec4 skinFrame = texelFetch(u_locDataTexture, getDataTexCoordFromIndex(locTexel + 1), 0);
-    vertex.pos = skinPosition(vertex.pos, skinFrame.r);
+    vertex.pos = transformLocVertex(skinPosition(vertex.pos, skinFrame.r), skinFrame);
     vertex.color.a = skinAlpha(vertex.color.a, skinFrame.g);
 #else
     int offset = int(texelFetch(u_modelInfoTexture, getDataTexCoordFromIndex(DRAW_ID + u_drawIdOffset), 0).r);
@@ -159,5 +190,8 @@ void main() {
     gl_Position = u_projectionMatrix * gl_Position;
 #ifdef SKINNED
     gl_Position = hideFadedSkinnedVertex(gl_Position, vertex.color.a);
+    if ((placementTexel.a & LOC_HIDDEN_FLAG) != 0u) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
 #endif
 }

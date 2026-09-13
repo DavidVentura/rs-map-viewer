@@ -9,14 +9,6 @@ export type EnergySiphon = {
     readonly state: EnergySiphonState;
 };
 
-export type EnergySiphonActor = EnergySiphon & {
-    readonly id: number;
-    readonly x: number;
-    readonly y: number;
-    readonly level: number;
-    readonly rotation: number;
-};
-
 export const HOSTILE_ENERGY_SIPHON: EnergySiphon = { state: EnergySiphonState.HOSTILE };
 
 export enum EnergySiphonImpactKind {

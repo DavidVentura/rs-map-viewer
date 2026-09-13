@@ -21,6 +21,7 @@ import { DrawRange, newDrawRange } from "./DrawRange";
 import { MapDrawPass } from "./MapDrawPass";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
+import { TransformableLocData } from "./loc/TransformableLocs";
 import { Npc } from "./npc/Npc";
 import { SKINNED_VERTEX_STRIDE, SkinTables, createSkinnedVertexArray } from "./skin/SkinGpu";
 
@@ -190,14 +191,16 @@ export class WebGLMapSquare {
             skinTables.bind(range.drawCall);
             return range;
         };
-        const drawCallLoc = createSkinnedDrawCall(
-            programs.skinnedLoc,
-            locsAnimated.map((loc) => loc.animation.mesh.opaque),
-        );
-        const drawCallLocAlpha = createSkinnedDrawCall(
-            programs.skinnedLocAlpha,
-            locsAnimated.map((loc) => loc.animation.mesh.transparent),
-        );
+        const locsTransformable = mapData.locsTransformable;
+        // Draw order matches the per-frame loc instance data: animated locs, then transformable.
+        const drawCallLoc = createSkinnedDrawCall(programs.skinnedLoc, [
+            ...locsAnimated.map((loc) => loc.animation.mesh.opaque),
+            ...locsTransformable.map((loc) => loc.mesh.opaque),
+        ]);
+        const drawCallLocAlpha = createSkinnedDrawCall(programs.skinnedLocAlpha, [
+            ...locsAnimated.map((loc) => loc.animation.mesh.transparent),
+            ...locsTransformable.map((loc) => loc.mesh.transparent),
+        ]);
 
         const npcs: Npc[] = [];
         for (const npc of mapData.npcs) {
@@ -275,6 +278,7 @@ export class WebGLMapSquare {
             drawCallNpc,
 
             locsAnimated,
+            locsTransformable,
             npcs,
         );
     }
@@ -319,6 +323,7 @@ export class WebGLMapSquare {
 
         // Animated locs
         readonly locsAnimated: LocAnimated[],
+        readonly locsTransformable: readonly TransformableLocData[],
 
         // Npcs
         readonly npcs: Npc[],

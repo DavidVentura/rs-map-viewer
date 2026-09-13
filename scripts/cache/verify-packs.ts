@@ -11,10 +11,12 @@ import { packRequest } from "../../src/mapviewer/assets/cacheRoots";
 import { AnimPreviewParams } from "../../src/mapviewer/game/AnimPreview";
 import { loadSeqTiming } from "../../src/mapviewer/game/Animation";
 import {
+    Encounter,
     EncounterId,
     buildPreviewEncounter,
     getEncounter,
 } from "../../src/mapviewer/game/Encounter";
+import { groundDecorationsInMapSquare } from "../../src/mapviewer/game/LocTransform";
 import { ActorRenderDataLoader } from "../../src/mapviewer/webgl/loader/ActorRenderDataLoader";
 import { SdMapData } from "../../src/mapviewer/webgl/loader/SdMapData";
 import { SdMapDataLoader } from "../../src/mapviewer/webgl/loader/SdMapDataLoader";
@@ -178,16 +180,20 @@ class HeadlessViewer {
         this.state = createHeadlessWorkerState(cache, spawns);
     }
 
-    async loadMap({ mapX, mapY }: MapSquareCoord, loadNpcs: boolean) {
+    async loadMap(square: MapSquareCoord, encounter: Encounter) {
         const { data } = await this.mapLoader.load(this.state, {
-            mapX,
-            mapY,
+            mapX: square.mapX,
+            mapY: square.mapY,
             maxLevel: Scene.MAX_LEVELS - 1,
             loadObjs: true,
-            loadNpcs,
+            loadNpcs: encounter.ambientNpcs,
             smoothTerrain: false,
             minimizeDrawCalls: false,
             loadedTextureIds: new Set(),
+            transformableGroundDecorations: groundDecorationsInMapSquare(
+                encounter.transformableGroundDecorations,
+                square,
+            ),
         });
         clearWorkerStateCaches(this.state);
         return data;
@@ -289,11 +295,11 @@ function checkDeterminism(context: Context): void {
     }
 }
 
-function loadFullCacheMap(context: Context, square: MapSquareCoord, loadNpcs: boolean) {
-    const key = `${square.mapX},${square.mapY},${loadNpcs}`;
+function loadFullCacheMap(context: Context, square: MapSquareCoord, encounter: Encounter) {
+    const key = `${square.mapX},${square.mapY},${encounter.id},${encounter.ambientNpcs}`;
     let map = context.fullCacheMaps.get(key);
     if (!map) {
-        map = context.fullCache.loadMap(square, loadNpcs);
+        map = context.fullCache.loadMap(square, encounter);
         context.fullCacheMaps.set(key, map);
     }
     return map;
@@ -312,11 +318,11 @@ async function checkEquivalence(context: Context, testCase: EquivalenceCase): Pr
     const fromPack = new HeadlessViewer(pack.cache, pack.spawns);
 
     for (const square of mapEncounter.mapSquares) {
-        const expected = await loadFullCacheMap(context, square, mapEncounter.ambientNpcs);
+        const expected = await loadFullCacheMap(context, square, mapEncounter);
         if (!expected) {
             fail(`map ${square.mapX},${square.mapY} does not load from the full cache`);
         }
-        const actual = await fromPack.loadMap(square, mapEncounter.ambientNpcs);
+        const actual = await fromPack.loadMap(square, mapEncounter);
         expectSame(expected, actual, `map ${square.mapX},${square.mapY}`);
     }
     expectSame(

@@ -2,6 +2,7 @@ import { LocTypeLoader } from "../../../rs/config/loctype/LocTypeLoader";
 import { Model } from "../../../rs/model/Model";
 import { Scene } from "../../../rs/scene/Scene";
 import { SceneLoc } from "../../../rs/scene/SceneLoc";
+import { SceneTile } from "../../../rs/scene/SceneTile";
 import { getIdFromTag } from "../../../rs/scene/entity/EntityTag";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { ContourGroundType, SceneModel } from "../buffer/SceneBuffer";
@@ -11,6 +12,20 @@ export type SceneLocs = {
     locs: SceneModel[];
     locEntities: SceneLocEntity[];
 };
+
+export const FLOOR_DECORATION_PRIORITY = 3;
+
+// Whether the map's bake draws the tile's contents at this max level.
+export function isSceneTileRendered(
+    scene: Scene,
+    tile: SceneTile,
+    level: number,
+    tileX: number,
+    tileY: number,
+    maxLevel: number,
+): boolean {
+    return tile.minLevel <= maxLevel || scene.isPlayerLevel(level, tileX, tileY, maxLevel);
+}
 
 export function createSceneModel(
     locTypeLoader: LocTypeLoader,
@@ -77,11 +92,14 @@ export function createSceneLocEntity(
     };
 }
 
+// transformedLocs are drawn through the per-frame transform path instead (see
+// TransformableLocs.ts), so the static bake leaves them out.
 export function getSceneLocs(
     locTypeLoader: LocTypeLoader,
     scene: Scene,
     borderSize: number,
     maxLevel: number,
+    transformedLocs: ReadonlySet<SceneLoc>,
 ): SceneLocs {
     const locs: SceneModel[] = [];
     const locEntities: SceneLocEntity[] = [];
@@ -100,15 +118,11 @@ export function getSceneLocs(
                 // if (!tile || tile.minLevel > maxLevel) {
                 //     continue;
                 // }
-                if (
-                    !tile ||
-                    (tile.minLevel > maxLevel &&
-                        !scene.isPlayerLevel(level, tileX, tileY, maxLevel))
-                ) {
+                if (!tile || !isSceneTileRendered(scene, tile, level, tileX, tileY, maxLevel)) {
                     continue;
                 }
 
-                if (tile.floorDecoration) {
+                if (tile.floorDecoration && !transformedLocs.has(tile.floorDecoration)) {
                     if (tile.floorDecoration.entity instanceof Model) {
                         locs.push(
                             createSceneModel(
@@ -118,7 +132,7 @@ export function getSceneLocs(
                                 sceneOffset,
                                 sceneOffset,
                                 level,
-                                3,
+                                FLOOR_DECORATION_PRIORITY,
                             ),
                         );
                     } else if (tile.floorDecoration.entity instanceof LocEntity) {
@@ -130,7 +144,7 @@ export function getSceneLocs(
                                 sceneOffset,
                                 sceneOffset,
                                 level,
-                                3,
+                                FLOOR_DECORATION_PRIORITY,
                             ),
                         );
                     }

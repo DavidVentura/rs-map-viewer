@@ -1,5 +1,6 @@
 import { vec3 } from "gl-matrix";
 
+import { RS_TO_RADIANS } from "../rs/MathConstants";
 import { IndexType } from "../rs/cache/IndexType";
 import { LoadedCache } from "../rs/cache/LoadedCache";
 import { CacheLoaderFactory } from "../rs/cache/loader/CacheLoaderFactory";
@@ -36,6 +37,7 @@ import { SeqCatalog, loadSeqCatalog } from "./game/SeqCatalog";
 import { RenderDataWorkerPool } from "./worker/RenderDataWorkerPool";
 
 const DEFAULT_RENDER_DISTANCE = isWallpaperEngine ? 512 : 64;
+const CAMERA_DISTANCE_TILES = 38;
 
 export class MapViewer {
     inputManager: InputManager = new InputManager();
@@ -99,12 +101,15 @@ export class MapViewer {
         // camera over the encounter's squares, the only ones its pack holds.
         const encounter = getEncounter(encounterId);
         const { playerSpawn } = encounter;
+        const { pitch, yaw } = encounter.initialCamera;
+        // The height follows the pitch so a flatter framing doesn't also pull the camera away.
+        const cameraHeight = CAMERA_DISTANCE_TILES * Math.sin(-pitch * RS_TO_RADIANS);
         this.camera = new Camera(
             playerSpawn.x / 128,
-            -26,
+            -cameraHeight,
             playerSpawn.y / 128,
-            -245,
-            encounter.initialCameraYaw,
+            pitch,
+            yaw,
         );
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);

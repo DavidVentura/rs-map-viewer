@@ -1,14 +1,12 @@
+import { WardenSlamTarget } from "./WardenP3SlamTarget";
+
+export { WardenSlamTarget } from "./WardenP3SlamTarget";
+
 export enum WardenP3Phase {
     NORMAL = "normal",
     SIPHONS = "siphons",
     ENRAGE = "enrage",
     COMPLETE = "complete",
-}
-
-export enum WardenSlamTarget {
-    RIGHT = "right",
-    LEFT = "left",
-    CENTRE = "centre",
 }
 
 export enum WardenP3Intermission {
@@ -59,6 +57,12 @@ export type WardenP3Timing = {
 export type WardenP3Arena = {
     readonly furthestRowFromWarden: number;
 };
+
+declare const parsedArenaBrand: unique symbol;
+export type ParsedWardenP3Arena = WardenP3Arena & { readonly [parsedArenaBrand]: true };
+
+declare const parsedTimingBrand: unique symbol;
+export type ParsedWardenP3Timing = WardenP3Timing & { readonly [parsedTimingBrand]: true };
 
 type ReadySlam = {
     readonly kind: "ready";
@@ -203,14 +207,19 @@ const INTERMISSION_HEALTH_FRACTIONS: readonly number[] = [0.8, 0.6, 0.4, 0.2];
 const ENRAGE_HEALTH_FRACTION = 0.05;
 const ENRAGE_HEAL_FRACTION = 0.2;
 
+// Slams start about 1.9 s apart (start to start) in the real fight; the aim share keeps the
+// Warden's rotation telegraph readable.
 export const DEFAULT_WARDEN_P3_TIMING: WardenP3Timing = {
-    slamAimToImpactSeconds: 1.8,
-    slamPostImpactRecoverySeconds: 2.4,
+    slamAimToImpactSeconds: 0.9,
+    slamPostImpactRecoverySeconds: 1.0,
     phantomAttackIntervalSeconds: 2.4,
     lightningWarningSeconds: 0.6,
     lightningWarningIntervalSeconds: 1.2,
     rowRemovalIntervalSeconds: 2.4,
 };
+
+const DEFAULT_PARSED_WARDEN_P3_TIMING: ParsedWardenP3Timing =
+    parseWardenP3Timing(DEFAULT_WARDEN_P3_TIMING);
 
 function assertFiniteNonNegative(value: number, description: string): void {
     if (!Number.isFinite(value) || value < 0) {
@@ -218,7 +227,7 @@ function assertFiniteNonNegative(value: number, description: string): void {
     }
 }
 
-function validateTiming(timing: WardenP3Timing): void {
+export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
     const entries = Object.entries(timing) as readonly [string, number][];
     for (const [name, seconds] of entries) {
         if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -228,12 +237,14 @@ function validateTiming(timing: WardenP3Timing): void {
     if (timing.lightningWarningIntervalSeconds < timing.lightningWarningSeconds) {
         throw new RangeError("lightningWarningIntervalSeconds cannot overlap lightning warnings");
     }
+    return timing as ParsedWardenP3Timing;
 }
 
-function validateArena(arena: WardenP3Arena): void {
+export function parseWardenP3Arena(arena: WardenP3Arena): ParsedWardenP3Arena {
     if (!Number.isInteger(arena.furthestRowFromWarden) || arena.furthestRowFromWarden < 2) {
         throw new RangeError("The arena must have a removable row beyond the Warden-adjacent row");
     }
+    return arena as ParsedWardenP3Arena;
 }
 
 function validateSnapshot(snapshot: WardenP3Snapshot): void {
@@ -417,6 +428,16 @@ function resumeAfterSiphons(
     if (snapshot.siphonStatus === WardenSiphonStatus.NONE) {
         throw new Error("Cannot resolve siphons without a result");
     }
+    const reversed = snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED;
+    const resolution: ResolveEnergySiphonsCommand = {
+        kind: "RESOLVE_ENERGY_SIPHONS",
+        intermission: state.intermission,
+        status: snapshot.siphonStatus,
+        wardenDamage: reversed ? snapshot.wardenHealth.maximum * 0.05 : 0,
+    };
+    const failurePunishment: readonly WardenP3Command[] = reversed
+        ? []
+        : [{ kind: "RESOLVE_FLOOR_SLAM", target: WardenSlamTarget.CENTRE }];
     return {
         nextState: {
             phase: WardenP3Phase.NORMAL,
@@ -429,15 +450,8 @@ function resumeAfterSiphons(
             },
         },
         commands: [
-            {
-                kind: "RESOLVE_ENERGY_SIPHONS",
-                intermission: state.intermission,
-                status: snapshot.siphonStatus,
-                wardenDamage:
-                    snapshot.siphonStatus === WardenSiphonStatus.ALL_REVERSED
-                        ? snapshot.wardenHealth.maximum * 0.05
-                        : 0,
-            },
+            resolution,
+            ...failurePunishment,
             { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
         ],
     };
@@ -589,10 +603,9 @@ function stepEnrage(
 
 export function initialWardenP3State(
     beginsAtSeconds: number,
-    arena: WardenP3Arena,
+    arena: ParsedWardenP3Arena,
 ): WardenP3NormalState {
     assertFiniteNonNegative(beginsAtSeconds, "beginsAtSeconds");
-    validateArena(arena);
     return {
         phase: WardenP3Phase.NORMAL,
         nextIntermission: WardenP3Intermission.FIRST,
@@ -608,12 +621,10 @@ export function initialWardenP3State(
 export function stepWardenP3(
     state: WardenP3State,
     snapshot: WardenP3Snapshot,
-    arena: WardenP3Arena,
-    timing: WardenP3Timing = DEFAULT_WARDEN_P3_TIMING,
+    arena: ParsedWardenP3Arena,
+    timing: ParsedWardenP3Timing = DEFAULT_PARSED_WARDEN_P3_TIMING,
 ): WardenP3Result {
     validateSnapshot(snapshot);
-    validateArena(arena);
-    validateTiming(timing);
     switch (state.phase) {
         case WardenP3Phase.NORMAL:
             return stepNormal(state, snapshot, arena, timing);

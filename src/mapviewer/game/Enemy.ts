@@ -8,7 +8,7 @@ import {
     ResolvedEnemyType,
     isBandedEnemyType,
     isBossEnemyType,
-    isStationaryEnemyType,
+    isScriptedBossEnemyType,
     resolveEnemyStats,
 } from "./EnemyType";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -209,8 +209,8 @@ export class Enemy implements Combatant, SteeringBody {
             this.animation.advance(deltaTimeSeconds, this.previewPlayback);
             return;
         }
-        if (isStationaryEnemyType(this.type)) {
-            this.updateStationary(deltaTimeSeconds);
+        if (isScriptedBossEnemyType(this.type)) {
+            this.updateScriptedBoss(deltaTimeSeconds);
             return;
         }
 
@@ -362,7 +362,7 @@ export class Enemy implements Combatant, SteeringBody {
         this.animation.restart(this.type.seqs.idle);
     }
 
-    private updateStationary(deltaTimeSeconds: number): void {
+    private updateScriptedBoss(deltaTimeSeconds: number): void {
         if (this.health <= 0) {
             this.state = EnemyState.DEAD;
             this.animation.setSequence(this.type.seqs.death);

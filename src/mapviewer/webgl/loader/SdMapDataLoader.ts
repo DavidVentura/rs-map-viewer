@@ -31,6 +31,10 @@ import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { getSceneLocs } from "../loc/SceneLocs";
+import {
+    createTransformableLocDatas,
+    resolveTransformableGroundDecorations,
+} from "../loc/TransformableLocs";
 import { NpcAnimation } from "../npc/NpcAnimation";
 import { createNpcDatas } from "../npc/NpcData";
 import { NpcSpawnGroup } from "../npc/NpcSpawnGroup";
@@ -498,6 +502,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             smoothTerrain,
             minimizeDrawCalls,
             loadedTextureIds,
+            transformableGroundDecorations,
         }: SdMapLoaderInput,
     ): Promise<RenderDataResult<SdMapData | undefined>> {
         console.time(`load map ${mapX},${mapY}`);
@@ -532,7 +537,22 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         );
         sceneBuf.addTerrain(scene, borderSize, maxLevel);
 
-        const sceneLocs = getSceneLocs(locTypeLoader, scene, borderSize, maxLevel);
+        const transformableLocs = resolveTransformableGroundDecorations(
+            locTypeLoader,
+            scene,
+            transformableGroundDecorations,
+            baseX,
+            baseY,
+            borderSize,
+            maxLevel,
+        );
+        const sceneLocs = getSceneLocs(
+            locTypeLoader,
+            scene,
+            borderSize,
+            maxLevel,
+            new Set(transformableLocs.map((loc) => loc.sceneLoc)),
+        );
         const sceneModels = sceneLocs.locs;
 
         // Create loc animated groups and add transformed locs
@@ -556,6 +576,11 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         // Animated locs
         const locsAnimated = createLocAnimatedDatas(locAnimatedGroups);
         console.log(`animated locs: ${locsAnimated.length}`);
+        const locsTransformable = createTransformableLocDatas(
+            skinning,
+            this.modelHashBuf!,
+            transformableLocs,
+        );
 
         // Npcs
 
@@ -682,6 +707,7 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 drawRangesAlpha,
 
                 locsAnimated,
+                locsTransformable,
                 npcs,
 
                 loadedTextures,

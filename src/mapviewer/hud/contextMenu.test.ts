@@ -38,15 +38,22 @@ const enemyTarget = {
     combatLevel: 22,
 };
 
+const siphonTarget = {
+    kind: MenuTargetKind.ENERGY_SIPHON as const,
+    siphonId: 9,
+    name: "Energy Siphon",
+};
+
 describe("buildMenuEntries", () => {
     it("returns one entry per target, in the given order, with Cancel appended last", () => {
-        const entries = buildMenuEntries([enemyTarget, leverTarget, itemTarget]);
+        const entries = buildMenuEntries([enemyTarget, siphonTarget, leverTarget, itemTarget]);
 
-        expect(entries).toHaveLength(4);
+        expect(entries).toHaveLength(5);
         expect(entries[0]).toMatchObject({ kind: MenuEntryKind.TARGET, target: enemyTarget });
-        expect(entries[1]).toMatchObject({ kind: MenuEntryKind.TARGET, target: leverTarget });
-        expect(entries[2]).toMatchObject({ kind: MenuEntryKind.TARGET, target: itemTarget });
-        expect(entries[3].kind).toBe(MenuEntryKind.CANCEL);
+        expect(entries[1]).toMatchObject({ kind: MenuEntryKind.TARGET, target: siphonTarget });
+        expect(entries[2]).toMatchObject({ kind: MenuEntryKind.TARGET, target: leverTarget });
+        expect(entries[3]).toMatchObject({ kind: MenuEntryKind.TARGET, target: itemTarget });
+        expect(entries[4].kind).toBe(MenuEntryKind.CANCEL);
     });
 
     it("still appends Cancel when there are no targets", () => {
@@ -56,12 +63,17 @@ describe("buildMenuEntries", () => {
     });
 
     it("derives the dispatchable action from each target's kind", () => {
-        const [enemyEntry, leverEntry, itemEntry] = buildMenuEntries([
+        const [enemyEntry, siphonEntry, leverEntry, itemEntry] = buildMenuEntries([
             enemyTarget,
+            siphonTarget,
             leverTarget,
             itemTarget,
         ]);
         expect(enemyEntry.action).toEqual({ kind: MenuActionKind.ATTACK_ENEMY, enemyId: 3 });
+        expect(siphonEntry.action).toEqual({
+            kind: MenuActionKind.ATTACK_ENERGY_SIPHON,
+            siphonId: 9,
+        });
         expect(leverEntry.action).toEqual({
             kind: MenuActionKind.START_INTERACTION,
             interactionId: leverTarget.interactionId,

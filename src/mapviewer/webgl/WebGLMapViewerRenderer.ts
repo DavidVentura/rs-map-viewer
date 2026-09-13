@@ -38,8 +38,10 @@ import {
 } from "../game/Animation";
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
+import { EncounterActor, EncounterActorKind, EnergySiphonActor } from "../game/EncounterActor";
 import { Enemy, EnemyState } from "../game/Enemy";
-import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
+import { EnemyBehaviour, resolveEnemyType } from "../game/EnemyType";
+import { EnergySiphonState } from "../game/EnergySiphon";
 import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import {
     AbilitySlotInput,
@@ -58,12 +60,20 @@ import {
     WorldObjectVisual,
     worldObjectRotationUnits,
 } from "../game/Interaction";
+import {
+    LocTile,
+    LocTransform,
+    REST_LOC_TRANSFORM,
+    groundDecorationsInMapSquare,
+} from "../game/LocTransform";
 import { Player, PlayerInput } from "../game/Player";
 import { createCharacterLevel, experienceForLevel } from "../game/Progression";
 import { Projectile } from "../game/Projectile";
 import { loadSeqCatalog } from "../game/SeqCatalog";
 import { TILE_SIZE, Terrain } from "../game/Terrain";
 import { VisualEffect } from "../game/VisualEffect";
+import { wardenP3ArenaTile } from "../game/WardenP3Arena";
+import { wardenP3FloorTilePose } from "../game/WardenP3FloorSlam";
 import { CAST_ITEM_OVERRIDES_BY_SEQ_ID } from "../game/abilities";
 import {
     EnemyScreenCandidate,
@@ -223,6 +233,7 @@ type ActiveActor =
     | { kind: "playerBody"; player: Player }
     | { kind: "playerItem"; player: Player; itemId: number }
     | { kind: "enemy"; enemy: Enemy; animSet: EnemyTypeAnimationSet }
+    | { kind: "encounterActor"; actor: EncounterActor; animSet: EnemyTypeAnimationSet }
     | { kind: "projectile"; projectile: Projectile }
     | { kind: "effect"; effect: VisualEffect }
     | { kind: "groundItem"; item: GroundItem; itemId: number }
@@ -230,6 +241,18 @@ type ActiveActor =
     | { kind: "previewGfx" };
 
 type ActorPlacement = Omit<ActorInstance, "matrixOffset" | "alphaOffset">;
+
+// Whichever of an enemy or an energy siphon sits under the cursor - the only two kinds of thing a
+// basic attack (or, for an enemy, a skill) can target.
+type HoveredInteractable =
+    | { readonly kind: "enemy"; readonly enemy: Enemy }
+    | { readonly kind: "energySiphon"; readonly siphon: EnergySiphonActor };
+
+// A basic attack can target a hostile energy siphon; a skill never can (see EnergySiphon.ts).
+enum CombatInputKind {
+    BASIC_ATTACK = "BASIC_ATTACK",
+    SKILL = "SKILL",
+}
 
 enum TextureFilterMode {
     DISABLED,
@@ -346,6 +369,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     lastTick: number = 0;
 
     highlightedEnemy?: Enemy;
+    highlightedSiphon?: EnergySiphonActor;
     highlightedWorldObject?: WorldObjectVisual;
     highlightedGroundItem?: GroundItem;
     // Set by a click on a ground item's mesh (see buildPickupInput); cleared by a later click
@@ -1123,6 +1147,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             smoothTerrain: this.smoothTerrain,
             minimizeDrawCalls: !this.hasMultiDraw,
             loadedTextureIds: this.loadedTextureIds,
+            transformableGroundDecorations: groundDecorationsInMapSquare(
+                this.encounter.transformableGroundDecorations,
+                { mapX, mapY },
+            ),
         });
 
         if (mapData) {
@@ -1512,7 +1540,11 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             .set(10, this.mapViewer.isNewTextureAnim as any)
             .update();
 
-        this.highlightedEnemy = this.getHoveredEnemy();
+        const hoveredInteractable = this.getHoveredInteractable();
+        this.highlightedEnemy =
+            hoveredInteractable?.kind === "enemy" ? hoveredInteractable.enemy : undefined;
+        this.highlightedSiphon =
+            hoveredInteractable?.kind === "energySiphon" ? hoveredInteractable.siphon : undefined;
         this.highlightedWorldObject = this.getHoveredWorldObject();
         this.highlightedGroundItem = this.getHoveredGroundItem();
         this.hudFrame = this.buildHudFrame();
@@ -1685,7 +1717,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             this.selectedInteractionId !== undefined ||
             this.isPointerOverHud() ||
             !inputManager.isDragging() ||
-            this.getHoveredEnemy()
+            this.getHoveredInteractable()
         ) {
             return stationary;
         }
@@ -1759,41 +1791,45 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const inputManager = this.mapViewer.inputManager;
         const pointerOverHud = this.isPointerOverHud();
 
-        // A menu-selected "Attack" behaves like a single left-click on that enemy: force the
+        // A menu-selected "Attack" behaves like a single left-click on that target: force the
         // hover/drag state for this one frame rather than opening a second route into the sim.
-        let menuAttackTarget: Enemy | undefined;
+        let menuAttackTarget: HoveredInteractable | undefined;
         const pendingAction = this.pendingMenuAction;
         if (pendingAction?.kind === MenuActionKind.ATTACK_ENEMY) {
             this.pendingMenuAction = undefined;
-            menuAttackTarget = this.mapViewer.world.findEnemy(pendingAction.enemyId);
+            const enemy = this.mapViewer.world.findEnemy(pendingAction.enemyId);
+            menuAttackTarget = enemy ? { kind: "enemy", enemy } : undefined;
+        } else if (pendingAction?.kind === MenuActionKind.ATTACK_ENERGY_SIPHON) {
+            this.pendingMenuAction = undefined;
+            const siphon = this.mapViewer.world.findEnergySiphon(pendingAction.siphonId);
+            menuAttackTarget = siphon ? { kind: "energySiphon", siphon } : undefined;
         }
 
-        const hoveredEnemy =
-            menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredEnemy());
+        const hovered =
+            menuAttackTarget ?? (pointerOverHud ? undefined : this.getHoveredInteractable());
         const isDragging =
             menuAttackTarget !== undefined || (!pointerOverHud && inputManager.isDragging());
 
         const inputFor = (
             held: boolean,
             delivery: Delivery,
-            allowsEnergySiphon: boolean,
+            inputKind: CombatInputKind,
         ): AbilitySlotInput => {
             if (!held) {
                 return { held: false };
             }
-            if (hoveredEnemy?.type.id === EnemyTypeId.ENERGY_SIPHON) {
-                const siphon = this.mapViewer.world.findEnergySiphon(hoveredEnemy.id);
-                return allowsEnergySiphon && siphon
+            if (hovered?.kind === "energySiphon") {
+                return inputKind === CombatInputKind.BASIC_ATTACK
                     ? {
                           held: true,
-                          target: { kind: AbilityTargetKind.ENERGY_SIPHON, siphon },
+                          target: { kind: AbilityTargetKind.ENERGY_SIPHON, siphon: hovered.siphon },
                       }
                     : { held: false };
             }
-            if (hoveredEnemy && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
+            if (hovered?.kind === "enemy" && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
                 return {
                     held: true,
-                    target: { kind: AbilityTargetKind.COMBATANT, combatant: hoveredEnemy },
+                    target: { kind: AbilityTargetKind.COMBATANT, combatant: hovered.enemy },
                 };
             }
             if (pointerOverHud) {
@@ -1811,16 +1847,16 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         return {
             basicAttack: inputFor(
-                isDragging && hoveredEnemy !== undefined,
+                isDragging && hovered !== undefined,
                 player.basicAttack.effect.delivery,
-                true,
+                CombatInputKind.BASIC_ATTACK,
             ),
             skills: player.skills.map((skill, skillSlot) => {
                 const key = keyForSkillSlot(skillSlot);
                 return inputFor(
                     key !== undefined && inputManager.isKeyDown(key),
                     skill.effect.delivery,
-                    false,
+                    CombatInputKind.SKILL,
                 );
             }),
         };
@@ -1945,6 +1981,31 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     enemyId: enemy.id,
                     name: npcType.name,
                     combatLevel: npcType.combatLevel,
+                },
+                distance: rect ? distanceToRect(cursor, rect) : 0,
+            });
+        }
+
+        const siphonId = pickEnemyNear(
+            cursor,
+            this.buildHostileSiphonScreenCandidates(),
+            ENEMY_HOVER_PICK_RADIUS_PX,
+        );
+        const siphonActor =
+            siphonId !== undefined ? this.mapViewer.world.findEnergySiphon(siphonId) : undefined;
+        if (siphonActor) {
+            const npcType = this.mapViewer.npcTypeLoader.load(siphonActor.type.npcTypeId);
+            const rect = this.projectScreenRect(
+                siphonActor.level,
+                siphonActor.x,
+                siphonActor.y,
+                siphonActor.type.hitRadius,
+            );
+            candidates.push({
+                target: {
+                    kind: MenuTargetKind.ENERGY_SIPHON,
+                    siphonId: siphonActor.id,
+                    name: npcType.name,
                 },
                 distance: rect ? distanceToRect(cursor, rect) : 0,
             });
@@ -2186,17 +2247,33 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         );
     }
 
-    private getHoveredEnemy(): Enemy | undefined {
+    // Whichever of an enemy or an energy siphon sits under the cursor - the only two kinds of
+    // thing a basic attack (or, for an enemy, a skill) can target. A phantom is never a candidate:
+    // it carries no interactive part (see EncounterActor.ts) and is never picked.
+    private getHoveredInteractable(): HoveredInteractable | undefined {
         const inputManager = this.mapViewer.inputManager;
         if (inputManager.mouseX === -1 || inputManager.mouseY === -1) {
             return undefined;
         }
         const pickedId = pickEnemyNear(
             { x: inputManager.mouseX, y: inputManager.mouseY },
-            this.buildEnemyScreenCandidates(),
+            this.buildInteractableScreenCandidates(),
             ENEMY_HOVER_PICK_RADIUS_PX,
         );
-        return pickedId !== undefined ? this.mapViewer.world.findEnemy(pickedId) : undefined;
+        if (pickedId === undefined) {
+            return undefined;
+        }
+        const enemy = this.mapViewer.world.findEnemy(pickedId);
+        if (enemy) {
+            return { kind: "enemy", enemy };
+        }
+        const siphon = this.mapViewer.world.findEnergySiphon(pickedId);
+        return siphon ? { kind: "energySiphon", siphon } : undefined;
+    }
+
+    private getHoveredEnemy(): Enemy | undefined {
+        const hovered = this.getHoveredInteractable();
+        return hovered?.kind === "enemy" ? hovered.enemy : undefined;
     }
 
     private buildEnemyScreenCandidates(): EnemyScreenCandidate[] {
@@ -2205,13 +2282,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             if (enemy.state === EnemyState.DEAD) {
                 continue;
             }
-            if (
-                enemy.type.id === EnemyTypeId.ZEBAK_PHANTOM ||
-                enemy.type.id === EnemyTypeId.BABA_PHANTOM
-            ) {
-                continue;
-            }
-            const rect = this.projectEnemyScreenRect(enemy);
+            const rect = this.projectScreenRect(enemy.level, enemy.x, enemy.y, enemy.hitRadius);
             if (rect) {
                 candidates.push({ id: enemy.id, rect });
             }
@@ -2219,27 +2290,86 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         return candidates;
     }
 
-    // A rough body rect above the enemy's feet, scaled from its hit radius, used as a generous
-    // click/hover target instead of the exact model silhouette.
+    private buildInteractableScreenCandidates(): EnemyScreenCandidate[] {
+        const candidates = this.buildEnemyScreenCandidates();
+        for (const actor of this.mapViewer.world.encounterActors) {
+            if (actor.kind !== EncounterActorKind.ENERGY_SIPHON) {
+                continue;
+            }
+            const rect = this.projectScreenRect(
+                actor.level,
+                actor.x,
+                actor.y,
+                actor.type.hitRadius,
+            );
+            if (rect) {
+                candidates.push({ id: actor.id, rect });
+            }
+        }
+        return candidates;
+    }
+
+    // Only a hostile siphon can be attacked (see canTargetEnergySiphon) - a reversed one is never a
+    // menu target even though it stays hoverable/highlightable via buildInteractableScreenCandidates.
+    private buildHostileSiphonScreenCandidates(): EnemyScreenCandidate[] {
+        const candidates: EnemyScreenCandidate[] = [];
+        for (const actor of this.mapViewer.world.encounterActors) {
+            if (
+                actor.kind !== EncounterActorKind.ENERGY_SIPHON ||
+                actor.siphon.state !== EnergySiphonState.HOSTILE
+            ) {
+                continue;
+            }
+            const rect = this.projectScreenRect(
+                actor.level,
+                actor.x,
+                actor.y,
+                actor.type.hitRadius,
+            );
+            if (rect) {
+                candidates.push({ id: actor.id, rect });
+            }
+        }
+        return candidates;
+    }
+
     private projectEnemyScreenRect(enemy: Enemy): ScreenRect | undefined {
+        return this.projectScreenRect(enemy.level, enemy.x, enemy.y, enemy.hitRadius);
+    }
+
+    // A rough body rect above the actor's feet, scaled from its hit radius, used as a generous
+    // click/hover target instead of the exact model silhouette.
+    private projectScreenRect(
+        level: number,
+        x: number,
+        y: number,
+        hitRadius: number,
+    ): ScreenRect | undefined {
         const viewProjMatrix = this.mapViewer.camera.viewProjMatrix;
         const width = this.canvas.clientWidth;
         const height = this.canvas.clientHeight;
-        const groundHeight = this.terrain.getHeight(enemy.level, enemy.x, enemy.y);
-        const bodyHeight = enemy.hitRadius * ENEMY_BODY_HEIGHT_SCALE;
+        const groundHeight = this.terrain.getHeight(level, x, y);
+        const bodyHeight = hitRadius * ENEMY_BODY_HEIGHT_SCALE;
         const corners = [
-            [enemy.x - enemy.hitRadius, enemy.y - enemy.hitRadius],
-            [enemy.x + enemy.hitRadius, enemy.y - enemy.hitRadius],
-            [enemy.x - enemy.hitRadius, enemy.y + enemy.hitRadius],
-            [enemy.x + enemy.hitRadius, enemy.y + enemy.hitRadius],
+            [x - hitRadius, y - hitRadius],
+            [x + hitRadius, y - hitRadius],
+            [x - hitRadius, y + hitRadius],
+            [x + hitRadius, y + hitRadius],
         ];
         const points: ScreenPoint[] = [];
-        for (const [x, y] of corners) {
-            const foot = worldToScreen(viewProjMatrix, x, y, groundHeight, width, height);
+        for (const [cornerX, cornerY] of corners) {
+            const foot = worldToScreen(
+                viewProjMatrix,
+                cornerX,
+                cornerY,
+                groundHeight,
+                width,
+                height,
+            );
             const head = worldToScreen(
                 viewProjMatrix,
-                x,
-                y,
+                cornerX,
+                cornerY,
                 groundHeight + bodyHeight,
                 width,
                 height,
@@ -2711,20 +2841,23 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     // Every visible map's animated locs, including maps outside the tick range: those keep
-    // rendering their last frame.
+    // rendering their last frame. Transformable locs follow each map's animated ones, matching the
+    // order of its skinned loc draw ranges.
     buildLocInstanceData(): void {
         const frameCount = this.stats.frameCount;
+        const transformFor = this.locTransformSource();
         this.locRenderCount = 0;
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
             const slot = frameCount % map.locDataTextureOffsets.length;
-            if (map.locsAnimated.length === 0) {
+            const locCount = map.locsAnimated.length + map.locsTransformable.length;
+            if (locCount === 0) {
                 map.locDataTextureOffsets[slot] = -1;
                 continue;
             }
             map.locDataTextureOffsets[slot] = this.locRenderCount;
 
-            const newCount = this.locRenderCount + map.locsAnimated.length;
+            const newCount = this.locRenderCount + locCount;
             if (this.locRenderData.length / (4 * LOC_INSTANCE_TEXELS) < newCount) {
                 const newData = new Uint32Array(
                     Math.ceil((newCount * 2 * LOC_INSTANCE_TEXELS) / 16) * 16 * 4,
@@ -2733,10 +2866,44 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                 this.locRenderData = newData;
             }
             for (const loc of map.locsAnimated) {
-                writeLocInstance(this.locRenderData, this.locRenderCount, loc);
+                writeLocInstance(
+                    this.locRenderData,
+                    this.locRenderCount,
+                    loc.placement,
+                    loc.currentFrame(),
+                    REST_LOC_TRANSFORM,
+                );
+                this.locRenderCount++;
+            }
+            for (const loc of map.locsTransformable) {
+                writeLocInstance(
+                    this.locRenderData,
+                    this.locRenderCount,
+                    loc.placement,
+                    loc.restFrame,
+                    transformFor(loc.tile),
+                );
                 this.locRenderCount++;
             }
         }
+    }
+
+    // The only encounter that moves its locs is Wardens P3, whose floor tiles follow its slams and
+    // row removals.
+    private locTransformSource(): (tile: LocTile) => LocTransform {
+        const world = this.mapViewer.world;
+        const wardens = world.wardenP3RenderState;
+        if (!wardens) {
+            return () => REST_LOC_TRANSFORM;
+        }
+        const timeSeconds = world.timeSeconds;
+        return (tile) =>
+            wardenP3FloorTilePose(
+                wardens.floorSlams,
+                wardens.removedArenaRows,
+                wardenP3ArenaTile(tile.x, tile.y),
+                timeSeconds,
+            );
     }
 
     updateLocDataTexture(): DataTextureSlot {
@@ -2805,6 +2972,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const maxCount =
             (world.player !== undefined ? PLAYER_MAX_INSTANCES : 0) +
             world.enemies.length +
+            world.encounterActors.length +
             world.projectiles.length +
             world.visualEffects.length +
             world.groundItems.length +
@@ -2888,6 +3056,33 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     level: this.terrain.getRenderLevel(enemy.level, enemy.x, enemy.y),
                     interactType: InteractType.ENEMY,
                     interactId: enemy.id,
+                    pitch: 0,
+                },
+            );
+        }
+
+        for (const actor of world.encounterActors) {
+            const animSet = actorData.enemyTypes[actor.type.id];
+            if (!animSet) {
+                continue;
+            }
+            const groundHeight = this.tryGetHeight(actor.level, actor.x, actor.y);
+            if (groundHeight === undefined) {
+                continue;
+            }
+            // Only a siphon is ever a hover/highlight target - a phantom is never picked, so it
+            // never needs an interact id (see buildInteractableScreenCandidates).
+            const interactable = actor.kind === EncounterActorKind.ENERGY_SIPHON;
+            push(
+                { kind: "encounterActor", actor, animSet },
+                {
+                    worldX: actor.x,
+                    worldY: actor.y,
+                    groundHeight,
+                    rotation: actor.rotation,
+                    level: this.terrain.getRenderLevel(actor.level, actor.x, actor.y),
+                    interactType: interactable ? InteractType.ENEMY : InteractType.NONE,
+                    interactId: interactable ? actor.id : 0,
                     pitch: 0,
                 },
             );
@@ -3149,6 +3344,13 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
                     frameIndex: enemy.animation.frame,
                 };
             }
+            case "encounterActor": {
+                const { actor: encounterActor, animSet } = actor;
+                return {
+                    animation: getEnemyAnimation(animSet, encounterActor.animation.seqId),
+                    frameIndex: encounterActor.animation.frame,
+                };
+            }
             case "projectile": {
                 const { projectile } = actor;
                 return {
@@ -3194,7 +3396,10 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const { drawCall, drawRanges } = actorBuffer.drawCall;
 
         drawCall.texture("u_actorDataTexture", actorDataTexture);
-        drawCall.uniform("u_highlightId", this.highlightedEnemy?.id ?? 0);
+        drawCall.uniform(
+            "u_highlightId",
+            this.highlightedEnemy?.id ?? this.highlightedSiphon?.id ?? 0,
+        );
         drawCall.uniform("u_highlightLocId", this.highlightedWorldObject?.object.id ?? 0);
         drawCall.uniform("u_highlightItemId", this.highlightedGroundItem?.id ?? 0);
 

@@ -1,7 +1,7 @@
 import { SeqTiming, sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
 import { Combatant } from "./Combatant";
 import { Affects, HitEffect, Payload } from "./Effect";
-import type { EnergySiphonActor } from "./EnergySiphon";
+import type { EnergySiphonActor } from "./EncounterActor";
 import { ProjectileSpec } from "./Projectile";
 import { SeqCatalog } from "./SeqCatalog";
 

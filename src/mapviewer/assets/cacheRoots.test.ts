@@ -2,7 +2,6 @@ import { WeaponStyle } from "../game/Ability";
 import { Encounter, EncounterId, getEncounter } from "../game/Encounter";
 import { EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import { WorldObjectKind } from "../game/Interaction";
-import { VisualEffectKind } from "../game/VisualEffect";
 import { buildPlayerLoadout } from "../game/abilities";
 import { EFFECT_BAKES, WORLD_OBJECT_BAKES } from "./ActorAssets";
 import { cacheRoots, packRequest } from "./cacheRoots";
@@ -30,16 +29,12 @@ describe("cacheRoots", () => {
         expect(roots.mapSquares).toHaveLength(8);
     });
 
-    it("roots contain the Wardens phase-three graphics and their sequences", () => {
+    it("roots contain every visual effect's graphics and sequence, regardless of encounter", () => {
+        // EFFECT_BAKES is baked into every encounter's actor assets unconditionally (see
+        // actorAssets in ActorAssets.ts), so which encounter this checks against is arbitrary.
         const roots = rootsFor(getEncounter(EncounterId.FIGHT_CAVES));
-        const effects = [
-            VisualEffectKind.WARDENS_LIGHTNING,
-            VisualEffectKind.WARDENS_LIGHTNING_WARNING,
-            VisualEffectKind.WARDENS_FALLING_TILE,
-        ];
 
-        for (const effect of effects) {
-            const bake = EFFECT_BAKES[effect];
+        for (const bake of Object.values(EFFECT_BAKES)) {
             expect(roots.spotAnimIds).toContain(bake.spotAnimId);
             expect(roots.seqIds).toContain(bake.seq.seqId);
         }

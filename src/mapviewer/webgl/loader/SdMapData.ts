@@ -1,6 +1,7 @@
 import { CollisionData } from "../../../rs/scene/CollisionMap";
 import { DrawRange } from "../DrawRange";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
+import { TransformableLocData } from "../loc/TransformableLocs";
 import { NpcData } from "../npc/NpcData";
 import { SkinnedGeometry } from "../skin/Skinning";
 
@@ -36,6 +37,7 @@ export type SdMapData = {
     drawRangesAlpha: DrawRange[];
 
     locsAnimated: LocAnimatedData[];
+    locsTransformable: TransformableLocData[];
     npcs: NpcData[];
 
     loadedTextures: Map<number, Int32Array>;
