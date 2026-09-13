@@ -8,6 +8,7 @@ import {
     ResolvedEnemyType,
     isBandedEnemyType,
     isBossEnemyType,
+    isStationaryEnemyType,
     resolveEnemyStats,
 } from "./EnemyType";
 import { TILE_SIZE, Terrain } from "./Terrain";
@@ -155,6 +156,7 @@ export class Enemy implements Combatant, SteeringBody {
 
     state: EnemyState = EnemyState.IDLE;
     rotation = 0;
+    invulnerable = false;
     frozenUntil?: number;
     respawnAt?: number;
     despawnAt?: number;
@@ -205,6 +207,10 @@ export class Enemy implements Combatant, SteeringBody {
         if (this.previewSeq !== undefined) {
             this.animation.setSequence(this.previewSeq);
             this.animation.advance(deltaTimeSeconds, this.previewPlayback);
+            return;
+        }
+        if (isStationaryEnemyType(this.type)) {
+            this.updateStationary(deltaTimeSeconds);
             return;
         }
 
@@ -354,6 +360,18 @@ export class Enemy implements Combatant, SteeringBody {
         this.patternIndex = 0;
         this.abilityRuntime.reset();
         this.animation.restart(this.type.seqs.idle);
+    }
+
+    private updateStationary(deltaTimeSeconds: number): void {
+        if (this.health <= 0) {
+            this.state = EnemyState.DEAD;
+            this.animation.setSequence(this.type.seqs.death);
+            this.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE);
+            return;
+        }
+        this.state = EnemyState.IDLE;
+        this.animation.setSequence(this.type.seqs.idle);
+        this.animation.advance(deltaTimeSeconds);
     }
 
     // The first ability (in priority order) whose own cooldown/resource gate is currently open,

@@ -32,6 +32,10 @@ export enum EnemyTypeId {
     KET_ZEK = "ket_zek",
     TZTOK_JAD = "tztok_jad",
     YT_HURKOT = "yt_hurkot",
+    TUMEKENS_WARDEN = "tumekens_warden",
+    ZEBAK_PHANTOM = "zebak_phantom",
+    BABA_PHANTOM = "baba_phantom",
+    ENERGY_SIPHON = "energy_siphon",
     // Built at runtime by the animation viewer (see AnimPreview.ts), never present in ENEMY_TYPES.
     PREVIEW = "preview",
 }
@@ -49,6 +53,8 @@ export enum EnemyBehaviour {
     // Holds close to the player (approaching only past the leash range, never retreating) and
     // cycles a fixed attack pattern in order rather than picking the first ready ability.
     BOSS = "boss",
+    STATIONARY = "stationary",
+    SCRIPTED_BOSS = "scripted_boss",
 }
 
 export type EngagementBand = {
@@ -108,7 +114,13 @@ type EnemyTypeCommon<A extends AbilityDefinition> = {
 };
 
 export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
-    | (EnemyTypeCommon<A> & { readonly behaviour: EnemyBehaviour.RUSHER | EnemyBehaviour.TANK })
+    | (EnemyTypeCommon<A> & {
+          readonly behaviour:
+              | EnemyBehaviour.RUSHER
+              | EnemyBehaviour.TANK
+              | EnemyBehaviour.STATIONARY
+              | EnemyBehaviour.SCRIPTED_BOSS;
+      })
     | (EnemyTypeCommon<A> & {
           readonly behaviour: EnemyBehaviour.KITER | EnemyBehaviour.CASTER;
           readonly engagement: EngagementBand;
@@ -170,6 +182,15 @@ export function isBossEnemyType<A extends AbilityDefinition>(
     type: EnemyType<A>,
 ): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.BOSS }> {
     return type.behaviour === EnemyBehaviour.BOSS;
+}
+
+export function isStationaryEnemyType<A extends AbilityDefinition>(
+    type: EnemyType<A>,
+): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.STATIONARY }> {
+    return (
+        type.behaviour === EnemyBehaviour.STATIONARY ||
+        type.behaviour === EnemyBehaviour.SCRIPTED_BOSS
+    );
 }
 
 // Returns the index of the first not-yet-triggered phase whose threshold the current health
@@ -382,6 +403,74 @@ const TZTOK_JAD: EnemyType = {
     ],
 };
 
+const TUMEKENS_WARDEN: EnemyType = {
+    id: EnemyTypeId.TUMEKENS_WARDEN,
+    npcTypeId: 11760,
+    idleSeqId: 9654,
+    walkSeqId: 9654,
+    deathSeqId: 9654,
+    attackSeqId: 9654,
+    hitRadius: 256,
+    projectileLaunchHeight: 480,
+    maxHealth: 3200,
+    experienceReward: createExperience(0),
+    walkSpeed: 0,
+    behaviour: EnemyBehaviour.SCRIPTED_BOSS,
+    abilities: [],
+    dropTier: DropTier.NONE,
+};
+
+const ZEBAK_PHANTOM: EnemyType = {
+    id: EnemyTypeId.ZEBAK_PHANTOM,
+    npcTypeId: 11774,
+    idleSeqId: 9618,
+    walkSeqId: 9618,
+    deathSeqId: 9618,
+    attackSeqId: 9618,
+    hitRadius: 160,
+    projectileLaunchHeight: 240,
+    maxHealth: 1,
+    experienceReward: createExperience(0),
+    walkSpeed: 0,
+    behaviour: EnemyBehaviour.STATIONARY,
+    abilities: [],
+    dropTier: DropTier.NONE,
+};
+
+const BABA_PHANTOM: EnemyType = {
+    id: EnemyTypeId.BABA_PHANTOM,
+    npcTypeId: 11775,
+    idleSeqId: 9741,
+    walkSeqId: 9741,
+    deathSeqId: 9741,
+    attackSeqId: 9741,
+    hitRadius: 160,
+    projectileLaunchHeight: 240,
+    maxHealth: 1,
+    experienceReward: createExperience(0),
+    walkSpeed: 0,
+    behaviour: EnemyBehaviour.STATIONARY,
+    abilities: [],
+    dropTier: DropTier.NONE,
+};
+
+const ENERGY_SIPHON: EnemyType = {
+    id: EnemyTypeId.ENERGY_SIPHON,
+    npcTypeId: 11772,
+    idleSeqId: 9736,
+    walkSeqId: 9736,
+    deathSeqId: 9736,
+    attackSeqId: 9736,
+    hitRadius: 64,
+    projectileLaunchHeight: 64,
+    maxHealth: 1,
+    experienceReward: createExperience(0),
+    walkSpeed: 0,
+    behaviour: EnemyBehaviour.STATIONARY,
+    abilities: [],
+    dropTier: DropTier.NONE,
+};
+
 export const ENEMY_TYPES: Readonly<Partial<Record<EnemyTypeId, EnemyType>>> = {
     [EnemyTypeId.GOBLIN]: GOBLIN,
     [EnemyTypeId.TZ_KIH]: TZ_KIH,
@@ -391,6 +480,10 @@ export const ENEMY_TYPES: Readonly<Partial<Record<EnemyTypeId, EnemyType>>> = {
     [EnemyTypeId.KET_ZEK]: KET_ZEK,
     [EnemyTypeId.TZTOK_JAD]: TZTOK_JAD,
     [EnemyTypeId.YT_HURKOT]: YT_HURKOT,
+    [EnemyTypeId.TUMEKENS_WARDEN]: TUMEKENS_WARDEN,
+    [EnemyTypeId.ZEBAK_PHANTOM]: ZEBAK_PHANTOM,
+    [EnemyTypeId.BABA_PHANTOM]: BABA_PHANTOM,
+    [EnemyTypeId.ENERGY_SIPHON]: ENERGY_SIPHON,
 };
 
 export function getEnemyType(id: EnemyTypeId): EnemyType {

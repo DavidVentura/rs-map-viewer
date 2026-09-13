@@ -2,8 +2,9 @@ import { WeaponStyle } from "../game/Ability";
 import { Encounter, EncounterId, getEncounter } from "../game/Encounter";
 import { EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import { WorldObjectKind } from "../game/Interaction";
+import { VisualEffectKind } from "../game/VisualEffect";
 import { buildPlayerLoadout } from "../game/abilities";
-import { WORLD_OBJECT_BAKES } from "./ActorAssets";
+import { EFFECT_BAKES, WORLD_OBJECT_BAKES } from "./ActorAssets";
 import { cacheRoots, packRequest } from "./cacheRoots";
 
 function rootsFor(encounter: Encounter) {
@@ -27,6 +28,21 @@ describe("cacheRoots", () => {
             ]),
         );
         expect(roots.mapSquares).toHaveLength(8);
+    });
+
+    it("roots contain the Wardens phase-three graphics and their sequences", () => {
+        const roots = rootsFor(getEncounter(EncounterId.FIGHT_CAVES));
+        const effects = [
+            VisualEffectKind.WARDENS_LIGHTNING,
+            VisualEffectKind.WARDENS_LIGHTNING_WARNING,
+            VisualEffectKind.WARDENS_FALLING_TILE,
+        ];
+
+        for (const effect of effects) {
+            const bake = EFFECT_BAKES[effect];
+            expect(roots.spotAnimIds).toContain(bake.spotAnimId);
+            expect(roots.seqIds).toContain(bake.seq.seqId);
+        }
     });
 
     it("Lumbridge roots hold the 3x3 squares around the player's square", () => {

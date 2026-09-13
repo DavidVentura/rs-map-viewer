@@ -40,6 +40,8 @@ import {
     TUMEKENS_SHADOW_IMPACT_SEQ_ID,
     TZHAAR_HEAL_SEQ_ID,
     VisualEffectKind,
+    WARDENS_FALLING_TILE_SEQ_ID,
+    WARDENS_LIGHTNING_SEQ_ID,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
 } from "../game/VisualEffect";
 import {
@@ -217,6 +219,10 @@ const TUMEKENS_SHADOW_CAST_SPOTANIM_ID = 2125;
 // The tier-0 staff's fire bolt cast graphic (SpotAnimType id): 126, FIREBOLT_CASTING.
 const FIRE_BOLT_CAST_SPOTANIM_ID = 126;
 
+const WARDENS_LIGHTNING_SPOTANIM_ID = 2197;
+const WARDENS_LIGHTNING_WARNING_SPOTANIM_ID = 2198;
+const WARDENS_FALLING_TILE_SPOTANIM_ID = 2228;
+
 export const PROJECTILE_BAKES: Readonly<Record<ProjectileKind, ProjectileBake>> = {
     [ProjectileKind.ARROW]: {
         kind: "ARROW_OBJ",
@@ -325,6 +331,18 @@ export const EFFECT_BAKES: Readonly<Record<VisualEffectKind, AnimatedSpotAnimBak
     [VisualEffectKind.FIRE_BOLT_CAST]: animatedSpotAnim(
         FIRE_BOLT_CAST_SPOTANIM_ID,
         FIRE_BOLT_CAST_SEQ_ID,
+    ),
+    [VisualEffectKind.WARDENS_LIGHTNING]: animatedSpotAnim(
+        WARDENS_LIGHTNING_SPOTANIM_ID,
+        WARDENS_LIGHTNING_SEQ_ID,
+    ),
+    [VisualEffectKind.WARDENS_LIGHTNING_WARNING]: animatedSpotAnim(
+        WARDENS_LIGHTNING_WARNING_SPOTANIM_ID,
+        WARDENS_LIGHTNING_SEQ_ID,
+    ),
+    [VisualEffectKind.WARDENS_FALLING_TILE]: animatedSpotAnim(
+        WARDENS_FALLING_TILE_SPOTANIM_ID,
+        WARDENS_FALLING_TILE_SEQ_ID,
     ),
 };
 

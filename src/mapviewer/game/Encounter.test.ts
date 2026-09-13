@@ -1,6 +1,7 @@
 import {
     ENCOUNTERS,
     EncounterId,
+    EncounterScriptKind,
     EncounterSpawnMode,
     WaveEncounter,
     getEncounter,
@@ -53,9 +54,42 @@ describe("encounters", () => {
         },
     );
 
-    it.each(Object.values(EncounterId))("%s declares at least one wave", (id) => {
+    it.each(
+        Object.values(EncounterId).filter(
+            (id) => getEncounter(id).spawnMode !== EncounterSpawnMode.SCRIPTED,
+        ),
+    )("%s declares at least one wave", (id) => {
         const encounter = getEncounter(id);
         expect(encounter.waves.length).toBeGreaterThan(0);
+    });
+
+    it("Wardens P3 starts as a scripted encounter on Tumeken's Warden platform", () => {
+        const encounter = getEncounter(EncounterId.WARDENS_P3);
+
+        expect(encounter).toMatchObject({
+            spawnMode: EncounterSpawnMode.SCRIPTED,
+            mapSquares: [{ mapX: 61, mapY: 80 }],
+            playerSpawn: { x: 3936 * 128 + 64, y: 5162 * 128 + 64, level: 0 },
+            enemySpawns: [{ x: 3936 * 128 + 64, y: 5154 * 128 + 64, level: 0 }],
+            script: {
+                kind: EncounterScriptKind.WARDENS_P3,
+                arena: { furthestRowFromWarden: 10 },
+            },
+        });
+        if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
+            throw new Error("expected a scripted encounter");
+        }
+        expect(encounter.waves).toEqual([]);
+        expect(encounter.phases).toEqual([]);
+        expect(encounter.enemyTypeIds).toEqual(
+            expect.arrayContaining([
+                EnemyTypeId.TUMEKENS_WARDEN,
+                EnemyTypeId.ZEBAK_PHANTOM,
+                EnemyTypeId.BABA_PHANTOM,
+                EnemyTypeId.ENERGY_SIPHON,
+            ]),
+        );
+        expect(encounter.script.siphonLayout.spawns).toHaveLength(4);
     });
 
     it.each(Object.values(EncounterId))(

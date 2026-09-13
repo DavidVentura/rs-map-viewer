@@ -39,7 +39,7 @@ import {
 import { CombatEventKind } from "../game/CombatEvent";
 import { Encounter, EncounterSpawnMode } from "../game/Encounter";
 import { Enemy, EnemyState } from "../game/Enemy";
-import { EnemyBehaviour, resolveEnemyType } from "../game/EnemyType";
+import { EnemyBehaviour, EnemyTypeId, resolveEnemyType } from "../game/EnemyType";
 import { equippedVisualItemIds, itemIdForTier } from "../game/Equipment";
 import {
     AbilitySlotInput,
@@ -319,7 +319,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     frameFxaaDrawCall?: DrawCall;
 
     // Settings
-    maxLevel: number = Scene.MAX_LEVELS - 1;
+    maxLevel: number;
 
     skyColor: vec4 = vec4.fromValues(0, 0, 0, 1);
     fogDepth: number = 16;
@@ -418,6 +418,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         super(mapViewer, ResidencyPolicyKind.WHOLE_WORLD);
         this.terrain = new WebGLTerrain(this.mapManager);
         this.encounter = mapViewer.encounter;
+        this.maxLevel = this.encounter.maximumRenderedLevel;
     }
 
     createTerrain(): Terrain {
@@ -767,7 +768,7 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             "Max Level": {
                 value: this.maxLevel,
                 min: 0,
-                max: 3,
+                max: this.encounter.maximumRenderedLevel,
                 step: 1,
                 onChange: (v: number) => {
                     this.setMaxLevel(v);
@@ -1344,8 +1345,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
     }
 
     setMaxLevel(maxLevel: number): void {
-        const updated = this.maxLevel !== maxLevel;
-        this.maxLevel = maxLevel;
+        const renderedLevel = Math.min(maxLevel, this.encounter.maximumRenderedLevel);
+        const updated = this.maxLevel !== renderedLevel;
+        this.maxLevel = renderedLevel;
         if (updated) {
             this.clearMaps();
         }
@@ -1469,17 +1471,19 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const pickupTarget = this.buildPickupInput();
         const interaction = this.buildInteractionInput();
         this.updateClickCross(menuActionWasPending, movement, combat, pickupTarget, interaction);
-        this.mapViewer.world.advance(deltaTime / 1000, {
-            movement,
-            combat,
-            styleSwitch,
-            chooseUpgrade,
-            pickupTarget,
-            interaction,
-        });
-        this.advancePreviewGfx(deltaTime / 1000);
-        this.updateRoofHiding();
-        this.pinCameraToPlayer();
+        if (this.isEncounterMapLoaded) {
+            this.mapViewer.world.advance(deltaTime / 1000, {
+                movement,
+                combat,
+                styleSwitch,
+                chooseUpgrade,
+                pickupTarget,
+                interaction,
+            });
+            this.advancePreviewGfx(deltaTime / 1000);
+            this.updateRoofHiding();
+            this.pinCameraToPlayer();
+        }
 
         camera.update(this.app.width, this.app.height);
 
@@ -1769,9 +1773,22 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
         const isDragging =
             menuAttackTarget !== undefined || (!pointerOverHud && inputManager.isDragging());
 
-        const inputFor = (held: boolean, delivery: Delivery): AbilitySlotInput => {
+        const inputFor = (
+            held: boolean,
+            delivery: Delivery,
+            allowsEnergySiphon: boolean,
+        ): AbilitySlotInput => {
             if (!held) {
                 return { held: false };
+            }
+            if (hoveredEnemy?.type.id === EnemyTypeId.ENERGY_SIPHON) {
+                const siphon = this.mapViewer.world.findEnergySiphon(hoveredEnemy.id);
+                return allowsEnergySiphon && siphon
+                    ? {
+                          held: true,
+                          target: { kind: AbilityTargetKind.ENERGY_SIPHON, siphon },
+                      }
+                    : { held: false };
             }
             if (hoveredEnemy && aimModeFor(delivery) === AimMode.COMBATANT_OR_POINT) {
                 return {
@@ -1796,12 +1813,14 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             basicAttack: inputFor(
                 isDragging && hoveredEnemy !== undefined,
                 player.basicAttack.effect.delivery,
+                true,
             ),
             skills: player.skills.map((skill, skillSlot) => {
                 const key = keyForSkillSlot(skillSlot);
                 return inputFor(
                     key !== undefined && inputManager.isKeyDown(key),
                     skill.effect.delivery,
+                    false,
                 );
             }),
         };
@@ -2186,6 +2205,12 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
             if (enemy.state === EnemyState.DEAD) {
                 continue;
             }
+            if (
+                enemy.type.id === EnemyTypeId.ZEBAK_PHANTOM ||
+                enemy.type.id === EnemyTypeId.BABA_PHANTOM
+            ) {
+                continue;
+            }
             const rect = this.projectEnemyScreenRect(enemy);
             if (rect) {
                 candidates.push({ id: enemy.id, rect });
@@ -2411,7 +2436,9 @@ export class WebGLMapViewerRenderer extends MapViewerRenderer<WebGLMapSquare> {
 
         const bossEnemy = world.enemies.find(
             (enemy) =>
-                enemy.type.behaviour === EnemyBehaviour.BOSS && enemy.state !== EnemyState.DEAD,
+                (enemy.type.behaviour === EnemyBehaviour.BOSS ||
+                    enemy.type.behaviour === EnemyBehaviour.SCRIPTED_BOSS) &&
+                enemy.state !== EnemyState.DEAD,
         );
         const bossNpcType = bossEnemy && this.resolveEnemyNpcType(bossEnemy);
         const boss: BossHudInfo | undefined = bossEnemy &&

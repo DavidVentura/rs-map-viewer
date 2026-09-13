@@ -1,6 +1,7 @@
 import { SeqTiming, sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "./Animation";
 import { Combatant } from "./Combatant";
 import { Affects, HitEffect, Payload } from "./Effect";
+import type { EnergySiphonActor } from "./EnergySiphon";
 import { ProjectileSpec } from "./Projectile";
 import { SeqCatalog } from "./SeqCatalog";
 
@@ -171,21 +172,35 @@ export function attackLockSeconds(definition: AbilityDefinition): number {
 export enum AbilityTargetKind {
     COMBATANT = 0,
     POINT = 1,
+    ENERGY_SIPHON = 2,
 }
 
 export type AbilityTarget =
     | { readonly kind: AbilityTargetKind.COMBATANT; readonly combatant: Combatant }
-    | { readonly kind: AbilityTargetKind.POINT; readonly x: number; readonly y: number };
+    | { readonly kind: AbilityTargetKind.POINT; readonly x: number; readonly y: number }
+    | { readonly kind: AbilityTargetKind.ENERGY_SIPHON; readonly siphon: EnergySiphonActor };
 
 export function abilityTargetPoint(target: AbilityTarget): { x: number; y: number } {
-    return target.kind === AbilityTargetKind.COMBATANT ? target.combatant : target;
+    switch (target.kind) {
+        case AbilityTargetKind.COMBATANT:
+            return target.combatant;
+        case AbilityTargetKind.POINT:
+            return target;
+        case AbilityTargetKind.ENERGY_SIPHON:
+            return target.siphon;
+    }
 }
 
 // A cast's aim as it stands at impact: an aimed combatant that has since died or is off the
 // caster's level degrades to the point it stands on.
 export function liveAbilityTarget(target: AbilityTarget, level: number): AbilityTarget {
-    if (target.kind === AbilityTargetKind.POINT) {
-        return target;
+    switch (target.kind) {
+        case AbilityTargetKind.POINT:
+            return target;
+        case AbilityTargetKind.ENERGY_SIPHON:
+            return { kind: AbilityTargetKind.POINT, x: target.siphon.x, y: target.siphon.y };
+        case AbilityTargetKind.COMBATANT:
+            break;
     }
     const combatant = target.combatant;
     if (combatant.level === level && combatant.health > 0) {

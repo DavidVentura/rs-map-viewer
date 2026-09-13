@@ -1,4 +1,5 @@
 import { MapSquareCoord } from "../../rs/map/MapSquareCoord";
+import { Scene } from "../../rs/scene/Scene";
 import { WeaponStyle } from "./Ability";
 import { EnemyTypeId } from "./EnemyType";
 import { EquipmentGrant, styleSetGrant } from "./Equipment";
@@ -15,6 +16,9 @@ import {
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
+import { WARDEN_P3_ARENA_ROW_COUNT, WARDEN_P3_SOLO_SIPHON_LAYOUT } from "./WardenP3Arena";
+import { WardenP3Arena } from "./WardenP3Director";
+import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import { UpgradeId } from "./upgrades";
 
 export type { MapSquareCoord };
@@ -24,6 +28,7 @@ export enum EncounterId {
     FIGHT_CAVES = "fightcaves",
     QUICK_CAVE = "quickcave",
     SANDBOX = "sandbox",
+    WARDENS_P3 = "wardensp3",
 }
 
 export type PlayerSpawn = {
@@ -79,6 +84,7 @@ export enum EncounterSpawnMode {
     // enemy is spawned directly by the renderer with a previewSeq set; the SPOT_ANIMS preview
     // spawns no enemy at all, only a hovering gfx at enemySpawns[0] (see AnimPreview.ts).
     PREVIEW = "preview",
+    SCRIPTED = "scripted",
 }
 
 type EncounterCommon = {
@@ -90,6 +96,8 @@ type EncounterCommon = {
     readonly waves: readonly Wave[];
     readonly ambientNpcs: boolean;
     readonly musicFile: string;
+    readonly initialCameraYaw: number;
+    readonly maximumRenderedLevel: number;
 };
 
 export type WaveEncounter = EncounterCommon & {
@@ -113,7 +121,30 @@ export type PreviewEncounter = EncounterCommon & {
     readonly interactions: readonly [];
 };
 
-export type Encounter = WaveEncounter | StaticRespawnEncounter | PreviewEncounter;
+export enum EncounterScriptKind {
+    WARDENS_P3 = "wardens_p3",
+}
+
+export type WardensP3Script = {
+    readonly kind: EncounterScriptKind.WARDENS_P3;
+    readonly wardenSpawn: EnemySpawnPoint;
+    readonly arena: WardenP3Arena;
+    readonly siphonLayout: WardenP3SiphonLayout;
+};
+
+export type ScriptedEncounter = EncounterCommon & {
+    readonly spawnMode: EncounterSpawnMode.SCRIPTED;
+    readonly script: WardensP3Script;
+    readonly phases: readonly [];
+    readonly worldObjects: readonly [];
+    readonly interactions: readonly [];
+};
+
+export type Encounter =
+    | WaveEncounter
+    | StaticRespawnEncounter
+    | PreviewEncounter
+    | ScriptedEncounter;
 
 function assertUnique(values: readonly string[], description: string): void {
     if (new Set(values).size !== values.length) {
@@ -192,7 +223,27 @@ function validatePhaseInteractions(encounter: WaveEncounter): void {
     }
 }
 
+function validateScriptedEncounter(encounter: ScriptedEncounter): void {
+    switch (encounter.script.kind) {
+        case EncounterScriptKind.WARDENS_P3:
+            if (!encounter.enemyTypeIds.includes(EnemyTypeId.TUMEKENS_WARDEN)) {
+                throw new RangeError("Wardens P3 requires Tumeken's Warden in its enemy types");
+            }
+            validateWardenP3SiphonLayout(encounter.script.siphonLayout);
+            return;
+    }
+}
+
 export function validateEncounter(encounter: Encounter): void {
+    if (
+        !Number.isInteger(encounter.maximumRenderedLevel) ||
+        encounter.maximumRenderedLevel < 0 ||
+        encounter.maximumRenderedLevel >= Scene.MAX_LEVELS
+    ) {
+        throw new RangeError(
+            `Encounter maximum rendered level must be within 0..${Scene.MAX_LEVELS - 1}`,
+        );
+    }
     assertUnique(encounter.enemyTypeIds, "enemy type ids");
     for (const wave of encounter.waves) {
         for (const group of wave.groups) {
@@ -205,6 +256,12 @@ export function validateEncounter(encounter: Encounter): void {
     if (encounter.spawnMode !== EncounterSpawnMode.WAVES) {
         if (encounter.phases.length !== 0 || encounter.interactions.length !== 0) {
             throw new RangeError("Only wave encounters can declare phases or interactions");
+        }
+        if (encounter.spawnMode === EncounterSpawnMode.SCRIPTED && encounter.waves.length !== 0) {
+            throw new RangeError("Scripted encounters cannot declare waves");
+        }
+        if (encounter.spawnMode === EncounterSpawnMode.SCRIPTED) {
+            validateScriptedEncounter(encounter);
         }
         return;
     }
@@ -279,6 +336,8 @@ const LUMBRIDGE: StaticRespawnEncounter = {
     spawnMode: EncounterSpawnMode.STATIC_RESPAWN,
     ambientNpcs: true,
     musicFile: "audio/harmony.opus",
+    initialCameraYaw: 1862,
+    maximumRenderedLevel: Scene.MAX_LEVELS - 1,
     phases: [],
     worldObjects: [],
     interactions: [],
@@ -590,6 +649,8 @@ const FIGHT_CAVES: WaveEncounter = {
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
     musicFile: "audio/tzhaar.opus",
+    initialCameraYaw: 1862,
+    maximumRenderedLevel: Scene.MAX_LEVELS - 1,
     waves: FIGHT_CAVES_WAVES,
     phases: FIGHT_CAVES_PHASES,
     worldObjects: [FIGHT_CAVES_WORLD_OBJECTS.lever, FIGHT_CAVES_WORLD_OBJECTS.chest],
@@ -680,11 +741,53 @@ const SANDBOX: WaveEncounter = {
     interactions: createPhaseInteractions("sandbox", SANDBOX_PHASES, FIGHT_CAVES_WORLD_OBJECTS),
 };
 
+const WARDENS_P3_PLAYER_TILE = { x: 3936, y: 5162 };
+const WARDENS_P3_WARDEN_TILE = { x: 3934, y: 5152 };
+const [wardensP3PlayerX, wardensP3PlayerY] = tileToWorld(
+    WARDENS_P3_PLAYER_TILE.x,
+    WARDENS_P3_PLAYER_TILE.y,
+    true,
+);
+const [wardensP3WardenX, wardensP3WardenY] = tileToWorld(
+    WARDENS_P3_WARDEN_TILE.x + 2,
+    WARDENS_P3_WARDEN_TILE.y + 2,
+    true,
+);
+
+const WARDENS_P3: ScriptedEncounter = {
+    id: EncounterId.WARDENS_P3,
+    mapSquares: [{ mapX: 61, mapY: 80 }],
+    playerSpawn: { x: wardensP3PlayerX, y: wardensP3PlayerY, level: 0 },
+    enemySpawns: [{ x: wardensP3WardenX, y: wardensP3WardenY, level: 0 }],
+    enemyTypeIds: [
+        EnemyTypeId.TUMEKENS_WARDEN,
+        EnemyTypeId.ZEBAK_PHANTOM,
+        EnemyTypeId.BABA_PHANTOM,
+        EnemyTypeId.ENERGY_SIPHON,
+    ],
+    spawnMode: EncounterSpawnMode.SCRIPTED,
+    ambientNpcs: false,
+    musicFile: "audio/tzhaar.opus",
+    initialCameraYaw: 1024,
+    maximumRenderedLevel: 1,
+    waves: [],
+    phases: [],
+    worldObjects: [],
+    interactions: [],
+    script: {
+        kind: EncounterScriptKind.WARDENS_P3,
+        wardenSpawn: { x: wardensP3WardenX, y: wardensP3WardenY, level: 0 },
+        arena: { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT },
+        siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
+    },
+};
+
 export const ENCOUNTERS: Readonly<Record<EncounterId, Encounter>> = {
     [EncounterId.LUMBRIDGE]: LUMBRIDGE,
     [EncounterId.FIGHT_CAVES]: FIGHT_CAVES,
     [EncounterId.QUICK_CAVE]: QUICK_CAVE,
     [EncounterId.SANDBOX]: SANDBOX,
+    [EncounterId.WARDENS_P3]: WARDENS_P3,
 };
 
 export function getEncounter(id: EncounterId): Encounter {

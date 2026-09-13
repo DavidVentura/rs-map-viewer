@@ -22,9 +22,9 @@ import { MapViewerRenderer } from "./MapViewerRenderer";
 import { MapViewerRendererType, createRenderer } from "./MapViewerRenderers";
 import { createViewerLoaders } from "./ViewerLoaders";
 import { actorAssets } from "./assets/ActorAssets";
+import { HudAssets, loadHudAssets } from "./assets/HudAssets";
 import { declaredSeqIds } from "./assets/cacheRoots";
 import { resolveEncounterAnimations } from "./assets/encounterAnimations";
-import { HudAssets, loadHudAssets } from "./assets/HudAssets";
 import { AudioFeedback } from "./audio/AudioFeedback";
 import { MusicPlayer } from "./audio/MusicPlayer";
 import { AnimPreviewParams, SeqRange } from "./game/AnimPreview";
@@ -97,8 +97,15 @@ export class MapViewer {
         this.audioFeedback = new AudioFeedback(new AudioContext());
         // Starting the camera at this encounter's spawn rather than a fixed literal keeps the
         // camera over the encounter's squares, the only ones its pack holds.
-        const { playerSpawn } = getEncounter(encounterId);
-        this.camera = new Camera(playerSpawn.x / 128, -26, playerSpawn.y / 128, -245, 1862);
+        const encounter = getEncounter(encounterId);
+        const { playerSpawn } = encounter;
+        this.camera = new Camera(
+            playerSpawn.x / 128,
+            -26,
+            playerSpawn.y / 128,
+            -245,
+            encounter.initialCameraYaw,
+        );
         this.renderer = createRenderer(rendererType, this);
         this.initCache(cache);
     }

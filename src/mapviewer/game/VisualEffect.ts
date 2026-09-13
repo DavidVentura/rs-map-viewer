@@ -20,6 +20,9 @@ export enum VisualEffectKind {
     SWAMP_TRIDENT_CAST = 14,
     TUMEKENS_SHADOW_CAST = 15,
     FIRE_BOLT_CAST = 16,
+    WARDENS_LIGHTNING = 17,
+    WARDENS_LIGHTNING_WARNING = 18,
+    WARDENS_FALLING_TILE = 19,
 }
 
 export const ICE_BARRAGE_HIT_SEQ_ID = 1965;
@@ -64,6 +67,8 @@ export const TUMEKENS_SHADOW_CAST_SEQ_ID = 9543;
 // The tier-0 staff's fire bolt cast graphic (SpotAnimType 126, FIREBOLT_CASTING) - not to be
 // confused with FIRE_BOLT_TRAVEL_SEQ_ID/FIRE_BOLT_HIT_SEQ_ID (Projectile.ts), the bolt itself.
 export const FIRE_BOLT_CAST_SEQ_ID = 658;
+export const WARDENS_LIGHTNING_SEQ_ID = 8680;
+export const WARDENS_FALLING_TILE_SEQ_ID = 9722;
 
 // A weapon-trail graphic authored frame for frame against its cast animation (the same frame count,
 // e.g. the halberd sweep 1204 against the halberd special 1203) plays on the cast's own frame
@@ -124,7 +129,7 @@ export class VisualEffect {
     constructor(
         readonly kind: VisualEffectKind,
         private readonly anchor: VisualEffectAnchor,
-        readonly height: number,
+        private readonly baseHeight: number,
         seq: SeqTiming,
         private readonly holdUntilSeconds?: number,
         // A caster-anchored effect plays at its ability's own castSpeed (see
@@ -148,6 +153,10 @@ export class VisualEffect {
         return this.anchor.kind === "COMBATANT" ? this.anchor.combatant.level : this.anchor.level;
     }
 
+    get height(): number {
+        return this.baseHeight;
+    }
+
     update(deltaTimeSeconds: number, timeSeconds: number): boolean {
         const completed = this.animation.advance(
             deltaTimeSeconds,
@@ -158,5 +167,27 @@ export class VisualEffect {
             return !completed;
         }
         return timeSeconds < this.holdUntilSeconds;
+    }
+}
+
+export class WardenFloorTileEffect extends VisualEffect {
+    private elapsedSeconds = 0;
+
+    constructor(
+        anchor: VisualEffectAnchor,
+        seq: SeqTiming,
+        private readonly durationSeconds: number,
+        private readonly peakHeight: number,
+    ) {
+        super(VisualEffectKind.WARDENS_FALLING_TILE, anchor, 0, seq);
+    }
+
+    override get height(): number {
+        return Math.sin((this.elapsedSeconds / this.durationSeconds) * Math.PI) * this.peakHeight;
+    }
+
+    override update(deltaTimeSeconds: number): boolean {
+        this.elapsedSeconds += deltaTimeSeconds;
+        return this.elapsedSeconds < this.durationSeconds;
     }
 }

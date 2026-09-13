@@ -98,6 +98,8 @@ function phaseEncounter(waves: readonly Wave[]): WaveEncounter {
         spawnMode: EncounterSpawnMode.WAVES,
         ambientNpcs: false,
         musicFile: "audio/tzhaar.opus",
+        initialCameraYaw: 1862,
+        maximumRenderedLevel: 3,
         waves,
         phases: [phase],
         worldObjects: [LEVER, CHEST],
