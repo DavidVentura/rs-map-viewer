@@ -1,7 +1,7 @@
 import { createSoundEffectId } from "../../rs/sound/SoundEffect";
 import { AnimationPlayback, AnimationProgress, AnimationState, SeqTiming } from "../game/Animation";
 import { FrameSound, SeqFrameSounds } from "./FrameSounds";
-import { crossedFrameSounds, frameSoundGain } from "./frameSoundCues";
+import { crossedFrameSounds, frameSoundGain, heardSoundGain } from "./frameSoundCues";
 
 function sound(soundId: number): FrameSound {
     return { soundId: createSoundEffectId(soundId), plays: 1, rangeTiles: 15 };
@@ -116,5 +116,36 @@ describe("frameSoundGain", () => {
         expect(frameSoundGain(4, offCentre, listener)).toBeCloseTo(
             frameSoundGain(4, SOURCE, listener) - 1 / 4,
         );
+    });
+});
+
+describe("heardSoundGain", () => {
+    const TILE = 128;
+    const ranged = (rangeTiles: number) => ({ ...sound(100), rangeTiles });
+    const LISTENER = { x: 10 * TILE + 64, y: 10 * TILE + 64 };
+    // 17 tiles off by Manhattan distance, like a phantom at the back of an arena.
+    const FAR = { x: LISTENER.x - 9 * TILE, y: LISTENER.y - 8 * TILE };
+
+    it("keeps a sound's own positional fade when the encounter sets no minimum range", () => {
+        expect(heardSoundGain(ranged(15), [FAR], LISTENER, 0)).toBe(0);
+        const near = { x: LISTENER.x + 4 * TILE, y: LISTENER.y };
+        expect(heardSoundGain(ranged(15), [near], LISTENER, 0)).toBeCloseTo(12 / 15);
+    });
+
+    it("stretches a sound to the encounter's minimum range so it carries across the arena", () => {
+        expect(heardSoundGain(ranged(15), [FAR], LISTENER, 40)).toBeCloseTo(24 / 40);
+    });
+
+    it("keeps a sound's own range when it already carries further than the minimum", () => {
+        expect(heardSoundGain(ranged(60), [FAR], LISTENER, 40)).toBeCloseTo(44 / 60);
+    });
+
+    it("leaves a non-positional sound at full volume", () => {
+        expect(heardSoundGain(ranged(0), [FAR], LISTENER, 40)).toBe(1);
+    });
+
+    it("plays a sound heard from several points as loud as from the nearest", () => {
+        const near = { x: LISTENER.x + 4 * TILE, y: LISTENER.y };
+        expect(heardSoundGain(ranged(15), [FAR, near], LISTENER, 0)).toBeCloseTo(12 / 15);
     });
 });

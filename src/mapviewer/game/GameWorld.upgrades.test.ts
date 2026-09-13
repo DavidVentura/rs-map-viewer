@@ -99,6 +99,7 @@ function phaseEncounter(waves: readonly Wave[]): WaveEncounter {
         spawnMode: EncounterSpawnMode.WAVES,
         ambientNpcs: false,
         musicFile: "audio/tzhaar.opus",
+        minimumSoundRangeTiles: 0,
         initialCamera: { pitch: -245, yaw: 1862 },
         maximumRenderedLevel: 3,
         transformableGroundDecorations: [],

@@ -41,8 +41,8 @@ export type WardenP3PulledTileSky = {
 };
 
 export const WARDEN_P3_PULLED_TILE_SKY: WardenP3PulledTileSky = {
-    tilesBehindWarden: 10,
-    fan: 1.4,
+    tilesBehindWarden: 4,
+    fan: 0.7,
 };
 
 export function wardenP3PulledTileSkyPoint(

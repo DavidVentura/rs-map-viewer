@@ -29,6 +29,7 @@ import {
     SimInput,
     applyOrderEvents,
     interruptsInteraction,
+    promoteHeldPress,
     stepPlayer,
 } from "./PlayerOrders";
 import { Experience } from "./Progression";
@@ -333,7 +334,7 @@ export class GameWorld implements WorldContext {
         if (!this.player || events.length === 0) {
             return;
         }
-        this.playerOrders = applyOrderEvents(this.playerOrders, events);
+        this.playerOrders = applyOrderEvents(this.playerOrders, events, this.timeSeconds);
         if (interruptsInteraction(events)) {
             this.waveEncounter?.interruptInteraction();
         }
@@ -353,9 +354,10 @@ export class GameWorld implements WorldContext {
             this.playerOrders = IDLE_PLAYER_ORDERS;
             return;
         }
+        const orders = promoteHeldPress(this.playerOrders, this.timeSeconds);
         this.playerOrders = {
-            ...this.playerOrders,
-            order: stepPlayer(this, player, this.playerOrders.order, input, dtSeconds),
+            ...orders,
+            order: stepPlayer(this, player, orders.order, input, dtSeconds),
         };
     }
 

@@ -61,22 +61,58 @@ export enum PlayerOrderKind {
 }
 
 // What the player keeps doing without further input, OSRS style: walking to a clicked point,
-// chasing a target into range and attacking it until it dies (or, for an energy siphon, until
-// it is reversed), or walking to a ground item and picking it up.
+// chasing a target into range and attacking it for as long as its persistence says (an energy
+// siphon's order also ends once it is reversed), or walking to a ground item and picking it up.
 export type PlayerOrder =
     | { readonly kind: PlayerOrderKind.IDLE }
     | { readonly kind: PlayerOrderKind.WALK_TO; readonly x: number; readonly y: number }
-    | { readonly kind: PlayerOrderKind.ATTACK; readonly target: AttackTarget }
+    | {
+          readonly kind: PlayerOrderKind.ATTACK;
+          readonly target: AttackTarget;
+          readonly persistence: AttackOrderPersistence;
+      }
     | { readonly kind: PlayerOrderKind.PICK_UP; readonly groundItemId: number };
+
+type AttackOrder = Extract<PlayerOrder, { readonly kind: PlayerOrderKind.ATTACK }>;
 
 export const IDLE_ORDER: PlayerOrder = { kind: PlayerOrderKind.IDLE };
 
-// STEERING: the left button has stayed down since a press on the ground, so the walk destination
-// follows the pointer until it is released.
-export enum PointerHold {
+// How long the left button must stay down on the ground or an enemy before letting go stops the
+// player rather than counting as a click. Kept above a slow click's length, since a click mistaken
+// for a hold strands the player partway to the clicked point.
+export const HOLD_THRESHOLD_SECONDS = 0.25;
+
+// Dragging this far across the ground makes the press a hold at once, so steering starts with the
+// drag instead of waiting out HOLD_THRESHOLD_SECONDS.
+export const HOLD_DRAG_DISTANCE = 0.5 * TILE_SIZE;
+
+export enum PointerHoldKind {
     RELEASED = 0,
-    STEERING = 1,
+    // Down on the ground or an enemy, not yet long or far enough to be a hold: letting go now is a
+    // click, which leaves the press's order running.
+    PRESSED = 1,
+    // Letting go stops the player.
+    HOLDING = 2,
 }
+
+// The presses a hold means something for: the walk destination follows the pointer across the
+// ground, and a pressed enemy is attacked for as long as the button stays down. An energy siphon or
+// a ground item gets the one action a click asks for however long it is pressed.
+export type HoldTarget = Extract<
+    OrderTarget,
+    { readonly kind: OrderTargetKind.GROUND | OrderTargetKind.ENEMY }
+>;
+
+export type PointerHold =
+    | { readonly kind: PointerHoldKind.RELEASED }
+    | {
+          readonly kind: PointerHoldKind.PRESSED;
+          readonly target: HoldTarget;
+          readonly pressedAtSeconds: number;
+      }
+    | { readonly kind: PointerHoldKind.HOLDING; readonly on: HoldTarget["kind"] };
+
+const RELEASED_POINTER: PointerHold = { kind: PointerHoldKind.RELEASED };
 
 export type PlayerOrders = {
     readonly order: PlayerOrder;
@@ -85,7 +121,7 @@ export type PlayerOrders = {
 
 export const IDLE_PLAYER_ORDERS: PlayerOrders = {
     order: IDLE_ORDER,
-    pointer: PointerHold.RELEASED,
+    pointer: RELEASED_POINTER,
 };
 
 export enum OrderEventKind {
@@ -135,37 +171,84 @@ function orderFor(target: OrderTarget): PlayerOrder {
             return { kind: PlayerOrderKind.WALK_TO, x: target.x, y: target.y };
         case OrderTargetKind.ENEMY:
         case OrderTargetKind.ENERGY_SIPHON:
-            return { kind: PlayerOrderKind.ATTACK, target };
+            return { kind: PlayerOrderKind.ATTACK, target, persistence: ATTACK_ORDER_PERSISTENCE };
         case OrderTargetKind.GROUND_ITEM:
             return { kind: PlayerOrderKind.PICK_UP, groundItemId: target.groundItemId };
     }
 }
 
-// A press replaces whatever the player was doing; one on the ground also starts steering, so while
-// the button stays down every drag moves the destination and letting go keeps the last one. A skill
-// key drops the order outright.
-export function applyOrderEvent(orders: PlayerOrders, event: OrderEvent): PlayerOrders {
-    switch (event.kind) {
-        case OrderEventKind.PRESS:
+function pressOrders(target: OrderTarget, nowSeconds: number): PlayerOrders {
+    const order = orderFor(target);
+    switch (target.kind) {
+        case OrderTargetKind.GROUND:
+        case OrderTargetKind.ENEMY:
             return {
-                order: orderFor(event.target),
-                pointer:
-                    event.target.kind === OrderTargetKind.GROUND
-                        ? PointerHold.STEERING
-                        : PointerHold.RELEASED,
+                order,
+                pointer: { kind: PointerHoldKind.PRESSED, target, pressedAtSeconds: nowSeconds },
             };
-        case OrderEventKind.DRAG:
-            if (orders.pointer !== PointerHold.STEERING) {
+        case OrderTargetKind.ENERGY_SIPHON:
+        case OrderTargetKind.GROUND_ITEM:
+            return { order, pointer: RELEASED_POINTER };
+    }
+}
+
+function steerTo(x: number, y: number): PlayerOrders {
+    return {
+        order: { kind: PlayerOrderKind.WALK_TO, x, y },
+        pointer: { kind: PointerHoldKind.HOLDING, on: OrderTargetKind.GROUND },
+    };
+}
+
+function dragOrders(orders: PlayerOrders, x: number, y: number): PlayerOrders {
+    const pointer = orders.pointer;
+    switch (pointer.kind) {
+        case PointerHoldKind.RELEASED:
+            return orders;
+        case PointerHoldKind.PRESSED: {
+            const pressed = pointer.target;
+            if (
+                pressed.kind !== OrderTargetKind.GROUND ||
+                Math.hypot(x - pressed.x, y - pressed.y) < HOLD_DRAG_DISTANCE
+            ) {
                 return orders;
             }
-            return {
-                order: { kind: PlayerOrderKind.WALK_TO, x: event.x, y: event.y },
-                pointer: PointerHold.STEERING,
-            };
+            return steerTo(x, y);
+        }
+        case PointerHoldKind.HOLDING:
+            return pointer.on === OrderTargetKind.GROUND ? steerTo(x, y) : orders;
+    }
+}
+
+function releaseOrders(orders: PlayerOrders): PlayerOrders {
+    switch (orders.pointer.kind) {
+        case PointerHoldKind.RELEASED:
+            return orders;
+        case PointerHoldKind.PRESSED:
+            return { order: orders.order, pointer: RELEASED_POINTER };
+        case PointerHoldKind.HOLDING:
+            return IDLE_PLAYER_ORDERS;
+    }
+}
+
+// A press starts what a click on its target asks for straight away, so a hold responds from its
+// first frame. Once the button has stayed down HOLD_THRESHOLD_SECONDS (or dragged HOLD_DRAG_DISTANCE
+// across the ground) the press becomes a hold: the walk destination follows the pointer, or the
+// pressed enemy is attacked whenever the attack is ready, and letting go stops the player. A menu
+// entry is a click, and a skill key drops the order outright.
+function applyOrderEvent(
+    orders: PlayerOrders,
+    event: OrderEvent,
+    nowSeconds: number,
+): PlayerOrders {
+    switch (event.kind) {
+        case OrderEventKind.PRESS:
+            return pressOrders(event.target, nowSeconds);
+        case OrderEventKind.DRAG:
+            return dragOrders(orders, event.x, event.y);
         case OrderEventKind.RELEASE:
-            return { order: orders.order, pointer: PointerHold.RELEASED };
+            return releaseOrders(orders);
         case OrderEventKind.MENU:
-            return { order: orderFor(event.target), pointer: PointerHold.RELEASED };
+            return { order: orderFor(event.target), pointer: RELEASED_POINTER };
         case OrderEventKind.SKILL_KEY:
             return IDLE_PLAYER_ORDERS;
     }
@@ -174,12 +257,48 @@ export function applyOrderEvent(orders: PlayerOrders, event: OrderEvent): Player
 export function applyOrderEvents(
     orders: PlayerOrders,
     events: readonly OrderEvent[],
+    nowSeconds: number,
 ): PlayerOrders {
-    return events.reduce(applyOrderEvent, orders);
+    return events.reduce(
+        (current, event) => applyOrderEvent(current, event, nowSeconds),
+        promoteHeldPress(orders, nowSeconds),
+    );
+}
+
+// Run every fixed step, not only when events arrive, because a pointer held still on an enemy sends
+// none and still has to turn into a hold on time.
+export function promoteHeldPress(orders: PlayerOrders, nowSeconds: number): PlayerOrders {
+    const pointer = orders.pointer;
+    if (
+        pointer.kind !== PointerHoldKind.PRESSED ||
+        nowSeconds - pointer.pressedAtSeconds < HOLD_THRESHOLD_SECONDS
+    ) {
+        return orders;
+    }
+    const target = pointer.target;
+    switch (target.kind) {
+        case OrderTargetKind.GROUND:
+            // The walk carries on to the pressed point until the next drag moves it.
+            return {
+                order: orders.order,
+                pointer: { kind: PointerHoldKind.HOLDING, on: OrderTargetKind.GROUND },
+            };
+        case OrderTargetKind.ENEMY:
+            // Re-armed even when the click's attack has already gone off and ended the order, as it
+            // does on the press's first step with the enemy in reach.
+            return {
+                order: {
+                    kind: PlayerOrderKind.ATTACK,
+                    target,
+                    persistence: AttackOrderPersistence.WHILE_HELD,
+                },
+                pointer: { kind: PointerHoldKind.HOLDING, on: OrderTargetKind.ENEMY },
+            };
+    }
 }
 
 // A fresh action - a press, a menu entry, a skill key - also walks the player away from a lever or
-// chest they were operating; a drag or a release only continues what a press started.
+// chest they were operating; a drag or a release only follows up on what a press started.
 export function interruptsInteraction(events: readonly OrderEvent[]): boolean {
     return events.some(
         (event) =>
@@ -368,18 +487,25 @@ function pickUp(world: WorldContext, player: Player, item: GroundItem): void {
 export enum AttackOrderPersistence {
     SINGLE_ATTACK = "single_attack",
     UNTIL_TARGET_DIES = "until_target_dies",
+    // The left button stays down on the target; letting go ends the order (see releaseOrders).
+    WHILE_HELD = "while_held",
 }
 
-// The user found attacking until the target dies too hands-off, so an attack order swings or
-// shoots once; UNTIL_TARGET_DIES is kept to re-evaluate that call.
-export const ATTACK_ORDER_PERSISTENCE: AttackOrderPersistence =
+// What a click or the menu's Attack commits to; a hold is the other way to order an attack.
+type ClickAttackPersistence = Exclude<AttackOrderPersistence, AttackOrderPersistence.WHILE_HELD>;
+
+// The user found attacking until the target dies too hands-off, so a clicked attack swings or
+// shoots once and holding the button on the target keeps attacking; UNTIL_TARGET_DIES is kept to
+// re-evaluate that call.
+export const ATTACK_ORDER_PERSISTENCE: ClickAttackPersistence =
     AttackOrderPersistence.SINGLE_ATTACK;
 
-function orderAfterAttack(order: PlayerOrder): PlayerOrder {
-    switch (ATTACK_ORDER_PERSISTENCE) {
+function orderAfterAttack(order: AttackOrder): PlayerOrder {
+    switch (order.persistence) {
         case AttackOrderPersistence.SINGLE_ATTACK:
             return IDLE_ORDER;
         case AttackOrderPersistence.UNTIL_TARGET_DIES:
+        case AttackOrderPersistence.WHILE_HELD:
             return order;
     }
 }

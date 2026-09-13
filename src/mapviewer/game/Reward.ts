@@ -5,12 +5,12 @@ import {
     EquipmentPath,
     createEquipmentGrant,
 } from "./Equipment";
+import { NonEmptyReadonlyArray, nonEmpty } from "./NonEmpty";
 import { UpgradeId } from "./upgrades";
 
 declare const rewardIdBrand: unique symbol;
 
 export type RewardId = string & { readonly [rewardIdBrand]: true };
-export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
 
 export type UpgradeChoiceReward = {
     readonly kind: "UPGRADE_CHOICE";
@@ -38,13 +38,6 @@ export type ExperienceReward = {
 };
 
 export type Reward = UpgradeChoiceReward | EquipmentGrantReward | RecoveryReward | ExperienceReward;
-
-function nonEmpty<T>(values: readonly T[]): NonEmptyReadonlyArray<T> {
-    if (values.length === 0) {
-        throw new RangeError("Expected at least one value");
-    }
-    return [values[0], ...values.slice(1)];
-}
 
 export function createRewardId(value: string): RewardId {
     if (!/^[a-z][a-z0-9_]*$/.test(value)) {

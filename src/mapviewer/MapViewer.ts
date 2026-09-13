@@ -207,7 +207,11 @@ export class MapViewer {
             this.seqTypeLoader,
             this.seqCatalog,
         );
-        this.frameSounds = new FrameSoundDriver(this.seqSounds, this.sfxPlayer);
+        this.frameSounds = new FrameSoundDriver(
+            this.seqSounds,
+            this.sfxPlayer,
+            getEncounter(this.encounterId).minimumSoundRangeTiles,
+        );
         this.encounterAnimations = resolveEncounterAnimations(
             this.encounter,
             assets,

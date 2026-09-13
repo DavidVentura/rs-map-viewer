@@ -19,6 +19,7 @@ import { EncounterScript, WardenP3RenderState } from "./EncounterScript";
 import { Enemy } from "./Enemy";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState, energySiphonRecallStrikes, settleEnergySiphon } from "./EnergySiphon";
+import { nonEmpty } from "./NonEmpty";
 import { Player } from "./Player";
 import {
     ENERGY_SIPHON_LAUNCH_FLIGHT,
@@ -91,7 +92,7 @@ type PendingTileStrike = {
     readonly strikesAtSeconds: number;
     readonly damage: number;
     readonly strikeEffect: VisualEffectKind | undefined;
-    readonly strikeSound: SoundPlay | undefined;
+    readonly strikeSound: SoundPlay;
 };
 
 // Zebak's jug on its way up to burst over the tile the player stood on when it was thrown.
@@ -291,9 +292,12 @@ export class WardenP3Runtime implements EncounterScript {
         for (const siphon of landing) {
             siphon.siphon = settleEnergySiphon(siphon.siphon, timeSeconds);
             siphon.animation.restart(siphon.type.seqs.idle);
-            this.world.playSound({ sound: this.sounds.siphonLanding, x: siphon.x, y: siphon.y });
         }
         if (landing.length > 0) {
+            this.world.playSound({
+                sound: this.sounds.siphonLanding,
+                points: nonEmpty(landing.map(({ x, y }) => ({ x, y }))),
+            });
             this.movePlayerOffOccupiedTile();
         }
         const window = this.siphonWindow;
@@ -445,6 +449,7 @@ export class WardenP3Runtime implements EncounterScript {
         );
     }
 
+    // A volley's strikes land together, so each sound plays once, heard from every tile it struck.
     private resolveTileStrikes(): void {
         const timeSeconds = this.world.timeSeconds;
         const due = this.tileStrikes.filter((strike) => timeSeconds >= strike.strikesAtSeconds);
@@ -452,13 +457,14 @@ export class WardenP3Runtime implements EncounterScript {
             if (strike.strikeEffect !== undefined) {
                 this.spawnTileEffect(strike.strikeEffect, strike.tile);
             }
-            if (strike.strikeSound !== undefined) {
-                this.world.playSound({
-                    sound: strike.strikeSound,
-                    ...wardenTileCentre(strike.tile),
-                });
-            }
             this.damagePlayerOnTile(strike.tile, strike.damage);
+        }
+        for (const sound of new Set(due.map((strike) => strike.strikeSound))) {
+            const struck = due.filter((strike) => strike.strikeSound === sound);
+            this.world.playSound({
+                sound,
+                points: nonEmpty(struck.map((strike) => wardenTileCentre(strike.tile))),
+            });
         }
         this.tileStrikes = this.tileStrikes.filter(
             (strike) => timeSeconds < strike.strikesAtSeconds,
@@ -645,7 +651,7 @@ export class WardenP3Runtime implements EncounterScript {
                 world.animations.effects[ZEBAK_PHANTOM_SHOT.burstEffect],
             ),
         );
-        world.playSound({ sound: this.sounds.zebakShotBurst, ...burst });
+        world.playSound({ sound: this.sounds.zebakShotBurst, points: [burst] });
         const target = playerWardenTile(player);
         const landsAtSeconds = world.timeSeconds + fallSeconds;
         this.spawnTileEffect(fallShadow, target, landsAtSeconds);
@@ -694,7 +700,7 @@ export class WardenP3Runtime implements EncounterScript {
                 strikesAtSeconds,
                 damage: WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA],
                 strikeEffect: undefined,
-                strikeSound: undefined,
+                strikeSound: this.sounds.babaRockLanding,
             })),
         ];
     }
@@ -717,7 +723,7 @@ export class WardenP3Runtime implements EncounterScript {
                 strikesAtSeconds,
                 damage: WARDEN_P3_LIGHTNING.damage,
                 strikeEffect: WARDEN_P3_LIGHTNING.strike,
-                strikeSound: undefined,
+                strikeSound: this.sounds.lightningStrike,
             })),
         ];
     }

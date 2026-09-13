@@ -121,6 +121,9 @@ type EncounterCommon = {
     readonly waves: readonly Wave[];
     readonly ambientNpcs: boolean;
     readonly musicFile: string;
+    // Tiles every positional sound carries at least, for an arena wider than the client's area
+    // sounds reach, so what happens across it is still heard; 0 keeps each sound's own range.
+    readonly minimumSoundRangeTiles: number;
     readonly initialCamera: CameraFraming;
     readonly maximumRenderedLevel: number;
     readonly transformableGroundDecorations: readonly TransformableGroundDecorations[];
@@ -163,6 +166,8 @@ export type WardenP3Sounds = {
     readonly siphonLanding: SoundPlay;
     readonly zebakShotBurst: SoundPlay;
     readonly zebakShotLanding: SoundPlay;
+    readonly babaRockLanding: SoundPlay;
+    readonly lightningStrike: SoundPlay;
 };
 
 export type WardensP3Script = {
@@ -420,6 +425,7 @@ const LUMBRIDGE: StaticRespawnEncounter = {
     spawnMode: EncounterSpawnMode.STATIC_RESPAWN,
     ambientNpcs: true,
     musicFile: "audio/harmony.opus",
+    minimumSoundRangeTiles: 0,
     initialCamera: DEFAULT_CAMERA_FRAMING,
     maximumRenderedLevel: Scene.MAX_LEVELS - 1,
     transformableGroundDecorations: [],
@@ -734,6 +740,7 @@ const FIGHT_CAVES: WaveEncounter = {
     spawnMode: EncounterSpawnMode.WAVES,
     ambientNpcs: false,
     musicFile: "audio/tzhaar.opus",
+    minimumSoundRangeTiles: 0,
     initialCamera: DEFAULT_CAMERA_FRAMING,
     maximumRenderedLevel: Scene.MAX_LEVELS - 1,
     transformableGroundDecorations: [],
@@ -892,11 +899,14 @@ const WARDENS_P3_SIPHON_ANIMATIONS: WardenSiphonAnimationIds = {
 };
 
 // Nothing names sound ids, so these come from the synths no sequence plays in the Warden's
-// (6030-6270) and Zebak's (5815-5945) blocks, where the ones the server sends must be.
+// (6030-6270), Zebak's (5815-5945) and Ba-Ba's (5946-6029) blocks, where the ones the server sends
+// must be.
 export const WARDENS_P3_SOUNDS: WardenP3Sounds = {
     siphonLanding: { soundId: createSoundEffectId(6166), plays: 1, rangeTiles: 15 },
     zebakShotBurst: { soundId: createSoundEffectId(5865), plays: 1, rangeTiles: 15 },
     zebakShotLanding: { soundId: createSoundEffectId(5896), plays: 1, rangeTiles: 15 },
+    babaRockLanding: { soundId: createSoundEffectId(5987), plays: 1, rangeTiles: 15 },
+    lightningStrike: { soundId: createSoundEffectId(6102), plays: 1, rangeTiles: 15 },
 };
 
 const WARDENS_P3: ScriptedEncounter = {
@@ -913,6 +923,10 @@ const WARDENS_P3: ScriptedEncounter = {
     spawnMode: EncounterSpawnMode.SCRIPTED,
     ambientNpcs: false,
     musicFile: "audio/amascuts-promise.opus",
+    // The phantoms attack from the arena's back corners, out of the client's area sound range from
+    // much of the floor, and the Warden's volleys land anywhere on it, so every attack is heard
+    // from the far corner and still fades with distance.
+    minimumSoundRangeTiles: 40,
     initialCamera: { pitch: -245, yaw: 1024 },
     maximumRenderedLevel: 1,
     transformableGroundDecorations: [WARDEN_P3_FLOOR_DECORATIONS],

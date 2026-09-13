@@ -1,4 +1,5 @@
 import { WeaponStyle, abilityRange } from "./Ability";
+import { CombatEventKind } from "./CombatEvent";
 import { EnergySiphonActor, createEnergySiphonActor } from "./EncounterActor";
 import { Enemy } from "./Enemy";
 import { EnemyTypeId, ResolvedEnemyType } from "./EnemyType";
@@ -6,6 +7,7 @@ import { EnergySiphonState, HOSTILE_ENERGY_SIPHON } from "./EnergySiphon";
 import { GameWorld } from "./GameWorld";
 import { Player } from "./Player";
 import {
+    HOLD_THRESHOLD_SECONDS,
     OrderEvent,
     OrderEventKind,
     OrderTargetKind,
@@ -91,7 +93,7 @@ describe("walk orders", () => {
         expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
     });
 
-    it("follows the held pointer, then keeps walking to its last point once released", () => {
+    it("follows the held pointer, then stops where it is once released", () => {
         const world = makeWorld();
         const player = world.player!;
         issue(world, pressOnGround(1000, 0));
@@ -105,9 +107,25 @@ describe("walk orders", () => {
         expect(player.y).toBeGreaterThan(0);
 
         issue(world, RELEASE, { kind: OrderEventKind.DRAG, x: -1000, y: -1000 });
-        advanceSeconds(world, 5);
-        expect(player.x).toBeCloseTo(0, 6);
-        expect(player.y).toBeCloseTo(1000, 6);
+        const stoppedAt = { x: player.x, y: player.y };
+        advanceSeconds(world, 2);
+        expect(player.x).toBe(stoppedAt.x);
+        expect(player.y).toBe(stoppedAt.y);
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+    });
+
+    it("keeps walking to a held press point until the hold threshold, then stops on release", () => {
+        const world = makeWorld();
+        const player = world.player!;
+        issue(world, pressOnGround(1000, 0));
+        advanceSeconds(world, HOLD_THRESHOLD_SECONDS + 0.1);
+        expect(player.x).toBeGreaterThan(0);
+
+        issue(world, RELEASE);
+        const stoppedAtX = player.x;
+        advanceSeconds(world, 2);
+        expect(player.x).toBe(stoppedAtX);
+        expect(player.x).toBeLessThan(1000);
     });
 });
 
@@ -134,6 +152,45 @@ describe("attack orders", () => {
 
             expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
             expect(enemy.health).toBe(healthAfterFirstHit);
+        },
+    );
+
+    it.each([WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC])(
+        "keeps attacking a held enemy with style %s, then lets the swing in progress land on release",
+        (style) => {
+            const world = makeWorld();
+            const player = world.player!;
+            player.style = style;
+            const enemy = world.findEnemy(
+                world.spawnEnemyAtExactPosition(0, 600, 0, { ...TARGET_DUMMY, maxHealth: 10000 }),
+            )!;
+            const attackStarts = new Set<number>();
+            const stepAndCountAttacks = () => {
+                world.step(IDLE_INPUT, STEP_SECONDS);
+                const cast = player.abilityRuntime.activeCastAnimation(world.timeSeconds);
+                if (cast) {
+                    attackStarts.add(cast.startedAt);
+                }
+            };
+            issue(world, pressOnEnemy(enemy));
+
+            for (let step = 0; step < 5000 && attackStarts.size < 2; step++) {
+                stepAndCountAttacks();
+            }
+            expect(attackStarts.size).toBe(2);
+            expect(player.isBusy(world.timeSeconds)).toBe(true);
+
+            issue(world, RELEASE);
+            for (let step = 0; step < 3 / STEP_SECONDS; step++) {
+                stepAndCountAttacks();
+            }
+
+            expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+            expect(attackStarts.size).toBe(2);
+            const hits = world.events.filter(
+                (event) => event.kind === CombatEventKind.DAMAGE && event.target === enemy,
+            );
+            expect(hits).toHaveLength(2);
         },
     );
 

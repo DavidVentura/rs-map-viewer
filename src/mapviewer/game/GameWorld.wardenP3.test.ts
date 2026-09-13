@@ -389,7 +389,7 @@ describe("Wardens P3 world runtime", () => {
         expect(world.player!.health).toBe(startingHealth);
     });
 
-    it("cues the siphon landing sound at each siphon as it lands", () => {
+    it("cues the siphon landing sound once as the siphons land, heard from each of them", () => {
         const { world, wardenId } = createWardenWorld();
         world.findEnemy(wardenId)!.health = 80;
         stepUntilSiphonsThrown(world);
@@ -397,13 +397,12 @@ describe("Wardens P3 world runtime", () => {
 
         const siphons = stepUntilSiphonsLand(world);
 
-        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.siphonLanding)).toEqual(
-            siphons.map((siphon) => ({
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.siphonLanding)).toEqual([
+            {
                 sound: WARDENS_P3_SOUNDS.siphonLanding,
-                x: siphon.x,
-                y: siphon.y,
-            })),
-        );
+                points: siphons.map((siphon) => ({ x: siphon.x, y: siphon.y })),
+            },
+        ]);
     });
 
     it("turns a reversed siphon about at its turn rate rather than snapping", () => {
@@ -593,6 +592,10 @@ describe("Wardens P3 world runtime", () => {
         return world.drainSoundCues().filter((cue) => cue.sound === sound);
     }
 
+    function tileCentre(tile: WardenP3Tile): { x: number; y: number } {
+        return { x: (tile.x + 0.5) * TILE_SIZE, y: (tile.y + 0.5) * TILE_SIZE };
+    }
+
     function zebakJugs(world: GameWorld) {
         return world.projectiles.filter(
             (projectile) => projectile.spec.kind === ProjectileKind.ZEBAK_PHANTOM_JUG,
@@ -683,8 +686,7 @@ describe("Wardens P3 world runtime", () => {
         expect(soundCuesOf(world, WARDENS_P3_SOUNDS.zebakShotLanding)).toEqual([
             {
                 sound: WARDENS_P3_SOUNDS.zebakShotLanding,
-                x: 3938.5 * TILE_SIZE,
-                y: 5161.5 * TILE_SIZE,
+                points: [{ x: 3938.5 * TILE_SIZE, y: 5161.5 * TILE_SIZE }],
             },
         ]);
 
@@ -742,11 +744,15 @@ describe("Wardens P3 world runtime", () => {
             world.step(EMPTY_INPUT, STEP_SECONDS);
         }
         expect(world.player!.health).toBe(startingHealth);
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.babaRockLanding)).toEqual([]);
         world.step(EMPTY_INPUT, STEP_SECONDS);
         world.step(EMPTY_INPUT, STEP_SECONDS);
         expect(world.player!.health).toBe(
             startingHealth - WARDEN_P3_PHANTOM_DAMAGE[WardenPhantom.BABA],
         );
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.babaRockLanding)).toEqual([
+            { sound: WARDENS_P3_SOUNDS.babaRockLanding, points: struck.map(tileCentre) },
+        ]);
     });
 
     it("lets the player step out from under Ba-Ba's phantom rock before it lands", () => {
@@ -951,5 +957,23 @@ describe("Wardens P3 world runtime", () => {
 
         const dodged = standThroughFirstVolley(true);
         expect(dodged.world.player!.health).toBe(dodged.startingHealth);
+    });
+
+    it("cues the lightning strike once as a volley strikes, heard from every struck tile", () => {
+        const { world } = createWardenWorld(seededRandom(9), WardenP3StartPhase.ENRAGE);
+        stepUntilCommand(world, "CALL_LIGHTNING");
+        const strikesAtSeconds = world.timeSeconds + WARDEN_P3_LIGHTNING.warningSeconds;
+        const struck = lightningWarningTiles(world);
+        while (world.timeSeconds + STEP_SECONDS < strikesAtSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.lightningStrike)).toEqual([]);
+
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+
+        expect(soundCuesOf(world, WARDENS_P3_SOUNDS.lightningStrike)).toEqual([
+            { sound: WARDENS_P3_SOUNDS.lightningStrike, points: struck.map(tileCentre) },
+        ]);
     });
 });

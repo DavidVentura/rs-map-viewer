@@ -1,9 +1,11 @@
 import { AnimationProgress, AnimationState } from "../game/Animation";
 import { isEncounterActorVisible } from "../game/EncounterActor";
 import { GameWorld } from "../game/GameWorld";
+import { NonEmptyReadonlyArray } from "../game/NonEmpty";
+import { SoundPlay, SoundPoint } from "../game/SoundCue";
 import { SeqSoundCatalog } from "./FrameSounds";
 import { SfxPlayer } from "./SfxPlayer";
-import { crossedFrameSounds, frameSoundGain } from "./frameSoundCues";
+import { crossedFrameSounds, heardSoundGain } from "./frameSoundCues";
 
 type FrameSoundSource = {
     readonly animation: AnimationState;
@@ -51,6 +53,7 @@ export class FrameSoundDriver {
     constructor(
         private readonly catalog: SeqSoundCatalog,
         private readonly sfxPlayer: SfxPlayer,
+        private readonly minimumSoundRangeTiles: number,
     ) {}
 
     update(world: GameWorld): void {
@@ -64,17 +67,24 @@ export class FrameSoundDriver {
                 continue;
             }
             for (const sound of crossedFrameSounds(sounds, previous, current)) {
-                const gain = frameSoundGain(sound.rangeTiles, source, listener);
-                if (gain > 0) {
-                    this.sfxPlayer.play(sound, gain);
-                }
+                this.play(sound, [source], listener);
             }
         }
         for (const cue of world.drainSoundCues()) {
-            const gain = listener ? frameSoundGain(cue.sound.rangeTiles, cue, listener) : 0;
-            if (gain > 0) {
-                this.sfxPlayer.play(cue.sound, gain);
+            if (listener) {
+                this.play(cue.sound, cue.points, listener);
             }
+        }
+    }
+
+    private play(
+        sound: SoundPlay,
+        points: NonEmptyReadonlyArray<SoundPoint>,
+        listener: SoundPoint,
+    ): void {
+        const gain = heardSoundGain(sound, points, listener, this.minimumSoundRangeTiles);
+        if (gain > 0) {
+            this.sfxPlayer.play(sound, gain);
         }
     }
 }

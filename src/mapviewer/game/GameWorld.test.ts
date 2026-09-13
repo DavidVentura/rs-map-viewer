@@ -210,6 +210,10 @@ function clickGround(world: GameWorld, x: number, y: number): void {
     issue(world, pressOnGround(x, y), { kind: OrderEventKind.RELEASE });
 }
 
+function clickEnemy(world: GameWorld, enemy: Enemy): void {
+    issue(world, pressOnEnemy(enemy), { kind: OrderEventKind.RELEASE });
+}
+
 function advanceSeconds(world: GameWorld, input: SimInput, seconds: number): void {
     const frame = 1 / 60;
     let remaining = seconds;
@@ -240,7 +244,7 @@ describe("GameWorld ability wiring", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(500, 0, 0, makeStationaryEnemyType(1, 2, 3));
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
 
         advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) - 0.05);
         expect(world.projectiles.length).toBe(0);
@@ -253,7 +257,7 @@ describe("GameWorld ability wiring", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(DISTANT_TARGET_X, 0, 0, makeStationaryEnemyType(1, 2, 3));
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
 
         advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.05);
         expect(world.projectiles).toHaveLength(1);
@@ -273,7 +277,7 @@ describe("GameWorld ability wiring", () => {
         for (let hit = 0; hit < 5; hit++) {
             player.stanceMechanics = recordStationaryRangedHit(player.stanceMechanics);
         }
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
 
         advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.05);
 
@@ -286,7 +290,7 @@ describe("GameWorld ability wiring", () => {
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(100, 0, 0, { ...makeEnemyType(1, 2, 3), maxHealth: 100 });
         const player = world.player!;
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
 
         advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.2);
         expect(player.stanceMechanics.rangedConsecutiveHits).toBe(1);
@@ -313,7 +317,7 @@ describe("GameWorld ability wiring", () => {
         expect(player.health).toBe(50 + healAmount(HEALING_POTION));
 
         world.spawnEnemy(500, 0, 0, makeStationaryEnemyType(1, 2, 3));
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
         advanceSeconds(world, idleInput(), 0.05);
         expect(world.projectiles.length).toBe(0);
     });
@@ -354,7 +358,7 @@ describe("Melee style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
-        issue(world, pressOnEnemy(enemy));
+        clickEnemy(world, enemy);
 
         advanceSeconds(world, idleInput(), 0.02);
 
@@ -387,7 +391,7 @@ describe("Melee style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
         const enemy = world.enemies[0];
-        issue(world, pressOnEnemy(enemy));
+        clickEnemy(world, enemy);
 
         advanceSeconds(world, idleInput(), impactOf(SCIMITAR_SLASH) + 0.05);
 
@@ -438,7 +442,7 @@ describe("Melee cone basic attack", () => {
             throw new Error("expected a CONE delivery");
         }
         const reach = delivery.reach + player.hitRadius + enemy.hitRadius;
-        issue(world, pressOnEnemy(enemy));
+        clickEnemy(world, enemy);
 
         advanceSeconds(world, idleInput(), 3);
 
@@ -461,7 +465,7 @@ describe("Melee cone basic attack", () => {
         world.spawnEnemy(0, 500, 0, makeStationaryEnemyType(1, 2, 3)); // dead ahead, beyond reach
         const [aimed, insideArc, outsideArc, behind, beyondReach] = world.enemies;
 
-        issue(world, pressOnEnemy(aimed));
+        clickEnemy(world, aimed);
         advanceSeconds(world, idleInput(), impactOf(DRAGON_2H_SWORD_SLASH) + 0.05);
 
         expect(aimed.health).toBeLessThan(aimed.maxHealth);
@@ -653,7 +657,7 @@ describe("Magic style", () => {
         const player = world.player!;
         player.style = WeaponStyle.MAGIC;
 
-        issue(world, pressOnEnemy(world.enemies[0]));
+        clickEnemy(world, world.enemies[0]);
         advanceSeconds(world, idleInput(), impactOf(MAGIC_BOLT) + 0.01);
         // Clicking the player's own spot is how OSRS stops an attack: a walk that ends at once.
         clickGround(world, player.x, player.y);
@@ -1147,6 +1151,7 @@ function bossTestEncounter(): Encounter {
         interactions: [start],
         ambientNpcs: false,
         musicFile: "audio/test.opus",
+        minimumSoundRangeTiles: 0,
         initialCamera: { pitch: -245, yaw: 1862 },
         maximumRenderedLevel: 3,
         transformableGroundDecorations: [],

@@ -368,7 +368,7 @@ export const WARDENS_PULLED_TILE_FLIGHT: TimedProjectileFlight = {
     kind: ProjectileKind.WARDENS_PULLED_TILE,
     launchAngleRadians: (50 * Math.PI) / 180,
     range: 40 * TILE_SIZE,
-    landing: { kind: "FIXED_POINT", endHeight: 1600, hitRadius: 0, origin: { kind: "CASTER" } },
+    landing: { kind: "FIXED_POINT", endHeight: 1000, hitRadius: 0, origin: { kind: "CASTER" } },
     travelPlayback: AnimationPlayback.ONCE,
     modelOrientation: ProjectileModelOrientation.LEVEL,
 };

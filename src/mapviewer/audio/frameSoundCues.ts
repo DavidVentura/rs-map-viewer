@@ -1,11 +1,8 @@
 import { AnimationProgress } from "../game/Animation";
+import { NonEmptyReadonlyArray } from "../game/NonEmpty";
+import { SoundPlay, SoundPoint } from "../game/SoundCue";
 import { TILE_SIZE } from "../game/Terrain";
 import { FrameSound, SeqFrameSounds } from "./FrameSounds";
-
-export type SoundPoint = {
-    readonly x: number;
-    readonly y: number;
-};
 
 // The sounds of every frame an animation entered after the `previous` reading, up to and including
 // the `current` one, laps included. Without a previous reading of the same play, the play's first
@@ -62,4 +59,17 @@ export function frameSoundGain(
         return 0;
     }
     return (range - distance) / range;
+}
+
+// How loud a sound plays for the listener, heard from the loudest of its points. An encounter
+// whose arena is wider than the client's area sounds carry stretches every positional sound to at
+// least `minimumRangeTiles`; a non-positional sound already carries everywhere.
+export function heardSoundGain(
+    sound: SoundPlay,
+    points: NonEmptyReadonlyArray<SoundPoint>,
+    listener: SoundPoint,
+    minimumRangeTiles: number,
+): number {
+    const rangeTiles = sound.rangeTiles === 0 ? 0 : Math.max(sound.rangeTiles, minimumRangeTiles);
+    return Math.max(...points.map((point) => frameSoundGain(rangeTiles, point, listener)));
 }
