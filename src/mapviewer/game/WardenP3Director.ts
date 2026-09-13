@@ -21,6 +21,20 @@ export enum WardenPhantom {
     BABA = "baba",
 }
 
+export enum WardenSlamTempo {
+    NORMAL = "normal",
+    // The enrage phase's quicker slams.
+    FAST = "fast",
+}
+
+// What the Warden is doing between slams: channelling through a siphon intermission, standing
+// over the floor, or enraged.
+export enum WardenStance {
+    CHARGING = "charging",
+    STANDING = "standing",
+    ENRAGED = "enraged",
+}
+
 export enum WardenSiphonStatus {
     NONE = "none",
     ALL_REVERSED = "all_reversed",
@@ -45,13 +59,29 @@ export type WardenP3Snapshot = {
     readonly siphonStatus: WardenSiphonStatus;
 };
 
-export type WardenP3Timing = {
-    readonly slamAimToImpactSeconds: number;
-    readonly slamPostImpactRecoverySeconds: number;
+export type WardenSlamTiming = {
+    readonly impactSeconds: number;
+    // Start to start: the next slam begins as this one's sequence ends.
+    readonly durationSeconds: number;
+};
+
+export type WardenStanceTiming = {
+    // The Warden slams again only once its stance transition has played out.
+    readonly transitionSeconds: number;
+};
+
+export type WardenP3HazardTiming = {
     readonly phantomAttackIntervalSeconds: number;
     readonly lightningWarningSeconds: number;
     readonly lightningWarningIntervalSeconds: number;
     readonly rowRemovalIntervalSeconds: number;
+};
+
+export type WardenP3Timing = WardenP3HazardTiming & {
+    readonly slams: Readonly<
+        Record<WardenSlamTempo, Readonly<Record<WardenSlamTarget, WardenSlamTiming>>>
+    >;
+    readonly stances: Readonly<Record<WardenStance, WardenStanceTiming>>;
 };
 
 export type WardenP3Arena = {
@@ -70,13 +100,14 @@ type ReadySlam = {
     readonly beginsAtSeconds: number;
 };
 
-type AimingSlam = {
-    readonly kind: "aiming";
+type SwingingSlam = {
+    readonly kind: "swinging";
     readonly target: WardenSlamTarget;
-    readonly resolvesAtSeconds: number;
+    readonly landsAtSeconds: number;
+    readonly nextBeginsAtSeconds: number;
 };
 
-type WardenSlamState = ReadySlam | AimingSlam;
+type WardenSlamState = ReadySlam | SwingingSlam;
 
 type ActivePhantom = {
     readonly phantom: WardenPhantom;
@@ -107,6 +138,7 @@ export type WardenP3SiphonState = WardenP3CommonState & {
 export type WardenP3EnrageState = {
     readonly phase: WardenP3Phase.ENRAGE;
     readonly phantoms: readonly ActivePhantom[];
+    readonly slam: WardenSlamState;
     readonly pendingLightning: PendingLightning | undefined;
     readonly nextLightningWarningAtSeconds: number;
     readonly nextRowRemovalAtSeconds: number;
@@ -123,9 +155,15 @@ export type WardenP3State =
     | WardenP3EnrageState
     | WardenP3CompleteState;
 
-export type RotateWardenCommand = {
-    readonly kind: "ROTATE_WARDEN";
+export type BeginSlamCommand = {
+    readonly kind: "BEGIN_SLAM";
     readonly target: WardenSlamTarget;
+    readonly tempo: WardenSlamTempo;
+};
+
+export type ChangeWardenStanceCommand = {
+    readonly kind: "CHANGE_WARDEN_STANCE";
+    readonly stance: WardenStance;
 };
 
 export type ResolveFloorSlamCommand = {
@@ -185,8 +223,9 @@ export type CompleteEncounterCommand = {
 };
 
 export type WardenP3Command =
-    | RotateWardenCommand
+    | BeginSlamCommand
     | ResolveFloorSlamCommand
+    | ChangeWardenStanceCommand
     | SetWardenVulnerabilityCommand
     | SpawnEnergySiphonsCommand
     | ResolveEnergySiphonsCommand
@@ -207,19 +246,12 @@ const INTERMISSION_HEALTH_FRACTIONS: readonly number[] = [0.8, 0.6, 0.4, 0.2];
 const ENRAGE_HEALTH_FRACTION = 0.05;
 const ENRAGE_HEAL_FRACTION = 0.2;
 
-// Slams start about 1.9 s apart (start to start) in the real fight; the aim share keeps the
-// Warden's rotation telegraph readable.
-export const DEFAULT_WARDEN_P3_TIMING: WardenP3Timing = {
-    slamAimToImpactSeconds: 0.9,
-    slamPostImpactRecoverySeconds: 1.0,
+export const WARDEN_P3_HAZARD_TIMING: WardenP3HazardTiming = {
     phantomAttackIntervalSeconds: 2.4,
     lightningWarningSeconds: 0.6,
     lightningWarningIntervalSeconds: 1.2,
     rowRemovalIntervalSeconds: 2.4,
 };
-
-const DEFAULT_PARSED_WARDEN_P3_TIMING: ParsedWardenP3Timing =
-    parseWardenP3Timing(DEFAULT_WARDEN_P3_TIMING);
 
 function assertFiniteNonNegative(value: number, description: string): void {
     if (!Number.isFinite(value) || value < 0) {
@@ -227,15 +259,33 @@ function assertFiniteNonNegative(value: number, description: string): void {
     }
 }
 
-export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
-    const entries = Object.entries(timing) as readonly [string, number][];
-    for (const [name, seconds] of entries) {
-        if (!Number.isFinite(seconds) || seconds <= 0) {
-            throw new RangeError(`${name} must be a finite positive number`);
-        }
+function assertFinitePositive(value: number, description: string): void {
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new RangeError(`${description} must be a finite positive number`);
     }
+}
+
+export function parseWardenP3Timing(timing: WardenP3Timing): ParsedWardenP3Timing {
+    assertFinitePositive(timing.phantomAttackIntervalSeconds, "phantomAttackIntervalSeconds");
+    assertFinitePositive(timing.lightningWarningSeconds, "lightningWarningSeconds");
+    assertFinitePositive(timing.lightningWarningIntervalSeconds, "lightningWarningIntervalSeconds");
+    assertFinitePositive(timing.rowRemovalIntervalSeconds, "rowRemovalIntervalSeconds");
     if (timing.lightningWarningIntervalSeconds < timing.lightningWarningSeconds) {
         throw new RangeError("lightningWarningIntervalSeconds cannot overlap lightning warnings");
+    }
+    for (const [tempo, slams] of Object.entries(timing.slams)) {
+        for (const [target, slam] of Object.entries(slams)) {
+            assertFinitePositive(slam.durationSeconds, `The ${tempo} ${target} slam's duration`);
+            assertFiniteNonNegative(slam.impactSeconds, `The ${tempo} ${target} slam's impact`);
+            if (slam.impactSeconds >= slam.durationSeconds) {
+                throw new RangeError(
+                    `The ${tempo} ${target} slam must land before its sequence ends`,
+                );
+            }
+        }
+    }
+    for (const [stance, { transitionSeconds }] of Object.entries(timing.stances)) {
+        assertFiniteNonNegative(transitionSeconds, `The ${stance} stance's transition`);
     }
     return timing as ParsedWardenP3Timing;
 }
@@ -356,6 +406,63 @@ function activateIntermissionPhantom(
     };
 }
 
+// The floor wave sets off at the slam's impact, while the next slam waits for this one's sequence
+// to finish so each slam plays out in full.
+function stepSlam(
+    slam: WardenSlamState,
+    timeSeconds: number,
+    tempo: WardenSlamTempo,
+    timing: WardenP3Timing,
+): {
+    readonly slam: WardenSlamState;
+    readonly commands: readonly (BeginSlamCommand | ResolveFloorSlamCommand)[];
+} {
+    switch (slam.kind) {
+        case "ready": {
+            if (timeSeconds < slam.beginsAtSeconds) {
+                return { slam, commands: [] };
+            }
+            const slamTiming = timing.slams[tempo][slam.target];
+            return {
+                slam: {
+                    kind: "swinging",
+                    target: slam.target,
+                    landsAtSeconds: timeSeconds + slamTiming.impactSeconds,
+                    nextBeginsAtSeconds: timeSeconds + slamTiming.durationSeconds,
+                },
+                commands: [{ kind: "BEGIN_SLAM", target: slam.target, tempo }],
+            };
+        }
+        case "swinging":
+            if (timeSeconds < slam.landsAtSeconds) {
+                return { slam, commands: [] };
+            }
+            return {
+                slam: {
+                    kind: "ready",
+                    target: nextSlamTarget(slam.target),
+                    beginsAtSeconds: slam.nextBeginsAtSeconds,
+                },
+                commands: [{ kind: "RESOLVE_FLOOR_SLAM", target: slam.target }],
+            };
+    }
+}
+
+// A slam cut short by a phase change never lands, so its target is the first one slammed once the
+// new stance's transition has played out.
+function slamAfterStanceChange(
+    stance: WardenStance,
+    target: WardenSlamTarget,
+    timeSeconds: number,
+    timing: WardenP3Timing,
+): ReadySlam {
+    return {
+        kind: "ready",
+        target,
+        beginsAtSeconds: timeSeconds + timing.stances[stance].transitionSeconds,
+    };
+}
+
 function completeEncounter(): WardenP3Result {
     return {
         nextState: { phase: WardenP3Phase.COMPLETE },
@@ -373,6 +480,12 @@ function enterEnrage(
         nextState: {
             phase: WardenP3Phase.ENRAGE,
             phantoms: normal.phantoms,
+            slam: slamAfterStanceChange(
+                WardenStance.ENRAGED,
+                activeSlamTarget(normal.slam),
+                snapshot.timeSeconds,
+                timing,
+            ),
             pendingLightning: undefined,
             nextLightningWarningAtSeconds:
                 snapshot.timeSeconds + timing.lightningWarningIntervalSeconds,
@@ -384,6 +497,7 @@ function enterEnrage(
                 kind: "ENTER_ENRAGE",
                 healAmount: snapshot.wardenHealth.maximum * ENRAGE_HEAL_FRACTION,
             },
+            { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.ENRAGED },
         ],
     };
 }
@@ -408,6 +522,7 @@ function beginIntermission(
         commands.push(activation.command);
     }
     commands.push({ kind: "SPAWN_ENERGY_SIPHONS", intermission });
+    commands.push({ kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING });
     return {
         nextState: {
             phase: WardenP3Phase.SIPHONS,
@@ -443,16 +558,18 @@ function resumeAfterSiphons(
             phase: WardenP3Phase.NORMAL,
             nextIntermission: state.nextIntermission,
             phantoms: state.phantoms,
-            slam: {
-                kind: "ready",
-                target: state.suspendedSlamTarget,
-                beginsAtSeconds: snapshot.timeSeconds + timing.slamPostImpactRecoverySeconds,
-            },
+            slam: slamAfterStanceChange(
+                WardenStance.STANDING,
+                state.suspendedSlamTarget,
+                snapshot.timeSeconds,
+                timing,
+            ),
         },
         commands: [
             resolution,
             ...failurePunishment,
             { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
+            { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
         ],
     };
 }
@@ -488,45 +605,16 @@ function stepNormal(
             commands: [...phantomStep.commands, ...enrage.commands],
         };
     }
-    switch (workingState.slam.kind) {
-        case "ready":
-            if (snapshot.timeSeconds < workingState.slam.beginsAtSeconds) {
-                return { nextState: workingState, commands: phantomStep.commands };
-            }
-            return {
-                nextState: {
-                    ...workingState,
-                    slam: {
-                        kind: "aiming",
-                        target: workingState.slam.target,
-                        resolvesAtSeconds: snapshot.timeSeconds + timing.slamAimToImpactSeconds,
-                    },
-                },
-                commands: [
-                    ...phantomStep.commands,
-                    { kind: "ROTATE_WARDEN", target: workingState.slam.target },
-                ],
-            };
-        case "aiming":
-            if (snapshot.timeSeconds < workingState.slam.resolvesAtSeconds) {
-                return { nextState: workingState, commands: phantomStep.commands };
-            }
-            return {
-                nextState: {
-                    ...workingState,
-                    slam: {
-                        kind: "ready",
-                        target: nextSlamTarget(workingState.slam.target),
-                        beginsAtSeconds:
-                            snapshot.timeSeconds + timing.slamPostImpactRecoverySeconds,
-                    },
-                },
-                commands: [
-                    ...phantomStep.commands,
-                    { kind: "RESOLVE_FLOOR_SLAM", target: workingState.slam.target },
-                ],
-            };
-    }
+    const slamStep = stepSlam(
+        workingState.slam,
+        snapshot.timeSeconds,
+        WardenSlamTempo.NORMAL,
+        timing,
+    );
+    return {
+        nextState: { ...workingState, slam: slamStep.slam },
+        commands: [...phantomStep.commands, ...slamStep.commands],
+    };
 }
 
 function stepSiphons(
@@ -555,7 +643,8 @@ function stepEnrage(
         return completeEncounter();
     }
     const phantomStep = stepPhantoms(state.phantoms, snapshot.timeSeconds, timing);
-    const commands: WardenP3Command[] = [...phantomStep.commands];
+    const slamStep = stepSlam(state.slam, snapshot.timeSeconds, WardenSlamTempo.FAST, timing);
+    const commands: WardenP3Command[] = [...phantomStep.commands, ...slamStep.commands];
     const pendingLightningAtStart = state.pendingLightning;
     const lightningStrikes =
         pendingLightningAtStart !== undefined &&
@@ -588,6 +677,7 @@ function stepEnrage(
         nextState: {
             phase: WardenP3Phase.ENRAGE,
             phantoms: phantomStep.phantoms,
+            slam: slamStep.slam,
             pendingLightning: nextPendingLightning,
             nextLightningWarningAtSeconds: lightningWarningDue
                 ? snapshot.timeSeconds + timing.lightningWarningIntervalSeconds
@@ -622,7 +712,7 @@ export function stepWardenP3(
     state: WardenP3State,
     snapshot: WardenP3Snapshot,
     arena: ParsedWardenP3Arena,
-    timing: ParsedWardenP3Timing = DEFAULT_PARSED_WARDEN_P3_TIMING,
+    timing: ParsedWardenP3Timing,
 ): WardenP3Result {
     validateSnapshot(snapshot);
     switch (state.phase) {

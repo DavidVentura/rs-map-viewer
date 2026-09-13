@@ -17,13 +17,14 @@ import { TransformableGroundDecorations, isTileInMapSquare } from "./LocTransfor
 import { Phase, createPhase, createPhaseId } from "./Phase";
 import { createRewardId, createUpgradeChoiceReward } from "./Reward";
 import { createNamedEquipmentGrantReward } from "./Reward";
+import { WardenP3AnimationIds } from "./WardenP3Animations";
 import {
     WARDEN_P3_ARENA_ROW_COUNT,
     WARDEN_P3_FLOOR_DECORATIONS,
     WARDEN_P3_SOLO_SIPHON_LAYOUT,
     WARDEN_P3_SPAWN_TILE,
 } from "./WardenP3Arena";
-import { WardenP3Arena } from "./WardenP3Director";
+import { WardenP3Arena, WardenSlamTarget, WardenSlamTempo, WardenStance } from "./WardenP3Director";
 import { WardenP3SiphonLayout, validateWardenP3SiphonLayout } from "./WardenP3SiphonLayout";
 import { UpgradeId } from "./upgrades";
 
@@ -151,6 +152,7 @@ export type WardensP3Script = {
     readonly phantomSpawns: readonly WardenPhantomSpawn[];
     readonly arena: WardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
+    readonly wardenAnimations: WardenP3AnimationIds;
 };
 
 export type ScriptedEncounter = EncounterCommon & {
@@ -815,6 +817,30 @@ const WARDENS_P3_PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
     { x: 3943, y: 5152, level: 0, enemyTypeId: EnemyTypeId.BABA_PHANTOM },
 ];
 
+// RuneLite's NPC_WARDENS_ATTACKLEFT/RIGHT/CENTER, 01 at the normal pace and 02 for the enrage.
+// ATTACKRIGHT is the one whose strike lands on the west half (LEFT), as checked in game. Each impact
+// frame sits on the seq's floor-impact sound. The stance seqs are NPC_WARDENS_CHARGE01/CHARGING01,
+// RELEASE01 back to its IDLE05 and ENRAGING01/ENRAGED01, picked by name.
+const WARDENS_P3_WARDEN_ANIMATIONS: WardenP3AnimationIds = {
+    slams: {
+        [WardenSlamTempo.NORMAL]: {
+            [WardenSlamTarget.LEFT]: { seqId: 9676, impactFrame: 90 },
+            [WardenSlamTarget.RIGHT]: { seqId: 9674, impactFrame: 90 },
+            [WardenSlamTarget.CENTRE]: { seqId: 9678, impactFrame: 86 },
+        },
+        [WardenSlamTempo.FAST]: {
+            [WardenSlamTarget.LEFT]: { seqId: 9677, impactFrame: 50 },
+            [WardenSlamTarget.RIGHT]: { seqId: 9675, impactFrame: 50 },
+            [WardenSlamTarget.CENTRE]: { seqId: 9679, impactFrame: 59 },
+        },
+    },
+    stances: {
+        [WardenStance.CHARGING]: { transitionSeqId: 9682, holdSeqId: 9683 },
+        [WardenStance.STANDING]: { transitionSeqId: 9681, holdSeqId: 9657 },
+        [WardenStance.ENRAGED]: { transitionSeqId: 9684, holdSeqId: 9685 },
+    },
+};
+
 const WARDENS_P3: ScriptedEncounter = {
     id: EncounterId.WARDENS_P3,
     mapSquares: [{ mapX: 61, mapY: 80 }],
@@ -842,6 +868,7 @@ const WARDENS_P3: ScriptedEncounter = {
         phantomSpawns: WARDENS_P3_PHANTOM_SPAWNS,
         arena: { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT },
         siphonLayout: WARDEN_P3_SOLO_SIPHON_LAYOUT,
+        wardenAnimations: WARDENS_P3_WARDEN_ANIMATIONS,
     },
 };
 

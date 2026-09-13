@@ -171,6 +171,11 @@ export class Enemy implements Combatant, SteeringBody {
     previewSeq?: SeqTiming;
     previewPlayback: AnimationPlayback = AnimationPlayback.LOOP;
 
+    // A SCRIPTED_BOSS plays what its encounter script tells it to: scriptedSeq once, and
+    // scriptedIdleSeq whenever nothing else is playing.
+    private scriptedSeq: SeqTiming | undefined;
+    private scriptedIdleSeq: SeqTiming;
+
     constructor(
         readonly id: number,
         public x: number,
@@ -187,6 +192,7 @@ export class Enemy implements Combatant, SteeringBody {
         this.health = stats.maxHealth;
         this.walkSpeed = stats.walkSpeed;
         this.animation = new AnimationState(type.seqs.idle);
+        this.scriptedIdleSeq = type.seqs.idle;
     }
 
     get projectileLaunchHeight(): number {
@@ -359,7 +365,28 @@ export class Enemy implements Combatant, SteeringBody {
         this.respawnAt = undefined;
         this.patternIndex = 0;
         this.abilityRuntime.reset();
+        this.scriptedSeq = undefined;
+        this.scriptedIdleSeq = this.type.seqs.idle;
         this.animation.restart(this.type.seqs.idle);
+    }
+
+    // Restarts even when the same sequence is already playing, so a script that repeats a
+    // sequence back to back still sees each one from its first frame.
+    playScriptedSeq(seq: SeqTiming): void {
+        this.assertScriptedBoss();
+        this.scriptedSeq = seq;
+        this.animation.restart(seq);
+    }
+
+    holdScriptedIdle(seq: SeqTiming): void {
+        this.assertScriptedBoss();
+        this.scriptedIdleSeq = seq;
+    }
+
+    private assertScriptedBoss(): void {
+        if (!isScriptedBossEnemyType(this.type)) {
+            throw new Error(`Enemy ${this.id} (${this.type.id}) is not driven by a script`);
+        }
     }
 
     private updateScriptedBoss(deltaTimeSeconds: number): void {
@@ -370,7 +397,13 @@ export class Enemy implements Combatant, SteeringBody {
             return;
         }
         this.state = EnemyState.IDLE;
-        this.animation.setSequence(this.type.seqs.idle);
+        if (this.scriptedSeq) {
+            if (this.animation.advance(deltaTimeSeconds, AnimationPlayback.ONCE)) {
+                this.scriptedSeq = undefined;
+            }
+            return;
+        }
+        this.animation.setSequence(this.scriptedIdleSeq);
         this.animation.advance(deltaTimeSeconds);
     }
 

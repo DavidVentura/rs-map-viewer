@@ -192,8 +192,9 @@ export function isBossEnemyType<A extends AbilityDefinition>(
 }
 
 // SCRIPTED_BOSS (Tumeken's Warden) has no AI of its own - the encounter script drives its
-// position/rotation/vulnerability directly - so it only ever plays idle/death rather than running
-// Enemy's normal chase/attack state machine.
+// position/rotation/vulnerability/animations directly - so it only ever plays what the script tells
+// it to (see Enemy.playScriptedSeq) and its death rather than running Enemy's normal chase/attack
+// state machine.
 export function isScriptedBossEnemyType<A extends AbilityDefinition>(
     type: EnemyType<A>,
 ): type is Extract<EnemyType<A>, { behaviour: EnemyBehaviour.SCRIPTED_BOSS }> {

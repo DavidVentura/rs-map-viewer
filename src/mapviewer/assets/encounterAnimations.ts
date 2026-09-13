@@ -1,10 +1,16 @@
 import { WeaponStyle } from "../game/Ability";
-import { SeqTiming } from "../game/Animation";
-import { Encounter } from "../game/Encounter";
+import { SeqTiming, sequenceDurationSeconds, sequenceTimeToFrameSeconds } from "../game/Animation";
+import { Encounter, EncounterScriptKind, EncounterSpawnMode } from "../game/Encounter";
 import { EncounterAnimations } from "../game/EncounterAnimations";
 import { EnemyTypeId, ResolvedEnemyType, getEnemyType, resolveEnemyType } from "../game/EnemyType";
 import { Player, StanceSeqs } from "../game/Player";
 import { SeqCatalog } from "../game/SeqCatalog";
+import {
+    ResolvedWardenSlam,
+    WardenP3AnimationIds,
+    WardenP3Animations,
+    WardenSlamSeq,
+} from "../game/WardenP3Animations";
 import { resolvePlayerLoadouts } from "../game/abilities";
 import { ActorAssets, ProjectileBake } from "./ActorAssets";
 
@@ -31,6 +37,45 @@ function lookup<K, V>(
     };
 }
 
+// A slam's impact frame outside its sequence throws here, while the encounter loads.
+function resolveWardenP3Animations(
+    ids: WardenP3AnimationIds,
+    catalog: SeqCatalog,
+): WardenP3Animations {
+    const resolveSlam = ({ seqId, impactFrame }: WardenSlamSeq): ResolvedWardenSlam => {
+        const seq = catalog.get(seqId);
+        return {
+            seq,
+            impactSeconds: sequenceTimeToFrameSeconds(seq, impactFrame),
+            durationSeconds: sequenceDurationSeconds(seq),
+        };
+    };
+    return {
+        slams: mapRecord(ids.slams, (slams) => mapRecord(slams, resolveSlam)),
+        stances: mapRecord(ids.stances, ({ transitionSeqId, holdSeqId }) => {
+            const transition = catalog.get(transitionSeqId);
+            return {
+                transition,
+                hold: catalog.get(holdSeqId),
+                transitionSeconds: sequenceDurationSeconds(transition),
+            };
+        }),
+    };
+}
+
+function scriptAnimations(
+    encounter: Encounter,
+    catalog: SeqCatalog,
+): WardenP3Animations | undefined {
+    if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
+        return undefined;
+    }
+    switch (encounter.script.kind) {
+        case EncounterScriptKind.WARDENS_P3:
+            return resolveWardenP3Animations(encounter.script.wardenAnimations, catalog);
+    }
+}
+
 function projectileTravelSeqId(bake: ProjectileBake): number | undefined {
     return bake.kind === "SPOT_ANIM" && bake.seq.kind === "ANIMATED" ? bake.seq.seqId : undefined;
 }
@@ -55,6 +100,7 @@ export function resolveEncounterAnimations(
             resolveEnemyType(getEnemyType(enemyTypeId), catalog),
         ]),
     );
+    const wardenP3 = scriptAnimations(encounter, catalog);
     const interactionSeqs = new Map(
         encounter.interactions.map((interaction) => [
             interaction.id,
@@ -78,5 +124,13 @@ export function resolveEncounterAnimations(
             const seqId = projectileTravelSeqId(bake);
             return seqId === undefined ? undefined : catalog.get(seqId);
         }),
+        wardenP3: () => {
+            if (!wardenP3) {
+                throw new Error(
+                    `The game used the Wardens P3 animations, which encounter ${encounter.id} does not declare`,
+                );
+            }
+            return wardenP3;
+        },
     };
 }

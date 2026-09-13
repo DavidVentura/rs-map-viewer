@@ -1,7 +1,7 @@
 import { WeaponStyle } from "../game/Ability";
 import { AnimPreviewParams, SeqRange } from "../game/AnimPreview";
 import { AppearanceSlot, BodyKitPart, resolveAppearance } from "../game/Appearance";
-import { Encounter } from "../game/Encounter";
+import { Encounter, EncounterScriptKind, EncounterSpawnMode } from "../game/Encounter";
 import { EnemyType, EnemyTypeId, getEnemyType } from "../game/EnemyType";
 import {
     DroppableItemDisplay,
@@ -44,6 +44,7 @@ import {
     WARDENS_LIGHTNING_SEQ_ID,
     WARPED_SCEPTRE_IMPACT_SEQ_ID,
 } from "../game/VisualEffect";
+import { wardenP3AnimationSeqIds } from "../game/WardenP3Animations";
 import {
     HEALING_POTION_CAST_SEQ_ID,
     WEAPON_LADDERS,
@@ -495,6 +496,19 @@ function enemyTypeSeqIds(enemyType: EnemyType): number[] {
     return [...new Set(seqIds.filter((seqId): seqId is number => seqId !== undefined))];
 }
 
+// A scripted encounter's own seqs play on its boss, so they are baked into the boss's type.
+function scriptSeqIds(encounter: Encounter, enemyTypeId: StaticEnemyTypeId): readonly number[] {
+    if (encounter.spawnMode !== EncounterSpawnMode.SCRIPTED) {
+        return [];
+    }
+    switch (encounter.script.kind) {
+        case EncounterScriptKind.WARDENS_P3:
+            return enemyTypeId === EnemyTypeId.TUMEKENS_WARDEN
+                ? wardenP3AnimationSeqIds(encounter.script.wardenAnimations)
+                : [];
+    }
+}
+
 function rangeIds(range: SeqRange): number[] {
     return Array.from({ length: range.to - range.from + 1 }, (_, index) => range.from + index);
 }
@@ -523,7 +537,12 @@ export function actorAssets(encounter: Encounter, preview?: AnimPreviewParams): 
             return {
                 enemyTypeId,
                 npcTypeId: enemyType.npcTypeId,
-                seqIds: enemyTypeSeqIds(enemyType),
+                seqIds: [
+                    ...new Set([
+                        ...enemyTypeSeqIds(enemyType),
+                        ...scriptSeqIds(encounter, enemyTypeId),
+                    ]),
+                ],
             };
         });
     return {

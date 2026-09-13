@@ -1,20 +1,24 @@
 import { AbilityTargetKind, WeaponStyle } from "./Ability";
 import { CombatEventKind } from "./CombatEvent";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
-import { DropTier, EnemyBehaviour, EnemyType, EnemyTypeId, resolveEnemyType } from "./EnemyType";
+import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
 import { GameWorld, SimInput } from "./GameWorld";
-import { createExperience } from "./Progression";
 import { Terrain } from "./Terrain";
 import {
     WARDEN_P3_ARENA_ROW_COUNT,
     WARDEN_P3_SOLO_SIPHON_LAYOUT,
     wardenP3ArenaTile,
 } from "./WardenP3Arena";
-import { WardenP3Arena, WardenSiphonStatus } from "./WardenP3Director";
+import {
+    WardenP3Arena,
+    WardenSiphonStatus,
+    WardenSlamTarget,
+    WardenSlamTempo,
+    WardenStance,
+} from "./WardenP3Director";
 import { FloorSlam, floorSlamArrivalSeconds, floorSlamEndsAtSeconds } from "./WardenP3FloorSlam";
-import { GOBLIN_MELEE } from "./abilities";
-import { stubEncounterAnimations, stubSeqCatalog } from "./testLoaders";
+import { stubEncounterAnimations } from "./testLoaders";
 
 class FlatTerrain implements Terrain {
     isLoaded(): boolean {
@@ -58,31 +62,17 @@ function attackSiphon(siphon: EnergySiphonActor): SimInput {
     };
 }
 
-const WARDEN_TYPE: EnemyType = {
-    id: EnemyTypeId.GOBLIN,
-    npcTypeId: 0,
-    idleSeqId: 0,
-    walkSeqId: 0,
-    deathSeqId: 0,
-    attackSeqId: 0,
-    hitRadius: 64,
-    projectileLaunchHeight: 0,
-    maxHealth: 100,
-    experienceReward: createExperience(0),
-    walkSpeed: 0,
-    behaviour: EnemyBehaviour.RUSHER,
-    abilities: [GOBLIN_MELEE],
-    dropTier: DropTier.NONE,
-};
+const ANIMATIONS = stubEncounterAnimations();
+const WARDEN_ANIMATIONS = ANIMATIONS.wardenP3();
 
 // Matches the real encounter definition (Encounter.ts), which always starts enrage's row removal
 // countdown from the full 9-row floor.
 const ARENA: WardenP3Arena = { furthestRowFromWarden: WARDEN_P3_ARENA_ROW_COUNT };
 
 function createWardenWorld(): { readonly world: GameWorld; readonly wardenId: number } {
-    const world = new GameWorld(new FlatTerrain(), stubEncounterAnimations());
+    const world = new GameWorld(new FlatTerrain(), ANIMATIONS);
     world.spawnPlayer(0, 0, 0);
-    const wardenId = world.spawnEnemy(128, 0, 0, resolveEnemyType(WARDEN_TYPE, stubSeqCatalog()));
+    const wardenId = world.spawnEnemy(128, 0, 0, ANIMATIONS.enemyType(EnemyTypeId.TUMEKENS_WARDEN));
     world.startWardenP3Runtime(wardenId, ARENA, WARDEN_P3_SOLO_SIPHON_LAYOUT);
     return { world, wardenId };
 }
@@ -90,7 +80,7 @@ function createWardenWorld(): { readonly world: GameWorld; readonly wardenId: nu
 const STEP_SECONDS = 0.01;
 
 function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
-    for (let step = 0; step < 1000; step++) {
+    for (let step = 0; step < 2000; step++) {
         world.step(EMPTY_INPUT, STEP_SECONDS);
         const slam = world.wardenP3RenderState?.floorSlams[0];
         if (slam) {
@@ -101,9 +91,34 @@ function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
 }
 
 describe("Wardens P3 world runtime", () => {
+    it("plays each slam on the Warden and sets the floor wave off at the slam's impact frame", () => {
+        const { world, wardenId } = createWardenWorld();
+        const warden = world.findEnemy(wardenId)!;
+        const right = WARDEN_ANIMATIONS.slams[WardenSlamTempo.NORMAL][WardenSlamTarget.RIGHT];
+        const left = WARDEN_ANIMATIONS.slams[WardenSlamTempo.NORMAL][WardenSlamTarget.LEFT];
+
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        const beganAtSeconds = world.timeSeconds;
+        expect(warden.animation.seqId).toBe(right.seq.seqId);
+
+        const slam = stepUntilFirstFloorSlam(world);
+        expect(slam.startsAtSeconds).toBeGreaterThanOrEqual(beganAtSeconds + right.impactSeconds);
+        expect(slam.startsAtSeconds).toBeLessThan(
+            beganAtSeconds + right.impactSeconds + STEP_SECONDS,
+        );
+        expect(warden.animation.seqId).toBe(right.seq.seqId);
+
+        while (world.timeSeconds < beganAtSeconds + right.durationSeconds) {
+            world.step(EMPTY_INPUT, STEP_SECONDS);
+        }
+        expect(warden.animation.seqId).toBe(left.seq.seqId);
+    });
+
     it("makes the Warden invulnerable for siphons and exposes the director commands to rendering", () => {
         const { world, wardenId } = createWardenWorld();
         const warden = world.findEnemy(wardenId)!;
+        const charging = WARDEN_ANIMATIONS.stances[WardenStance.CHARGING];
+        const standing = WARDEN_ANIMATIONS.stances[WardenStance.STANDING];
         warden.health = 80;
 
         world.step(EMPTY_INPUT, 0.01);
@@ -114,8 +129,13 @@ describe("Wardens P3 world runtime", () => {
             commands: [
                 { kind: "SET_WARDEN_VULNERABILITY", vulnerable: false },
                 { kind: "SPAWN_ENERGY_SIPHONS", intermission: 0 },
+                { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.CHARGING },
             ],
         });
+        expect(warden.animation.seqId).toBe(charging.transition.seqId);
+        world.step(EMPTY_INPUT, charging.transitionSeconds + STEP_SECONDS);
+        world.step(EMPTY_INPUT, STEP_SECONDS);
+        expect(warden.animation.seqId).toBe(charging.hold.seqId);
 
         world.resolveWardenP3Siphons(WardenSiphonStatus.ALL_REVERSED);
         world.step(EMPTY_INPUT, 0.01);
@@ -131,8 +151,10 @@ describe("Wardens P3 world runtime", () => {
                     wardenDamage: 5,
                 },
                 { kind: "SET_WARDEN_VULNERABILITY", vulnerable: true },
+                { kind: "CHANGE_WARDEN_STANCE", stance: WardenStance.STANDING },
             ],
         });
+        expect(warden.animation.seqId).toBe(standing.transition.seqId);
     });
 
     it("emits encounter completion when the Warden dies", () => {

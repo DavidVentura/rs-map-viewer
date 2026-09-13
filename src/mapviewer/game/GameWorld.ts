@@ -101,6 +101,7 @@ import {
     casterEffectAnchor,
     casterEffectTiming,
 } from "./VisualEffect";
+import { WardenP3Animations } from "./WardenP3Animations";
 import {
     WARDEN_P3_INITIAL_ARENA_FLOOR,
     WardenP3ArenaFloor,
@@ -111,6 +112,8 @@ import {
 } from "./WardenP3Arena";
 import {
     ParsedWardenP3Arena,
+    ParsedWardenP3Timing,
+    WARDEN_P3_HAZARD_TIMING,
     WardenP3Arena,
     WardenP3Command,
     WardenP3Intermission,
@@ -122,6 +125,7 @@ import {
     WardenSlamTarget,
     initialWardenP3State,
     parseWardenP3Arena,
+    parseWardenP3Timing,
     stepWardenP3,
 } from "./WardenP3Director";
 import {
@@ -202,6 +206,8 @@ type WardenP3Runtime = {
     readonly wardenId: number;
     readonly arena: ParsedWardenP3Arena;
     readonly siphonLayout: WardenP3SiphonLayout;
+    readonly animations: WardenP3Animations;
+    readonly timing: ParsedWardenP3Timing;
     state: WardenP3State;
     siphonStatus: WardenSiphonStatus;
     siphonDeadlineAtSeconds: number | undefined;
@@ -407,11 +413,19 @@ export class GameWorld {
         }
         validateWardenP3SiphonLayout(siphonLayout);
         const parsedArena = parseWardenP3Arena(arena);
+        const animations = this.animations.wardenP3();
+        const timing = parseWardenP3Timing({
+            ...WARDEN_P3_HAZARD_TIMING,
+            slams: animations.slams,
+            stances: animations.stances,
+        });
         warden.invulnerable = false;
         this.wardenP3Runtime = {
             wardenId,
             arena: parsedArena,
             siphonLayout,
+            animations,
+            timing,
             state: initialWardenP3State(this.timeSeconds, parsedArena),
             siphonStatus: WardenSiphonStatus.NONE,
             siphonDeadlineAtSeconds: undefined,
@@ -1171,6 +1185,7 @@ export class GameWorld {
                 siphonStatus: this.wardenP3SiphonStatus(runtime),
             },
             runtime.arena,
+            runtime.timing,
         );
         runtime.state = result.nextState;
         runtime.commands = result.commands;
@@ -1219,9 +1234,9 @@ export class GameWorld {
         command: WardenP3Command,
     ): void {
         switch (command.kind) {
-            case "ROTATE_WARDEN":
+            case "BEGIN_SLAM":
                 runtime.aimedSlamTarget = command.target;
-                warden.rotation = this.wardenSlamRotation(command.target);
+                warden.playScriptedSeq(runtime.animations.slams[command.tempo][command.target].seq);
                 return;
             case "RESOLVE_FLOOR_SLAM":
                 runtime.resolvedSlamTarget = command.target;
@@ -1233,6 +1248,12 @@ export class GameWorld {
                     },
                 ];
                 return;
+            case "CHANGE_WARDEN_STANCE": {
+                const stance = runtime.animations.stances[command.stance];
+                warden.playScriptedSeq(stance.transition);
+                warden.holdScriptedIdle(stance.hold);
+                return;
+            }
             case "SET_WARDEN_VULNERABILITY":
                 warden.invulnerable = !command.vulnerable;
                 return;
@@ -1302,17 +1323,6 @@ export class GameWorld {
             case "COMPLETE_ENCOUNTER":
                 this.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
                 return;
-        }
-    }
-
-    private wardenSlamRotation(target: WardenSlamTarget): number {
-        switch (target) {
-            case WardenSlamTarget.RIGHT:
-                return directionToRotation(1, 0);
-            case WardenSlamTarget.LEFT:
-                return directionToRotation(-1, 0);
-            case WardenSlamTarget.CENTRE:
-                return directionToRotation(0, 1);
         }
     }
 

@@ -10,15 +10,18 @@ export const STUB_FRAME_COUNT = 20;
 export const STUB_TICKS_PER_FRAME = 4;
 export const STUB_FRAME_SECONDS = STUB_TICKS_PER_FRAME * 0.02;
 
-export function stubSeqTiming(seqId: number): SeqTiming {
-    return { seqId, frameTicks: new Array<number>(STUB_FRAME_COUNT).fill(STUB_TICKS_PER_FRAME) };
+// Wardens P3 lands its slams deep into its sequences, past STUB_FRAME_COUNT.
+export const WARDENS_STUB_FRAME_COUNT = 160;
+
+export function stubSeqTiming(seqId: number, frameCount: number = STUB_FRAME_COUNT): SeqTiming {
+    return { seqId, frameTicks: new Array<number>(frameCount).fill(STUB_TICKS_PER_FRAME) };
 }
 
-// Test stand-in for the encounter's seq catalog: every sequence id has STUB_FRAME_COUNT frames of
+// Test stand-in for the encounter's seq catalog: every sequence id has frameCount frames of
 // STUB_TICKS_PER_FRAME ticks each, so a contact frame N resolves at N * STUB_FRAME_SECONDS at
-// castSpeed 1 and every sequence lasts STUB_FRAME_COUNT * STUB_FRAME_SECONDS.
-export function stubSeqCatalog(): SeqCatalog {
-    return { get: stubSeqTiming };
+// castSpeed 1 and every sequence lasts frameCount * STUB_FRAME_SECONDS.
+export function stubSeqCatalog(frameCount: number = STUB_FRAME_COUNT): SeqCatalog {
+    return { get: (seqId) => stubSeqTiming(seqId, frameCount) };
 }
 
 // The real composition over the stub catalog, answering any enemy type or interaction so one set
@@ -26,9 +29,15 @@ export function stubSeqCatalog(): SeqCatalog {
 export function stubEncounterAnimations(): EncounterAnimations {
     const catalog = stubSeqCatalog();
     const encounter = getEncounter(EncounterId.FIGHT_CAVES);
+    const wardens = getEncounter(EncounterId.WARDENS_P3);
     return {
         ...resolveEncounterAnimations(encounter, actorAssets(encounter), catalog),
         enemyType: (id) => resolveEnemyType(getEnemyType(id), catalog),
         interactionSeq: () => stubSeqTiming(0),
+        wardenP3: resolveEncounterAnimations(
+            wardens,
+            actorAssets(wardens),
+            stubSeqCatalog(WARDENS_STUB_FRAME_COUNT),
+        ).wardenP3,
     };
 }
