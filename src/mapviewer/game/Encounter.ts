@@ -863,23 +863,44 @@ const [wardensP3WardenX, wardensP3WardenY] = tileToWorld(
     true,
 );
 
-function wardenP3SiphonDiamond(centreX: number, centreY: number): readonly WardenP3SiphonSpawn[] {
-    return [
-        { x: centreX, y: centreY - 2, level: 0, rotation: 0 },
-        { x: centreX - 3, y: centreY, level: 0, rotation: 0 },
-        { x: centreX + 3, y: centreY, level: 0, rotation: 0 },
-        { x: centreX, y: centreY + 2, level: 0, rotation: 0 },
-    ];
+function wardenP3SiphonTiles(
+    ...tiles: readonly (readonly [number, number])[]
+): readonly WardenP3SiphonSpawn[] {
+    return tiles.map(([x, y]) => ({ x, y, level: 0, rotation: 0 }));
 }
 
-// The first intermission's diamond is measured from a gameplay recording; the later ones reuse its
-// shape around the user's ground markers for each intermission, until their real patterns are known.
+// Each intermission throws its own pattern, read from gameplay screenshots and the user's ground
+// markers: a diamond, a four-over-three zig-zag, a two-over-three zig-zag, then a rectangle.
 export const WARDENS_P3_SIPHON_LAYOUT: WardenP3SiphonLayout = {
     spawnsByIntermission: {
-        [WardenP3Intermission.FIRST]: wardenP3SiphonDiamond(3936, 5162),
-        [WardenP3Intermission.SECOND]: wardenP3SiphonDiamond(3938, 5163),
-        [WardenP3Intermission.THIRD]: wardenP3SiphonDiamond(3936, 5160),
-        [WardenP3Intermission.FOURTH]: wardenP3SiphonDiamond(3940, 5162),
+        [WardenP3Intermission.FIRST]: wardenP3SiphonTiles(
+            [3936, 5160],
+            [3933, 5162],
+            [3939, 5162],
+            [3936, 5164],
+        ),
+        [WardenP3Intermission.SECOND]: wardenP3SiphonTiles(
+            [3930, 5160],
+            [3934, 5160],
+            [3938, 5160],
+            [3942, 5160],
+            [3932, 5163],
+            [3936, 5163],
+            [3940, 5163],
+        ),
+        [WardenP3Intermission.THIRD]: wardenP3SiphonTiles(
+            [3934, 5160],
+            [3938, 5160],
+            [3932, 5163],
+            [3936, 5163],
+            [3940, 5163],
+        ),
+        [WardenP3Intermission.FOURTH]: wardenP3SiphonTiles(
+            [3934, 5161],
+            [3938, 5161],
+            [3934, 5163],
+            [3938, 5163],
+        ),
     },
     deadlineSeconds: 15,
 };

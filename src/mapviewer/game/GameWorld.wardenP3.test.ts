@@ -851,7 +851,9 @@ describe("Wardens P3 world runtime", () => {
                 activeIntermission: intermission,
                 activePhantoms: phantoms,
             });
-            expect(stepUntilSiphonsThrown(world)).toHaveLength(4);
+            expect(stepUntilSiphonsThrown(world)).toHaveLength(
+                WARDENS_P3_SIPHON_LAYOUT.spawnsByIntermission[intermission].length,
+            );
         },
     );
 
