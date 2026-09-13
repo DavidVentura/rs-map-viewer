@@ -980,6 +980,21 @@ export function drawContextMenuTooltip(
 
 // The sprite's own native size (see assets/HudAssets.ts) - drawn 1:1, like OSRS.
 const CLICK_CROSS_SIZE_PX = 16;
+const OVERHEAD_ICON_SIZE_PX = 30;
+
+export function drawOverheadIcon(
+    ctx: CanvasRenderingContext2D,
+    icon: CanvasImageSource,
+    screen: { x: number; y: number },
+): void {
+    ctx.drawImage(
+        icon,
+        screen.x - OVERHEAD_ICON_SIZE_PX / 2,
+        screen.y - OVERHEAD_ICON_SIZE_PX / 2,
+        OVERHEAD_ICON_SIZE_PX,
+        OVERHEAD_ICON_SIZE_PX,
+    );
+}
 
 export function drawClickCross(
     ctx: CanvasRenderingContext2D,

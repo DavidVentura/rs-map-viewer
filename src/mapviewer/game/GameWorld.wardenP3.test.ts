@@ -287,7 +287,7 @@ describe("Wardens P3 world runtime", () => {
         const warden = world.findEnemy(wardenId)!;
         world.step(EMPTY_INPUT, 0.01);
 
-        applyDamage(warden, warden.maxHealth, []);
+        applyDamage(warden, warden.maxHealth, undefined, []);
         expect(warden.health).toBe(warden.maxHealth * 0.8);
 
         world.step(EMPTY_INPUT, 0.01);

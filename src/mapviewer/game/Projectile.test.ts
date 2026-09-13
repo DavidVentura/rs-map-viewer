@@ -43,6 +43,7 @@ function impact(faction: Faction, affects: Affects = Affects.HOSTILE): Projectil
         caster: new FakeCombatant(0, 0, 0, faction),
         affects,
         payloads: [damagePayload(DAMAGE)],
+        style: undefined,
     };
 }
 

@@ -1,4 +1,10 @@
-import { AbilityDefinition, ResolvedAbility, abilityRange, aimAtCombatant } from "./Ability";
+import {
+    AbilityDefinition,
+    ResolvedAbility,
+    WeaponStyle,
+    abilityRange,
+    aimAtCombatant,
+} from "./Ability";
 import { AbilityRuntime } from "./AbilityRuntime";
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { Combatant, Faction } from "./Combatant";
@@ -11,6 +17,12 @@ import {
     isScriptedBossEnemyType,
     resolveEnemyStats,
 } from "./EnemyType";
+import {
+    AttackOutcome,
+    NO_PROTECTION_PRAYERS,
+    ProtectionPrayers,
+    receiveStyledAttack,
+} from "./ProtectionPrayers";
 import { TILE_SIZE, Terrain } from "./Terrain";
 import { resolveMovement } from "./movement";
 import { directionToRotation } from "./projectileMath";
@@ -141,6 +153,7 @@ export class Enemy implements Combatant, SteeringBody {
     rotation = 0;
     invulnerable = false;
     healthFloor = 0;
+    protectionPrayers: ProtectionPrayers = NO_PROTECTION_PRAYERS;
     frozenUntil?: number;
     respawnAt?: number;
     despawnAt?: number;
@@ -340,7 +353,19 @@ export class Enemy implements Combatant, SteeringBody {
         this.animation.advance(deltaTimeSeconds);
     }
 
+    // A type without a prayer rotation never prays, so it takes every attack without counting it.
+    receiveStyledAttack(style: WeaponStyle): AttackOutcome {
+        const rotation = this.type.protectionPrayers;
+        if (!rotation) {
+            return AttackOutcome.LANDS;
+        }
+        const received = receiveStyledAttack(this.protectionPrayers, rotation, style);
+        this.protectionPrayers = received.prayers;
+        return received.outcome;
+    }
+
     respawn(): void {
+        this.protectionPrayers = NO_PROTECTION_PRAYERS;
         this.x = this.spawnX;
         this.y = this.spawnY;
         this.health = this.maxHealth;

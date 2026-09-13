@@ -14,6 +14,7 @@ import {
     drawHealthGlobe,
     drawLevelProgress,
     drawManaGlobe,
+    drawOverheadIcon,
     drawPhaseCounter,
     drawPickupFlash,
     drawPreviewSeqLabel,
@@ -23,6 +24,23 @@ import {
 } from "./hudDraw";
 
 const SPLAT_LIFETIME_SECONDS = 1;
+
+function drawOverheadIcons(ctx: CanvasRenderingContext2D, frame: HudFrame): void {
+    const { width, height } = frame.screenSize;
+    for (const overhead of frame.overheadIcons) {
+        const screen = worldToScreen(
+            frame.viewProjMatrix,
+            overhead.worldX,
+            overhead.worldY,
+            overhead.height,
+            width,
+            height,
+        );
+        if (screen) {
+            drawOverheadIcon(ctx, overhead.icon, screen);
+        }
+    }
+}
 const PICKUP_FLASH_LIFETIME_SECONDS = 2;
 
 type LiveSplat = SplatEvent & { ageSeconds: number };
@@ -72,6 +90,7 @@ export class Hud {
         if (frame.boss) {
             drawBossBar(ctx, width, frame.boss);
         }
+        drawOverheadIcons(ctx, frame);
         this.drawSplats(frame);
         this.drawPickupFlashes(width);
         if (frame.upgradeOffer) {

@@ -52,6 +52,14 @@ export type HealSplatEvent = SplatPosition & {
 
 export type SplatEvent = DamageSplatEvent | HealSplatEvent;
 
+// An icon floating over a combatant, e.g. the protection prayers an enemy has up.
+export type OverheadIconHudInfo = {
+    readonly worldX: number;
+    readonly worldY: number;
+    readonly height: number;
+    readonly icon: CanvasImageSource;
+};
+
 export enum AbilitySlotBlockReason {
     NONE = 0,
     MANA = 1,
@@ -134,6 +142,7 @@ export type HudFrame = {
     activeStyle?: WeaponStyle;
     godMode: boolean;
     splatEvents: SplatEvent[];
+    overheadIcons: OverheadIconHudInfo[];
     phase?: PhaseHudInfo;
     previewSeqId?: number;
     boss?: BossHudInfo;

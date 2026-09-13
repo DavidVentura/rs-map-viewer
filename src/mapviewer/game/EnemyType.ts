@@ -1,6 +1,7 @@
 import { AbilityDefinition, ResolvedAbility, resolveAbility } from "./Ability";
 import { SeqTiming } from "./Animation";
 import { Experience, createExperience } from "./Progression";
+import { ProtectionPrayerRotation } from "./ProtectionPrayers";
 import { SeqCatalog } from "./SeqCatalog";
 import {
     GOBLIN_MELEE,
@@ -116,6 +117,7 @@ type EnemyTypeCommon<A extends AbilityDefinition> = {
     readonly abilities: readonly A[];
     readonly phases?: readonly BossPhase[];
     readonly dropTier: DropTier;
+    readonly protectionPrayers?: ProtectionPrayerRotation;
 };
 
 export type EnemyType<A extends AbilityDefinition = AbilityDefinition> =
@@ -429,6 +431,7 @@ const TUMEKENS_WARDEN: EnemyType = {
     behaviour: EnemyBehaviour.SCRIPTED_BOSS,
     abilities: [],
     dropTier: DropTier.NONE,
+    protectionPrayers: { attacksPerChange: 4, overheadHeight: 750 },
 };
 
 const ZEBAK_PHANTOM: EnemyType = {

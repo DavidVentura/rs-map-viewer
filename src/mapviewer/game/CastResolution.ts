@@ -79,7 +79,7 @@ function resolveEffect(
                 world.combatants(),
             );
             for (const hit of hits) {
-                landOnCombatant(world, hit, effect);
+                landOnCombatant(world, hit, effect, attackStyle(caster));
             }
             if (caster instanceof Player && caster.style === WeaponStyle.MAGIC) {
                 caster.refundMana(hits.length * MAGIC_MANA_REFUND_PER_ENEMY);
@@ -125,8 +125,19 @@ function strikeEnergySiphon(
     siphon.siphon = resolved.siphon;
 }
 
-function landOnCombatant(world: WorldContext, target: Combatant, effect: AbilityEffect): void {
-    applyPayloads(target, effect.payloads, world.timeSeconds, world.random, world.events);
+// Every player attack comes out of the active style's loadout, skills included; enemy attacks carry
+// no style.
+function attackStyle(caster: Combatant): WeaponStyle | undefined {
+    return caster instanceof Player ? caster.style : undefined;
+}
+
+function landOnCombatant(
+    world: WorldContext,
+    target: Combatant,
+    effect: AbilityEffect,
+    style: WeaponStyle | undefined,
+): void {
+    applyPayloads(target, effect.payloads, style, world.timeSeconds, world.random, world.events);
     if (!effect.hitEffect || target.health <= 0) {
         return;
     }
@@ -145,8 +156,9 @@ function landCone(
     aim: AbilityTarget,
 ): void {
     const hits = affectedCombatants(caster, delivery, effect.affects, aim, world.combatants());
+    const style = attackStyle(caster);
     for (const hit of hits) {
-        applyPayloads(hit, effect.payloads, world.timeSeconds, world.random, world.events);
+        applyPayloads(hit, effect.payloads, style, world.timeSeconds, world.random, world.events);
     }
     const hitEffect = effect.hitEffect;
     if (!hitEffect) {
@@ -183,6 +195,7 @@ function spawnProjectiles(
         caster,
         affects: effect.affects,
         payloads: effect.payloads,
+        style: attackStyle(caster),
         hitEffect: effect.hitEffect,
         // Ranged's own basic-attack tag: compared against the player's *current* basic attack
         // rather than a fixed ability id, since which weapon tier (and so which ability) is the

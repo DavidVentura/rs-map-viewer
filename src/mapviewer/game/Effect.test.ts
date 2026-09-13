@@ -91,6 +91,7 @@ describe("applyPayloads", () => {
         applyPayloads(
             target,
             [damagePayload(2, 6), { kind: PayloadKind.FREEZE, seconds: 3 }],
+            undefined,
             100,
             () => 0.5,
             events,
@@ -106,7 +107,14 @@ describe("applyPayloads", () => {
     it("heals up to max health", () => {
         const target = makeCombatant(0, 0, Faction.PLAYER, { health: 4, maxHealth: 10 });
         const events: CombatEvent[] = [];
-        applyPayloads(target, [{ kind: PayloadKind.HEAL, amount: 20 }], 0, () => 0, events);
+        applyPayloads(
+            target,
+            [{ kind: PayloadKind.HEAL, amount: 20 }],
+            undefined,
+            0,
+            () => 0,
+            events,
+        );
         expect(target.health).toBe(10);
         expect(events).toEqual([{ kind: CombatEventKind.HEAL, target, amount: 6 }]);
     });
@@ -121,6 +129,7 @@ describe("applyPayloads", () => {
                 { kind: PayloadKind.FREEZE, seconds: 3 },
                 { kind: PayloadKind.HEAL, amount: 9 },
             ],
+            undefined,
             0,
             () => 0,
             events,

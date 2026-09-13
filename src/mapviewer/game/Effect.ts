@@ -1,3 +1,4 @@
+import type { WeaponStyle } from "./Ability";
 import { CombatEvent, applyDamage, applyFreeze, applyHeal } from "./CombatEvent";
 import { Combatant } from "./Combatant";
 import { VisualEffectKind } from "./VisualEffect";
@@ -84,6 +85,7 @@ export function combatantsInCircle<T extends Combatant>(
 export function applyPayloads(
     target: Combatant,
     payloads: readonly Payload[],
+    style: WeaponStyle | undefined,
     timeSeconds: number,
     random: RandomSource,
     events: CombatEvent[],
@@ -94,7 +96,12 @@ export function applyPayloads(
         }
         switch (payload.kind) {
             case PayloadKind.DAMAGE:
-                applyDamage(target, rollDamage(payload.roll.min, payload.roll.max, random), events);
+                applyDamage(
+                    target,
+                    rollDamage(payload.roll.min, payload.roll.max, random),
+                    style,
+                    events,
+                );
                 break;
             case PayloadKind.FREEZE:
                 applyFreeze(target, timeSeconds + payload.seconds, events);

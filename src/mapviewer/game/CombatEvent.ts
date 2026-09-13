@@ -1,6 +1,8 @@
+import type { WeaponStyle } from "./Ability";
 import { Combatant } from "./Combatant";
 import { EquipmentPath } from "./Equipment";
 import { CharacterLevel } from "./Progression";
+import { AttackOutcome } from "./ProtectionPrayers";
 
 export enum CombatEventKind {
     DAMAGE = 0,
@@ -134,8 +136,32 @@ function hasHealthFloor(target: Combatant): target is HealthFloored {
     return typeof (target as Partial<HealthFloored>).healthFloor === "number";
 }
 
-export function applyDamage(target: Combatant, amount: number, events: CombatEvent[]): void {
+// A target that prays against attack styles (currently only an Enemy whose type rotates protection
+// prayers) is told of every styled attack, since the ones that land count toward its next change.
+export interface PrayerProtectable extends Combatant {
+    receiveStyledAttack(style: WeaponStyle): AttackOutcome;
+}
+
+function isPrayerProtectable(target: Combatant): target is PrayerProtectable {
+    return typeof (target as Partial<PrayerProtectable>).receiveStyledAttack === "function";
+}
+
+// style is undefined for damage no attack style carries: enemy attacks and encounter hazards.
+export function applyDamage(
+    target: Combatant,
+    amount: number,
+    style: WeaponStyle | undefined,
+    events: CombatEvent[],
+): void {
     if (isInvulnerable(target) && target.invulnerable) {
+        return;
+    }
+    if (
+        style !== undefined &&
+        isPrayerProtectable(target) &&
+        target.receiveStyledAttack(style) === AttackOutcome.PROTECTED
+    ) {
+        events.push({ kind: CombatEventKind.DAMAGE, target, amount: 0 });
         return;
     }
     const effectiveAmount = hasDamageTakenMultiplier(target)

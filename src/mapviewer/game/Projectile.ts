@@ -1,3 +1,4 @@
+import type { WeaponStyle } from "./Ability";
 import { AnimationPlayback, AnimationState, SeqTiming } from "./Animation";
 import { CombatEvent } from "./CombatEvent";
 import { Combatant } from "./Combatant";
@@ -398,6 +399,8 @@ export type ProjectileImpact = {
     readonly caster: Combatant;
     readonly affects: Affects;
     readonly payloads: readonly Payload[];
+    // Taken at launch, so switching style while the shot is in flight doesn't change what it is.
+    readonly style: WeaponStyle | undefined;
     readonly hitEffect?: HitEffect;
     readonly playerMechanic?: "RANGED_BASIC" | "MAGIC";
 };
@@ -513,7 +516,7 @@ export class Projectile {
         random: RandomSource,
         events: CombatEvent[],
     ): void {
-        applyPayloads(target, this.impact.payloads, timeSeconds, random, events);
+        applyPayloads(target, this.impact.payloads, this.impact.style, timeSeconds, random, events);
     }
 
     private endHeightAt(aim: FlightPoint, terrain: Terrain): number {

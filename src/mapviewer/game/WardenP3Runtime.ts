@@ -343,7 +343,7 @@ export class WardenP3Runtime implements EncounterScript {
             (strike) => timeSeconds >= strike.arrivesAtSeconds,
         );
         for (const strike of arrived) {
-            applyDamage(warden, strike.damage, this.world.events);
+            applyDamage(warden, strike.damage, undefined, this.world.events);
         }
         this.siphonStrikes = this.siphonStrikes.filter(
             (strike) => timeSeconds < strike.arrivesAtSeconds,
@@ -456,7 +456,7 @@ export class WardenP3Runtime implements EncounterScript {
     ): void {
         this.world.launchProjectile(
             spec,
-            { caster: warden, affects: Affects.SELF, payloads: [] },
+            { caster: warden, affects: Affects.SELF, payloads: [], style: undefined },
             start,
             target,
         );
@@ -817,7 +817,7 @@ export class WardenP3Runtime implements EncounterScript {
     private damagePlayerOnTile(tile: WardenP3Tile, damage: number): void {
         const player = this.world.player;
         if (player && isSameWardenTile(playerWardenTile(player), tile)) {
-            applyDamage(player, damage, this.world.events);
+            applyDamage(player, damage, undefined, this.world.events);
         }
     }
 
