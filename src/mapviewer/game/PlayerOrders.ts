@@ -201,9 +201,9 @@ export function stepPlayer(
     if (input.styleSwitch !== undefined) {
         player.requestStyleSwitch(input.styleSwitch);
     }
-    const current = liveOrder(world, player, order);
+    const live = liveOrder(world, player, order);
     beginHeldSkills(world, player, input.skills);
-    beginOrderedAttack(world, player, current);
+    const current = beginOrderedAttack(world, player, live);
     const outcome = player.update(
         orderMovement(world, player, current, input.running),
         dtSeconds,
@@ -365,20 +365,39 @@ function pickUp(world: WorldContext, player: Player, item: GroundItem): void {
     });
 }
 
+export enum AttackOrderPersistence {
+    SINGLE_ATTACK = "single_attack",
+    UNTIL_TARGET_DIES = "until_target_dies",
+}
+
+// The user found attacking until the target dies too hands-off, so an attack order swings or
+// shoots once; UNTIL_TARGET_DIES is kept to re-evaluate that call.
+export const ATTACK_ORDER_PERSISTENCE: AttackOrderPersistence =
+    AttackOrderPersistence.SINGLE_ATTACK;
+
+function orderAfterAttack(order: PlayerOrder): PlayerOrder {
+    switch (ATTACK_ORDER_PERSISTENCE) {
+        case AttackOrderPersistence.SINGLE_ATTACK:
+            return IDLE_ORDER;
+        case AttackOrderPersistence.UNTIL_TARGET_DIES:
+            return order;
+    }
+}
+
 // Swings (or shoots) as soon as the target is within the basic attack's range and the attack is
 // off cooldown; orderMovement closes the distance until then.
-function beginOrderedAttack(world: WorldContext, player: Player, order: PlayerOrder): void {
+function beginOrderedAttack(world: WorldContext, player: Player, order: PlayerOrder): PlayerOrder {
     if (order.kind !== PlayerOrderKind.ATTACK) {
-        return;
+        return order;
     }
     if (!player.canUseBasicAttackIgnoringTarget(world.timeSeconds)) {
-        return;
+        return order;
     }
     const basicAttack = player.basicAttack;
     const body = attackTargetBody(order.target);
     const distance = Math.hypot(body.x - player.x, body.y - player.y);
     if (distance > abilityRange(basicAttack, player.hitRadius, body.hitRadius)) {
-        return;
+        return order;
     }
     const aim: AbilityTarget =
         order.target.kind === OrderTargetKind.ENEMY
@@ -399,9 +418,10 @@ function beginOrderedAttack(world: WorldContext, player: Player, order: PlayerOr
             { ...basicAttack, effect: { ...basicAttack.effect, delivery } },
             aim,
         );
-        return;
+        return orderAfterAttack(order);
     }
     beginPlayerCast(world, player, basicAttack, aim);
+    return orderAfterAttack(order);
 }
 
 function beginHeldSkills(world: WorldContext, player: Player, skills: readonly SkillInput[]): void {

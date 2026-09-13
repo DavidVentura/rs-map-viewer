@@ -1,6 +1,6 @@
 import { WeaponStyle } from "./Ability";
 import { CombatEventKind, applyDamage } from "./CombatEvent";
-import { WARDENS_P3_SOUNDS } from "./Encounter";
+import { WARDENS_P3_SOUNDS, WardenPhantomSpawn } from "./Encounter";
 import { EncounterActorKind, EnergySiphonActor, createPhantomActor } from "./EncounterActor";
 import { EnemyTypeId } from "./EnemyType";
 import { EnergySiphonState } from "./EnergySiphon";
@@ -98,26 +98,10 @@ function seededRandom(seed: number): () => number {
     };
 }
 
-// The scripted encounter spawns both phantoms north of the floor; these tests start the runtime
-// on its own, so they place them the same way.
-function addPhantoms(world: GameWorld): void {
-    const spawns: readonly [WardenPhantom, number][] = [
-        [WardenPhantom.ZEBAK, 3925],
-        [WardenPhantom.BABA, 3943],
-    ];
-    for (const [phantom, tileX] of spawns) {
-        world.encounterActors.push(
-            createPhantomActor(
-                9000 + tileX,
-                (tileX + 2.5) * TILE_SIZE,
-                (5152 + 2.5) * TILE_SIZE,
-                0,
-                ANIMATIONS.enemyType(wardenPhantomEnemyTypeId(phantom)),
-                0,
-            ),
-        );
-    }
-}
+const PHANTOM_SPAWNS: readonly WardenPhantomSpawn[] = [
+    { x: 3925, y: 5152, level: 0, phantom: WardenPhantom.ZEBAK },
+    { x: 3943, y: 5152, level: 0, phantom: WardenPhantom.BABA },
+];
 
 function createWardenWorld(
     random: () => number = Math.random,
@@ -130,11 +114,11 @@ function createWardenWorld(
     const world = new GameWorld(new FlatTerrain(), ANIMATIONS, random);
     world.spawnPlayer(0, 0, 0);
     const wardenId = world.spawnEnemy(128, 0, 0, ANIMATIONS.enemyType(EnemyTypeId.TUMEKENS_WARDEN));
-    addPhantoms(world);
     const wardens = new WardenP3Runtime(
         world,
         wardenId,
         WARDEN_P3_SOLO_SIPHON_LAYOUT,
+        PHANTOM_SPAWNS,
         WARDENS_P3_SOUNDS,
         startPhase,
     );
@@ -174,13 +158,19 @@ function reverseSiphon(world: GameWorld, siphon: EnergySiphonActor): void {
     world.player!.x = siphon.x;
     world.player!.y = siphon.y;
     world.step(attackSiphon(siphon), STEP_SECONDS);
+    // The order ends as the swing starts; the siphon only flips on the swing's hit frame.
     for (let step = 0; step < 200; step++) {
-        if (world.playerOrders.order.kind !== PlayerOrderKind.ATTACK) {
+        const player = world.player!;
+        const swinging = !player.canUseBasicAttackIgnoringTarget(world.timeSeconds);
+        const current = world.findEnergySiphon(siphon.id);
+        // The last reversal resolves the intermission, which recalls every siphon.
+        const reversed = !current || current.siphon.state === EnergySiphonState.REVERSED;
+        if (reversed || (world.playerOrders.order.kind !== PlayerOrderKind.ATTACK && !swinging)) {
             return;
         }
         world.step(EMPTY_INPUT, STEP_SECONDS);
     }
-    throw new Error("Expected the siphon attack order to end");
+    throw new Error("Expected the siphon attack to finish");
 }
 
 function stepUntilFirstFloorSlam(world: GameWorld): FloorSlam {
@@ -647,11 +637,11 @@ describe("Wardens P3 world runtime", () => {
 
     it("throws Zebak's jug up over the player, bursting it high in the air into a falling piece", () => {
         const world = createZebakWorld();
+
+        stepUntilRelease(world, WardenPhantom.ZEBAK);
         const zebak = world.encounterActors.find(
             (actor) => actor.type.id === wardenPhantomEnemyTypeId(WardenPhantom.ZEBAK),
         )!;
-
-        stepUntilRelease(world, WardenPhantom.ZEBAK);
         expect(zebak.animation.seqId).toBe(
             WARDEN_ANIMATIONS.phantoms.attacks[WardenPhantom.ZEBAK].seq.seqId,
         );

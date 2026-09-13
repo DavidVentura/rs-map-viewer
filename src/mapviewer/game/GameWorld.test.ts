@@ -38,6 +38,7 @@ import {
     OrderEvent,
     OrderEventKind,
     OrderTargetKind,
+    PlayerOrderKind,
     SimInput,
     SkillInput,
     SkillTarget,
@@ -248,15 +249,20 @@ describe("GameWorld ability wiring", () => {
         expect(world.projectiles.length).toBe(1);
     });
 
-    it("re-fires the bow on cooldown for as long as the attack order stands", () => {
+    it("fires the bow once per attack order", () => {
         const world = new GameWorld(new FakeTerrain(), ANIMATIONS);
         world.spawnPlayer(0, 0, 0);
         world.spawnEnemy(DISTANT_TARGET_X, 0, 0, makeStationaryEnemyType(1, 2, 3));
         issue(world, pressOnEnemy(world.enemies[0]));
 
+        advanceSeconds(world, idleInput(), impactOf(BOW_SHOT) + 0.05);
+        expect(world.projectiles).toHaveLength(1);
+        const firstArrow = world.projectiles[0];
+
         const cooldownTotal = impactOf(BOW_SHOT) + BOW_SHOT.locks[0].seconds;
-        advanceSeconds(world, idleInput(), cooldownTotal * 2 + 0.1);
-        expect(world.projectiles.length).toBe(2);
+        advanceSeconds(world, idleInput(), cooldownTotal * 2);
+        expect(world.projectiles.filter((projectile) => projectile !== firstArrow)).toEqual([]);
+        expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
     });
 
     it("fires two tracked arrows after five confirmed stationary ranged hits", () => {

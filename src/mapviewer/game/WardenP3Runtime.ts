@@ -1,6 +1,11 @@
 import { CombatEventKind, applyDamage, applyHeal } from "./CombatEvent";
 import { Affects } from "./Effect";
-import { EncounterScriptKind, WardenP3Sounds, WardensP3Script } from "./Encounter";
+import {
+    EncounterScriptKind,
+    WardenP3Sounds,
+    WardenPhantomSpawn,
+    WardensP3Script,
+} from "./Encounter";
 import {
     EncounterActor,
     EncounterActorKind,
@@ -135,26 +140,8 @@ export function startWardensP3Encounter(
         wardenSpawn.level,
         world.animations.enemyType(EnemyTypeId.TUMEKENS_WARDEN),
     );
-    for (const phantomSpawn of phantomSpawns) {
-        world.encounterActors.push(
-            createPhantomActor(
-                world.allocateActorId(),
-                (phantomSpawn.x + 2.5) * TILE_SIZE,
-                (phantomSpawn.y + 2.5) * TILE_SIZE,
-                0,
-                world.animations.enemyType(wardenPhantomEnemyTypeId(phantomSpawn.phantom)),
-                0,
-            ),
-        );
-    }
-    const platformFacing = directionToRotation(0, 1);
-    world.findEnemy(wardenId)!.rotation = platformFacing;
-    for (const actor of world.encounterActors) {
-        if (actor.kind === EncounterActorKind.PHANTOM) {
-            actor.rotation = platformFacing;
-        }
-    }
-    return new WardenP3Runtime(world, wardenId, siphonLayout, sounds, startPhase);
+    world.findEnemy(wardenId)!.rotation = directionToRotation(0, 1);
+    return new WardenP3Runtime(world, wardenId, siphonLayout, phantomSpawns, sounds, startPhase);
 }
 
 export class WardenP3Runtime implements EncounterScript {
@@ -181,6 +168,7 @@ export class WardenP3Runtime implements EncounterScript {
         private readonly world: WorldContext,
         private readonly wardenId: number,
         private readonly siphonLayout: WardenP3SiphonLayout,
+        private readonly phantomSpawns: readonly WardenPhantomSpawn[],
         private readonly sounds: WardenP3Sounds,
         startPhase: WardenP3StartPhase,
     ) {
@@ -532,6 +520,7 @@ export class WardenP3Runtime implements EncounterScript {
                 return;
             case "ACTIVATE_PHANTOM":
                 this.activePhantoms = [...this.activePhantoms, command.phantom];
+                this.spawnPhantom(command.phantom);
                 return;
             case "BEGIN_PHANTOM_ATTACK": {
                 const phantom = this.phantomActor(command.phantom);
@@ -558,6 +547,24 @@ export class WardenP3Runtime implements EncounterScript {
                 this.world.events.push({ kind: CombatEventKind.ENCOUNTER_CLEARED });
                 return;
         }
+    }
+
+    // A phantom only joins the arena at the intermission that wakes it, then attacks from there.
+    private spawnPhantom(phantom: WardenPhantom): void {
+        const spawn = this.phantomSpawns.find((candidate) => candidate.phantom === phantom);
+        if (!spawn) {
+            throw new Error(`Wardens P3 declares no spawn for the ${phantom} phantom`);
+        }
+        this.world.encounterActors.push(
+            createPhantomActor(
+                this.world.allocateActorId(),
+                (spawn.x + 2.5) * TILE_SIZE,
+                (spawn.y + 2.5) * TILE_SIZE,
+                spawn.level,
+                this.world.animations.enemyType(wardenPhantomEnemyTypeId(phantom)),
+                directionToRotation(0, 1),
+            ),
+        );
     }
 
     private phantomActor(phantom: WardenPhantom): EncounterActor {

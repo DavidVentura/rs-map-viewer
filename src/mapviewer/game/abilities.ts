@@ -28,6 +28,7 @@ import {
     WARPED_SCEPTRE_SPEC,
 } from "./Projectile";
 import { SeqCatalog } from "./SeqCatalog";
+import { TILE_SIZE } from "./Terrain";
 import { VisualEffectKind } from "./VisualEffect";
 
 // The player's basic-attack sequences are the same ids the renderer preloads per stance (see
@@ -73,10 +74,10 @@ const ARROW_DAMAGE = 8;
 const MAGIC_BOLT_DAMAGE = 12;
 const SCIMITAR_SLASH_DAMAGE: DamageRoll = { min: 4, max: 9 };
 const MELEE_REACH = 48;
-// The player's own swing reaches a tile past both bodies' edges, so a basic melee connects from the
-// next tile over rather than needing to press up against the target. Enemy swings keep MELEE_REACH,
+// The player's own swing reaches most of a tile past both bodies' edges, so a basic melee connects
+// without pressing up against the target. Enemy swings keep MELEE_REACH,
 // short enough that stepping back out of it still dodges them.
-const PLAYER_MELEE_REACH = 128;
+const PLAYER_MELEE_REACH = 0.6 * TILE_SIZE;
 
 // Player castSpeeds keep each basic attack's whole sequence inside its old windup+lock cadence,
 // so the swing plays as one continuous motion with the recovery under the ATTACK lock.

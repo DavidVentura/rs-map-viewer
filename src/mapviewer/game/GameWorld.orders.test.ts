@@ -1,5 +1,4 @@
-import { AbilityDefinition, WeaponStyle, abilityRange } from "./Ability";
-import { PayloadKind } from "./Effect";
+import { WeaponStyle, abilityRange } from "./Ability";
 import { EnergySiphonActor, createEnergySiphonActor } from "./EncounterActor";
 import { Enemy } from "./Enemy";
 import { EnemyTypeId, ResolvedEnemyType } from "./EnemyType";
@@ -14,7 +13,6 @@ import {
     SimInput,
 } from "./PlayerOrders";
 import { TILE_SIZE, Terrain } from "./Terrain";
-import { BOW_SHOT, MAGIC_BOLT, SCIMITAR_SLASH } from "./abilities";
 import { stubEncounterAnimations } from "./testLoaders";
 
 class FlatTerrain implements Terrain {
@@ -81,16 +79,6 @@ function distanceBetween(player: Player, other: { x: number; y: number }): numbe
     return Math.hypot(other.x - player.x, other.y - player.y);
 }
 
-function maxDamage(definition: AbilityDefinition): number {
-    const payload = definition.effect.payloads.find(
-        (candidate) => candidate.kind === PayloadKind.DAMAGE,
-    );
-    if (!payload || payload.kind !== PayloadKind.DAMAGE) {
-        throw new Error(`${definition.id} has no DAMAGE payload`);
-    }
-    return payload.roll.max;
-}
-
 describe("walk orders", () => {
     it("walks to a clicked point and stops exactly on it", () => {
         const world = makeWorld();
@@ -124,34 +112,28 @@ describe("walk orders", () => {
 });
 
 describe("attack orders", () => {
-    it.each([
-        [WeaponStyle.MELEE, SCIMITAR_SLASH],
-        [WeaponStyle.RANGED, BOW_SHOT],
-        [WeaponStyle.MAGIC, MAGIC_BOLT],
-    ])(
-        "chases into range and keeps attacking with style %s until the target dies",
-        (style, basicAttack) => {
+    it.each([WeaponStyle.MELEE, WeaponStyle.RANGED, WeaponStyle.MAGIC])(
+        "chases into range and attacks once with style %s, then stops",
+        (style) => {
             const world = makeWorld();
             const player = world.player!;
             player.style = style;
             const enemy = spawnDummy(world, 0, 1000);
-            expect(maxDamage(basicAttack)).toBeLessThan(enemy.maxHealth);
             issue(world, pressOnEnemy(enemy), RELEASE);
 
-            for (let step = 0; step < 2000 && enemy.health > 0; step++) {
+            for (let step = 0; step < 2000 && enemy.health === enemy.maxHealth; step++) {
                 world.step(IDLE_INPUT, STEP_SECONDS);
             }
-            expect(enemy.health).toBeLessThanOrEqual(0);
-            // A projectile's killing blow lands after the player's own step.
-            world.step(IDLE_INPUT, STEP_SECONDS);
-
-            expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+            const healthAfterFirstHit = enemy.health;
+            expect(healthAfterFirstHit).toBeLessThan(enemy.maxHealth);
             expect(distanceBetween(player, enemy)).toBeLessThanOrEqual(
                 abilityRange(player.basicAttack, player.hitRadius, enemy.hitRadius),
             );
 
-            advanceSeconds(world, GameWorld.ENEMY_RESPAWN_SECONDS + 1);
-            expect(enemy.health).toBe(enemy.maxHealth);
+            advanceSeconds(world, 3);
+
+            expect(world.playerOrders.order.kind).toBe(PlayerOrderKind.IDLE);
+            expect(enemy.health).toBe(healthAfterFirstHit);
         },
     );
 
@@ -186,11 +168,11 @@ describe("attack orders", () => {
         expect(enemy.health).toBe(enemy.maxHealth);
     });
 
-    it("lands a basic melee hit on a target a tile away without stepping in", () => {
+    it("lands a basic melee hit on a target most of a tile away without stepping in", () => {
         const world = makeWorld();
         const player = world.player!;
         player.style = WeaponStyle.MELEE;
-        const edgeGap = TILE_SIZE - 1;
+        const edgeGap = 0.6 * TILE_SIZE - 1;
         const enemy = spawnDummy(world, player.hitRadius + edgeGap + TARGET_DUMMY.hitRadius, 0);
         issue(world, pressOnEnemy(enemy), RELEASE);
 
